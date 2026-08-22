@@ -148,6 +148,9 @@ type AccountTestService struct {
 	settingService            *SettingService
 	tlsFPProfileService       *TLSFingerprintProfileService
 	pluginManager             *PluginManager
+	modelMetadataRegistryMu   sync.Mutex
+	modelMetadataRegistry     map[string]modelsDevProvider
+	modelMetadataRegistryAt   time.Time
 	agentIdentityTaskMu       sync.Mutex
 	agentIdentityWS           agentIdentityWSConnectionInvalidator
 	codexQuotaOverdraft       *CodexQuotaOverdraftCoordinator
