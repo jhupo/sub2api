@@ -648,6 +648,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		Model:                     requestedModel,
 		ServiceTier:               l.ServiceTier,
 		ReasoningEffort:           l.ReasoningEffort,
+		RequestedReasoningEffort:  l.RequestedReasoningEffort,
 		InboundEndpoint:           l.InboundEndpoint,
 		GroupID:                   l.GroupID,
 		SubscriptionID:            l.SubscriptionID,
