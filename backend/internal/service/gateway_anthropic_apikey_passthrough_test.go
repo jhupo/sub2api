@@ -1238,10 +1238,11 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_UpstreamRequest
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
-	require.JSONEq(t, string(anthropicTransportFailoverBody), string(failoverErr.ResponseBody))
-	// The gateway must leave response ownership to the handler so it can retry
-	// another account before committing a 502.
+	require.JSONEq(t, string(gatewayTransportFailoverBody), string(failoverErr.ResponseBody))
+	require.True(t, failoverErr.ShouldRetryNextAccount())
+	// 传输层错误交给 handler failover，service 不得写响应。
 	require.Zero(t, rec.Body.Len())
+	require.False(t, c.Writer.Written())
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDirect_EmptyResponseBody(t *testing.T) {

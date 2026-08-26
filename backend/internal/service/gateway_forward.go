@@ -392,17 +392,9 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
-			// A transport failure has no upstream HTTP status. Return a typed
-			// failover error so the request handler can try the next account in
-			// the same group instead of committing an immediate 502 here.
-			return nil, s.handleAnthropicUpstreamTransportError(
-				ctx,
-				c,
-				account,
-				safeUpstreamURL(upstreamReq.URL.String()),
-				false,
-				err,
-			)
+			return nil, s.handleUpstreamTransportError(ctx, c, account, err, OpsUpstreamErrorEvent{
+				UpstreamURL: safeUpstreamURL(upstreamReq.URL.String()),
+			})
 		}
 
 		// 优先检测thinking block签名错误（400）并重试一次
