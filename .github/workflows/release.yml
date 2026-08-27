@@ -4,10 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-  # A tag created alongside a branch push can be coalesced into one PushEvent
-  # by GitHub. The create event is emitted for the tag itself, so it reliably
-  # starts the release even when both refs are pushed in one command.
-  create:
   workflow_dispatch:
     inputs:
       tag:
@@ -24,27 +20,26 @@ on:
 # tag push 触发时读取 vars.SIMPLE_RELEASE，workflow_dispatch 时使用输入参数
 env:
   SIMPLE_RELEASE: ${{ github.event.inputs.simple_release == 'true' || vars.SIMPLE_RELEASE == 'true' }}
-  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name || github.event.ref }}
-  # Forks may not have write access to an existing GHCR package. Enable only after
-  # the repository/package has been granted write:packages access.
-  PUBLISH_GHCR: ${{ vars.PUBLISH_GHCR == 'true' }}
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
   packages: write
 
 concurrency:
-  group: release-${{ github.event.inputs.tag || github.ref_name || github.event.ref }}
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   # Update VERSION file with tag version
   update-version:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'v') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Update VERSION file
         run: |
@@ -61,11 +56,13 @@ jobs:
           retention-days: 1
 
   build-frontend:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'v') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -95,7 +92,7 @@ jobs:
           retention-days: 1
 
   release:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'v') }}
     needs: [update-version, build-frontend]
     runs-on: ubuntu-latest
     steps:
@@ -145,7 +142,6 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Login to GitHub Container Registry
-        if: ${{ env.PUBLISH_GHCR == 'true' }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -278,7 +274,7 @@ jobs:
 
   sync-version-file:
     needs: [release]
-    if: ${{ needs.release.result == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v'))) }}
+    if: ${{ needs.release.result == 'success' && (github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'v')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout default branch

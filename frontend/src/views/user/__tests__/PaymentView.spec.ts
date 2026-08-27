@@ -237,10 +237,16 @@ async function mountSubscriptionConfirm(options: Parameters<typeof checkoutInfoW
   return wrapper
 }
 
-async function mountSubscriptionPlanList(planCount: number) {
+async function mountSubscriptionPlanList(
+  planCount: number,
+  options: {
+    checkout?: Partial<CheckoutInfoResponse>
+    query?: Record<string, unknown>
+  } = {},
+) {
   vi.useRealTimers()
   routeState.path = '/purchase'
-  routeState.query = { tab: 'subscription' }
+  routeState.query = options.query ?? { tab: 'subscription' }
   routerReplace.mockReset().mockResolvedValue(undefined)
   routerPush.mockReset().mockResolvedValue(undefined)
   routerResolve.mockClear()
@@ -256,7 +262,10 @@ async function mountSubscriptionPlanList(planCount: number) {
     id: index + 1,
     name: `Plan ${index + 1}`,
   }))
-  getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({ plans }))
+  getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({
+    ...options.checkout,
+    plans,
+  }))
   bridgeInvoke.mockReset()
   window.localStorage.clear()
   ;(window as Window & { WeixinJSBridge?: { invoke: typeof bridgeInvoke } }).WeixinJSBridge = undefined
@@ -276,6 +285,25 @@ async function mountSubscriptionPlanList(planCount: number) {
   await flushPromises()
   return wrapper
 }
+
+describe('PaymentView purchase tabs', () => {
+  it('shows the original top-up and subscription tabs', async () => {
+    const wrapper = await mountSubscriptionPlanList(0, { query: {} })
+
+    expect(wrapper.text()).toContain('payment.tabTopUp')
+    expect(wrapper.text()).toContain('payment.tabSubscribe')
+  })
+
+  it('opens subscriptions when balance top-up is disabled', async () => {
+    const wrapper = await mountSubscriptionPlanList(0, {
+      checkout: { balance_disabled: true },
+      query: {},
+    })
+
+    expect(wrapper.text()).toContain('payment.noPlans')
+    expect(wrapper.text()).not.toContain('payment.tabTopUp')
+  })
+})
 
 describe('PaymentView subscription plan grid', () => {
   it.each([3, 4, 6])('keeps %i plans on the existing mobile/tablet/desktop grid', async (planCount) => {

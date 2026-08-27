@@ -60,8 +60,8 @@ export default {
 
   // Recharge / Subscription Page
   purchase: {
-    title: '充值中心',
-    description: '使用站内余额充值或支付宝、微信等方式完成充值',
+    title: '充值/订阅',
+    description: '通过内嵌页面完成充值/订阅',
     openInNewTab: '新窗口打开',
     notEnabledTitle: '该功能未开启',
     notEnabledDesc: '管理员暂未开启充值/订阅入口，请联系管理员。',
@@ -407,14 +407,7 @@ export default {
     activeSubscription: '当前订阅',
     noActiveSubscription: '暂无有效订阅',
     tabTopUp: '充值',
-    tabSubscribe: '充值中心',
-    tabRechargeCenter: '支付宝 / 微信充值中心',
-    rechargeCenterTitle: '支付宝 / 微信充值中心',
-    rechargeCenterDescription: '已为你接入充值中心，可使用支付宝或微信完成充值。',
-    rechargeCenterOpen: '新窗口打开',
-    rechargeCenterFullscreen: '全屏查看',
-    rechargeCenterExitFullscreen: '退出全屏',
-    rechargeCenterUnavailable: '充值中心暂时不可用，请联系管理员。',
+    tabSubscribe: '订阅',
     noPlans: '暂无可用订阅套餐',
     notAvailable: '充值功能暂未开放',
     confirmSubscription: '确认订阅',

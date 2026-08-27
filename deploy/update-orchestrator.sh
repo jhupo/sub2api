@@ -20,7 +20,7 @@ fi
 ENV_FILE="${SUB2API_UPDATE_ENV_FILE:-}"
 UPDATE_MODE="${SUB2API_UPDATE_MODE:-image}"
 RUNTIME_PATH="${SUB2API_UPDATE_RUNTIME_PATH:-}"
-REPOSITORY="${SUB2API_UPDATE_REPOSITORY:-kiss-kedaya/sub2api}"
+REPOSITORY="${SUB2API_UPDATE_REPOSITORY:-jhupo/sub2api}"
 RESTART_COMMAND="${SUB2API_UPDATE_RESTART_COMMAND:-}"
 HELPER_IMAGE="${SUB2API_UPDATE_HELPER_IMAGE:-${SUB2API_IMAGE:-}}"
 HELPER_ACTIVE="${SUB2API_UPDATE_HELPER_ACTIVE:-}"
@@ -77,7 +77,7 @@ Required environment:
 Optional environment:
   SUB2API_UPDATE_MODE            image (default) or runtime
   SUB2API_UPDATE_RUNTIME_PATH    Path visible to this process for runtime mode
-  SUB2API_UPDATE_REPOSITORY      GitHub repository (default: kiss-kedaya/sub2api)
+  SUB2API_UPDATE_REPOSITORY      GitHub repository (default: jhupo/sub2api)
   SUB2API_UPDATE_PROJECT         Compose project name
   SUB2API_UPDATE_SERVICES        Comma-separated app services, in rollout order
   SUB2API_UPDATE_HEALTH_URLS     Comma-separated health URLs, one per service

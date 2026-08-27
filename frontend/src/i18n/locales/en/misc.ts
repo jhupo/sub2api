@@ -61,8 +61,8 @@ export default {
 
   // Recharge / Subscription Page
   purchase: {
-    title: 'Recharge Center',
-    description: 'Top up your balance with the built-in balance payment or Alipay/WeChat center',
+    title: 'Recharge / Subscription',
+    description: 'Recharge balance or purchase subscription via the embedded page',
     openInNewTab: 'Open in new tab',
     notEnabledTitle: 'Feature not enabled',
     notEnabledDesc: 'The administrator has not enabled the recharge/subscription entry. Please contact admin.',
@@ -383,14 +383,7 @@ export default {
     activeSubscription: 'Active Subscription',
     noActiveSubscription: 'No active subscription',
     tabTopUp: 'Top Up',
-    tabSubscribe: 'Recharge Center',
-    tabRechargeCenter: 'Alipay / WeChat Recharge Center',
-    rechargeCenterTitle: 'Alipay / WeChat Recharge Center',
-    rechargeCenterDescription: 'Use the integrated recharge center to pay with Alipay or WeChat.',
-    rechargeCenterOpen: 'Open in new tab',
-    rechargeCenterFullscreen: 'View fullscreen',
-    rechargeCenterExitFullscreen: 'Exit fullscreen',
-    rechargeCenterUnavailable: 'The recharge center is temporarily unavailable. Please contact an administrator.',
+    tabSubscribe: 'Subscribe',
     noPlans: 'No subscription plans available',
     notAvailable: 'Top-up is currently unavailable',
     confirmSubscription: 'Confirm Subscription',

@@ -55,7 +55,8 @@ describe('AppSidebar header styles', () => {
 })
 
 describe('AppSidebar user navigation', () => {
-  it('hides the legacy subscriptions entry while keeping the route available', () => {
-    expect(componentSource).not.toContain("{ path: '/subscriptions'")
+  it('shows the subscription and purchase entries', () => {
+    expect(componentSource).toContain("{ path: '/subscriptions'")
+    expect(componentSource).toContain("{ path: '/purchase'")
   })
 })
