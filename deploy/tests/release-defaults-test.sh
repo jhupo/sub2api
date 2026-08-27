@@ -38,10 +38,11 @@ do
 done
 
 assert_contains .github/workflows/release.yml "      - 'v*'"
+assert_contains .github/workflows/release.yml '  create:'
+assert_contains .github/workflows/release.yml "RELEASE_TAG: \${{ github.event.inputs.tag || (github.event_name == 'create' && github.event.ref) || github.ref_name }}"
 assert_contains .github/workflows/release.yml '  packages: write'
 assert_contains .github/workflows/release.yml '      - name: Login to GitHub Container Registry'
 assert_not_contains .github/workflows/release.yml 'PUBLISH_GHCR'
-assert_not_contains .github/workflows/release.yml '  create:'
 assert_not_contains .goreleaser.yaml '.Env.PUBLISH_GHCR'
 assert_not_contains .goreleaser.simple.yaml '.Env.PUBLISH_GHCR'
 

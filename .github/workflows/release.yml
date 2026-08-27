@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - 'v*'
+  # GitHub can occasionally coalesce a branch push and tag push. The create
+  # event is an independent fallback; concurrency below de-duplicates both.
+  create:
   workflow_dispatch:
     inputs:
       tag:
@@ -20,20 +23,20 @@ on:
 # tag push 触发时读取 vars.SIMPLE_RELEASE，workflow_dispatch 时使用输入参数
 env:
   SIMPLE_RELEASE: ${{ github.event.inputs.simple_release == 'true' || vars.SIMPLE_RELEASE == 'true' }}
-  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  RELEASE_TAG: ${{ github.event.inputs.tag || (github.event_name == 'create' && github.event.ref) || github.ref_name }}
 
 permissions:
   contents: write
   packages: write
 
 concurrency:
-  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  group: release-${{ github.event.inputs.tag || (github.event_name == 'create' && github.event.ref) || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   # Update VERSION file with tag version
   update-version:
-    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'v') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -56,7 +59,7 @@ jobs:
           retention-days: 1
 
   build-frontend:
-    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'v') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -92,7 +95,7 @@ jobs:
           retention-days: 1
 
   release:
-    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'v') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v')) }}
     needs: [update-version, build-frontend]
     runs-on: ubuntu-latest
     steps:
@@ -274,7 +277,7 @@ jobs:
 
   sync-version-file:
     needs: [release]
-    if: ${{ needs.release.result == 'success' && (github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'v')) }}
+    if: ${{ needs.release.result == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref_name, 'v')) || (github.event_name == 'create' && github.event.ref_type == 'tag' && startsWith(github.event.ref, 'v'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout default branch
