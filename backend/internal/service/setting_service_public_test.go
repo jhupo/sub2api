@@ -55,7 +55,7 @@ func (s *settingPublicRepoStub) Delete(ctx context.Context, key string) error {
 	panic("unexpected Delete call")
 }
 
-func TestSettingService_GetPublicSettings_DoesNotExposeCustomEndpoints(t *testing.T) {
+func TestSettingService_GetPublicSettings_ExposesCustomEndpoints(t *testing.T) {
 	repo := &settingPublicRepoStub{
 		values: map[string]string{
 			SettingKeyCustomEndpoints: `[{"name":"internal","endpoint":"https://internal.example/api","description":"private"}]`,
@@ -65,11 +65,7 @@ func TestSettingService_GetPublicSettings_DoesNotExposeCustomEndpoints(t *testin
 
 	settings, err := svc.GetPublicSettings(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, "[]", settings.CustomEndpoints)
-
-	raw, err := svc.GetConfiguredCustomEndpoints(context.Background())
-	require.NoError(t, err)
-	require.JSONEq(t, repo.values[SettingKeyCustomEndpoints], raw)
+	require.JSONEq(t, repo.values[SettingKeyCustomEndpoints], settings.CustomEndpoints)
 }
 
 func TestSettingService_GetPublicSettings_ExposesRegistrationEmailSuffixWhitelist(t *testing.T) {

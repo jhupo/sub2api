@@ -1,7 +1,7 @@
 /** Channel Monitor V2 (user + admin passive monitor UI) */
 export default {
   channelMonitorV2: {
-    title: 'Channel Monitor',
+    title: 'Channel status',
     updating: 'Updating data',
     updatedTo: 'Updated to {time}',
     partialCoverage: 'Partial historical coverage',
@@ -23,6 +23,17 @@ export default {
     ignored: 'Ignored',
     currentUser: 'Current user',
     ranges: { '90m': '90m', '24h': '24h', '7d': '7d', '30d': '30d' },
+    compact: {
+      description: 'V2 passive usage · cache and availability',
+      summary: 'Availability {success} · Cache {cache}',
+      availability: 'Availability',
+      unknown: 'Insufficient samples',
+      userRate: 'User rate',
+      unknownGroup: 'Unknown group',
+      timelineTooltip: '{time} · Availability {availability} · Cache {cache} · First token {ttft}',
+      emptyTitle: 'No channel data',
+      emptyDescription: 'There is no passive-monitor data for this time range yet',
+    },
     filters: {
       platform: 'Platform', allPlatforms: 'All', group: 'Group', allGroups: 'All', model: 'Model', allModels: 'All',
       empty: 'No options', selectedCount: '{count}', labelValue: '{label}: {value}'

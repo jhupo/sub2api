@@ -1,7 +1,7 @@
 /** Channel Monitor V2 (user + admin passive monitor UI) */
 export default {
   channelMonitorV2: {
-    title: '渠道监控',
+    title: '渠道状态',
     updating: '正在更新数据',
     updatedTo: '更新至 {time}',
     partialCoverage: '部分历史覆盖',
@@ -23,6 +23,17 @@ export default {
     ignored: '忽略',
     currentUser: '当前用户',
     ranges: { '90m': '90m', '24h': '24h', '7d': '7d', '30d': '30d' },
+    compact: {
+      description: 'V2 被动用量 · 缓存率与可用率',
+      summary: '可用率 {success} · 缓存率 {cache}',
+      availability: '可用率',
+      unknown: '样本不足',
+      userRate: '用户倍率',
+      unknownGroup: '未知分组',
+      timelineTooltip: '{time} · 可用率 {availability} · 缓存率 {cache} · 首 Token {ttft}',
+      emptyTitle: '暂无渠道数据',
+      emptyDescription: '当前时间范围内还没有可展示的被动监控数据',
+    },
     filters: {
       platform: '平台', allPlatforms: '全部', group: '分组', allGroups: '全部', model: '模型', allModels: '全部',
       empty: '暂无可选项', selectedCount: '{count} 项', labelValue: '{label}：{value}'

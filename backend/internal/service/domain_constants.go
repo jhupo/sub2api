@@ -7,10 +7,6 @@ import (
 )
 
 // Status constants
-// CustomEndpointRechargeThreshold is the cumulative successful recharge required
-// before a user may view admin-configured extra API endpoints.
-const CustomEndpointRechargeThreshold = 1000.0
-
 const (
 	StatusActive   = domain.StatusActive
 	StatusDisabled = domain.StatusDisabled

@@ -190,8 +190,7 @@ export function formatLatencyPrivacy(
 
 /**
  * KPI secondary line for latency: AVG + P90 only (P50 is the primary value).
- * Falls back to P95 when P90 is absent. Delimiter is " · " so MetricCell can
- * split into non-truncated chips.
+ * Falls back to P95 when P90 is absent and joins the values on one line.
  */
 export function formatLatencyKpiSecondary(
   avg?: number | null | undefined,

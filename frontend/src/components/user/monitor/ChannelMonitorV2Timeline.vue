@@ -5,16 +5,16 @@
       <span class="tabular-nums">{{ t('monitorCommon.nextUpdateIn', { n: countdownSeconds }) }}</span>
     </div>
 
-    <div class="v3-timeline-bars" @mouseleave="clearHoveredBar">
+    <div class="v2-timeline-bars" @mouseleave="clearHoveredBar">
       <div
         v-for="(bar, index) in displayBars"
         :key="bar.key"
-        class="v3-bar-slot"
+        class="v2-bar-slot"
         @mouseenter="setHoveredBar(index, $event)"
       >
         <button
           type="button"
-          class="v3-bar-hitbox"
+          class="v2-bar-hitbox"
           :class="{
             'is-active': hoveredBarIndex === index,
             'is-neighbor': barDistance(index) === 1,
@@ -24,9 +24,9 @@
           @focus="setHoveredBar(index, $event)"
           @blur="clearHoveredBar"
         >
-          <span class="v3-bar-visual" :style="barMotionStyle(index)" aria-hidden="true">
+          <span class="v2-bar-visual" :style="barMotionStyle(index)" aria-hidden="true">
             <span
-              class="v3-soft-glass-bar"
+              class="v2-soft-glass-bar"
               :class="bar.colorClass"
               :style="{ height: `${bar.heightPct}%`, animationDelay: `${index * 18}ms` }"
             />
@@ -34,10 +34,10 @@
         </button>
 
         <Teleport to="body">
-          <Transition name="v3-timeline-tooltip">
+          <Transition name="v2-timeline-tooltip">
             <div
               v-if="hoveredBarIndex === index && bar.title"
-              class="v3-timeline-tooltip"
+              class="v2-timeline-tooltip"
               role="tooltip"
               :style="tooltipStyle"
             >
@@ -169,7 +169,7 @@ const displayBars = computed<TimelineBar[]>(() => {
     bars.push({
       key: bucket.bucket_start,
       ...style,
-      title: t('channelMonitorV3.timelineTooltip', {
+      title: t('channelMonitorV2.compact.timelineTooltip', {
         time: formatBucketTime(bucket.bucket_start),
         availability: formatMonitorPercent(1 - bucket.metrics.error_rate, locale.value || 'zh-CN'),
         cache: formatMonitorPercent(bucket.metrics.cache_rate, locale.value || 'zh-CN'),
@@ -188,16 +188,16 @@ const tooltipStyle = computed(() => ({
 </script>
 
 <style scoped>
-.v3-soft-glass-bar {
+.v2-soft-glass-bar {
 	display: block;
 	width: 100%;
 	min-height: 3px;
 	border-radius: 3px;
   transform-origin: bottom;
-  animation: v3-soft-glass-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: v2-soft-glass-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.v3-timeline-bars {
+.v2-timeline-bars {
 	display: flex;
 	position: relative;
 	height: 20px;
@@ -206,7 +206,7 @@ const tooltipStyle = computed(() => ({
 	isolation: isolate;
 }
 
-.v3-bar-slot {
+.v2-bar-slot {
 	position: relative;
 	display: flex;
 	align-items: flex-end;
@@ -215,7 +215,7 @@ const tooltipStyle = computed(() => ({
 	flex: 1 1 0%;
 }
 
-.v3-bar-hitbox {
+.v2-bar-hitbox {
 	position: relative;
 	display: flex;
 	align-items: flex-end;
@@ -229,7 +229,7 @@ const tooltipStyle = computed(() => ({
 	appearance: none;
 }
 
-.v3-bar-visual {
+.v2-bar-visual {
 	display: flex;
 	align-items: flex-end;
 	width: 100%;
@@ -242,26 +242,26 @@ const tooltipStyle = computed(() => ({
 	transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease;
 }
 
-.v3-bar-hitbox:focus-visible {
+.v2-bar-hitbox:focus-visible {
 	outline: 2px solid rgb(59 130 246 / 0.6);
 	outline-offset: 2px;
 	border-radius: 4px;
 }
 
-.v3-bar-hitbox.is-active {
+.v2-bar-hitbox.is-active {
 	z-index: 3;
 }
 
-.v3-bar-hitbox.is-active .v3-soft-glass-bar {
+.v2-bar-hitbox.is-active .v2-soft-glass-bar {
 	filter: saturate(1.12) brightness(1.05);
 	box-shadow: 0 4px 10px rgb(15 118 110 / 0.24);
 }
 
-.v3-bar-hitbox.is-pressed {
+.v2-bar-hitbox.is-pressed {
 	z-index: 2;
 }
 
-.v3-timeline-tooltip {
+.v2-timeline-tooltip {
 	position: fixed;
 	left: var(--tooltip-left, 50%);
 	top: var(--tooltip-top, 0px);
@@ -283,7 +283,7 @@ const tooltipStyle = computed(() => ({
 	pointer-events: none;
 }
 
-.v3-timeline-tooltip::after {
+.v2-timeline-tooltip::after {
 	position: absolute;
 	left: 50%;
 	bottom: -4px;
@@ -296,18 +296,18 @@ const tooltipStyle = computed(() => ({
 	content: '';
 }
 
-.v3-timeline-tooltip-enter-active,
-.v3-timeline-tooltip-leave-active {
+.v2-timeline-tooltip-enter-active,
+.v2-timeline-tooltip-leave-active {
 	transition: opacity 100ms ease, transform 120ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.v3-timeline-tooltip-enter-from,
-.v3-timeline-tooltip-leave-to {
+.v2-timeline-tooltip-enter-from,
+.v2-timeline-tooltip-leave-to {
 	opacity: 0;
 	transform: translateX(var(--tooltip-x, -50%)) translateY(calc(-100% + 3px)) scale(0.96);
 }
 
-@keyframes v3-soft-glass-rise {
+@keyframes v2-soft-glass-rise {
   from {
     transform: scaleY(0.15);
     opacity: 0.3;
@@ -319,13 +319,13 @@ const tooltipStyle = computed(() => ({
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .v3-soft-glass-bar {
+  .v2-soft-glass-bar {
     animation: none;
   }
 
-  .v3-bar-hitbox,
-  .v3-timeline-tooltip-enter-active,
-  .v3-timeline-tooltip-leave-active {
+  .v2-bar-hitbox,
+  .v2-timeline-tooltip-enter-active,
+  .v2-timeline-tooltip-leave-active {
     transition: none;
   }
 }
