@@ -1120,12 +1120,6 @@ func openAIStreamEventIsPreamble(eventType string) bool {
 	}
 }
 
-func openAIStreamAddedEventStartsClientOutput(payload []byte, eventType string) bool {
-	frame := parseOpenAISSEDataFrame(payload, "")
-	frame.eventType = strings.TrimSpace(eventType)
-	return openAIStreamAddedFrameStartsClientOutput(frame)
-}
-
 func openAIStreamAddedFrameStartsClientOutput(frame openAISSEDataFrame) bool {
 	if !frame.validJSON {
 		return true

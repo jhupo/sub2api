@@ -322,33 +322,6 @@ func (s *OpenAIGatewayService) prepareCodexQuotaOverdraftBody(ctx context.Contex
 	return body
 }
 
-func (s *OpenAIGatewayService) prepareCodexQuotaOverdraftPayload(ctx context.Context, account *Account, payload map[string]any) map[string]any {
-	if !s.shouldInjectCodexQuotaOverdraft(ctx, account, false) || payload == nil {
-		return payload
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return payload
-	}
-	updated, changed, callID, _ := injectCodexQuotaOverdraftForRequest(raw, func(id string) bool {
-		return codexQuotaOverdraftCallIDKnown(ctx, id)
-	})
-	if changed {
-		rememberCodexQuotaOverdraftCallID(ctx, callID)
-		markCodexQuotaOverdraftInjected(ctx, account.ID)
-	} else if codexQuotaOverdraftBodyHasKnownInjection(ctx, raw) {
-		markCodexQuotaOverdraftInjected(ctx, account.ID)
-	}
-	if !changed {
-		return payload
-	}
-	var out map[string]any
-	if err := json.Unmarshal(updated, &out); err != nil {
-		return payload
-	}
-	return out
-}
-
 type codexQuotaOverdraftDocument struct {
 	Input []json.RawMessage `json:"input"`
 }
@@ -358,18 +331,6 @@ type codexQuotaOverdraftInputItem struct {
 	Role   string `json:"role"`
 	CallID string `json:"call_id"`
 	Name   string `json:"name"`
-}
-
-func codexQuotaOverdraftBodyHasInjection(body []byte) bool {
-	var document codexQuotaOverdraftDocument
-	if len(body) == 0 || json.Unmarshal(body, &document) != nil {
-		return false
-	}
-	return codexQuotaOverdraftInputHasInjection(document.Input)
-}
-
-func codexQuotaOverdraftInputHasInjection(input []json.RawMessage) bool {
-	return len(codexQuotaOverdraftInputInjectionIDs(input)) > 0
 }
 
 func codexQuotaOverdraftBodyInjectionIDs(body []byte) []string {

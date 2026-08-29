@@ -1381,6 +1381,8 @@ func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
 // The accumulated usage is consulted too, because OpenAI may deliver usage on
 // an earlier event. An empty terminal event after a stream with no semantic
 // output is treated as a silent upstream refusal (issue #5009).
+//
+//nolint:unused // Exercised by unit-tagged tests for legacy byte-oriented SSE callers.
 func openAIResponsesCompletedEventIsEmpty(data []byte, usage *OpenAIUsage) bool {
 	return openAIResponsesCompletedFrameIsEmpty(parseOpenAISSEDataFrame(data, ""), usage)
 }

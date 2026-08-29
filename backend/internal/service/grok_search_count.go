@@ -113,10 +113,6 @@ func countGrokNativeSearchCallsInSSEFrameDedup(frame openAISSEDataFrame, seen ma
 	return added
 }
 
-func collectGrokNativeSearchCallKeys(data []byte) []string {
-	return collectGrokNativeSearchCallKeysFromFrame(parseOpenAISSEDataFrame(data, ""))
-}
-
 func collectGrokNativeSearchCallKeysFromFrame(frame openAISSEDataFrame) []string {
 	if !openAISSEFrameMayContainGrokSearch(frame) {
 		return nil
@@ -160,10 +156,6 @@ func collectGrokNativeSearchCallKeysFromFrame(frame openAISSEDataFrame) []string
 		consider(frame.root)
 	}
 	return keys
-}
-
-func countGrokNativeSearchCallsInSSEDataWithKeys(data []byte) (int, []string) {
-	return countGrokNativeSearchCallsInSSEFrameWithKeys(parseOpenAISSEDataFrame(data, ""))
 }
 
 func countGrokNativeSearchCallsInSSEFrameWithKeys(frame openAISSEDataFrame) (int, []string) {

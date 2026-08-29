@@ -1249,38 +1249,6 @@ func codexQuotaOverdraftSnapshotPrearmReached(updates map[string]any) bool {
 		(sevenValid && seven >= codexQuotaOverdraftPrearmPercent)
 }
 
-func applyCodexQuotaOverdraftUsage(
-	ctx context.Context,
-	repo UsageLogRepository,
-	account *Account,
-	usage *UsageInfo,
-	now time.Time,
-) {
-	if repo == nil || account == nil || usage == nil {
-		return
-	}
-	state, ok := codexQuotaOverdraftStateFromAccount(account)
-	if !ok || state.Status == codexQuotaOverdraftProbeRecovered {
-		return
-	}
-	apply := func(progress *UsageProgress, startedAt, recoverAt *time.Time) {
-		if progress == nil || progress.Utilization < 100 || startedAt == nil || recoverAt == nil || !recoverAt.After(now) {
-			return
-		}
-		stats, err := repo.GetAccountWindowStats(ctx, account.ID, *startedAt)
-		if err != nil {
-			return
-		}
-		progress.OverdraftActive = true
-		progress.OverdraftStats = windowStatsFromAccountStats(stats)
-		progress.OverdraftStarted = cloneTimePtr(startedAt)
-		progress.OverdraftRecover = cloneTimePtr(recoverAt)
-	}
-	fiveStarted, sevenStarted := codexQuotaOverdraftWindowStarts(state)
-	apply(usage.FiveHour, fiveStarted, state.FiveHourRecoverAt)
-	apply(usage.SevenDay, sevenStarted, state.SevenDayRecoverAt)
-}
-
 func stabilizeCodexQuotaOverdraftReset(current, persisted *time.Time, now time.Time) *time.Time {
 	if current == nil || persisted == nil || !persisted.After(now) {
 		return current

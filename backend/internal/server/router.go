@@ -22,6 +22,27 @@ import (
 
 const frameSrcRefreshTimeout = 5 * time.Second
 
+type redisReportCacheStore struct {
+	client *redis.Client
+}
+
+func (s redisReportCacheStore) Get(ctx context.Context, key string) ([]byte, error) {
+	return s.client.Get(ctx, key).Bytes()
+}
+
+func (s redisReportCacheStore) Set(ctx context.Context, key string, payload []byte, ttl time.Duration) error {
+	return s.client.Set(ctx, key, payload, ttl).Err()
+}
+
+func (s redisReportCacheStore) TryLock(ctx context.Context, key, token string, ttl time.Duration) (bool, error) {
+	return s.client.SetNX(ctx, key, token, ttl).Result()
+}
+
+func (s redisReportCacheStore) Unlock(ctx context.Context, key, token string) error {
+	const script = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`
+	return s.client.Eval(ctx, script, []string{key}, token).Err()
+}
+
 // SetupRouter 配置路由器中间件和路由
 func SetupRouter(
 	r *gin.Engine,
@@ -41,7 +62,11 @@ func SetupRouter(
 	redisClient *redis.Client,
 	db *sql.DB,
 ) *gin.Engine {
-	adminhandler.ConfigureReportCacheRedis(redisClient)
+	if redisClient == nil {
+		adminhandler.ConfigureReportCacheStore(nil)
+	} else {
+		adminhandler.ConfigureReportCacheStore(redisReportCacheStore{client: redisClient})
+	}
 	middleware2.SetIngressRejectRecorder(opsService)
 	// 缓存 iframe 页面的 origin 列表，用于动态注入 CSP frame-src
 	var cachedFrameOrigins atomic.Pointer[[]string]

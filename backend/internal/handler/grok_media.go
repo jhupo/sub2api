@@ -641,22 +641,6 @@ func shouldRecordGrokMediaUsage(endpoint service.GrokMediaEndpoint, requestModel
 	return result.ImageCount > 0
 }
 
-// prepareGrokVideoCompletionBilling claims one-shot billing for official done+video.url
-// observations (status poll or content download). Duration/model prefer status body;
-// resolution uses create-time request (status response does not document resolution).
-func prepareGrokVideoCompletionBilling(
-	ctx context.Context,
-	h *OpenAIGatewayHandler,
-	reqLog *zap.Logger,
-	apiKey *service.APIKey,
-	subject middleware2.AuthSubject,
-	taskRequestID string,
-	statusResult *service.OpenAIForwardResult,
-) *service.OpenAIForwardResult {
-	result, _, _ := prepareGrokVideoCompletionBillingWithGuard(ctx, h, reqLog, apiKey, subject, taskRequestID, statusResult)
-	return result
-}
-
 func prepareGrokVideoCompletionBillingWithGuard(
 	ctx context.Context,
 	h *OpenAIGatewayHandler,

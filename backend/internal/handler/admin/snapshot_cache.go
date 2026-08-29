@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -34,13 +33,36 @@ const (
 // All report caches share one budget. Without a process-wide limit, five
 // independent caches can each start expensive scans at the same time.
 var reportCacheLoadSlots = make(chan struct{}, reportCacheMaxLoads)
-var reportCacheRedis atomic.Pointer[redis.Client]
+var reportCacheSharedStore atomic.Pointer[reportCacheStoreHolder]
 
-// ConfigureReportCacheRedis installs the shared cache used by all API
-// replicas. A nil client disables the distributed layer and keeps the local
+type ReportCacheStore interface {
+	Get(ctx context.Context, key string) ([]byte, error)
+	Set(ctx context.Context, key string, payload []byte, ttl time.Duration) error
+	TryLock(ctx context.Context, key, token string, ttl time.Duration) (bool, error)
+	Unlock(ctx context.Context, key, token string) error
+}
+
+type reportCacheStoreHolder struct {
+	store ReportCacheStore
+}
+
+// ConfigureReportCacheStore installs the shared cache used by all API
+// replicas. A nil store disables the distributed layer and keeps the local
 // cache fallback fully functional.
-func ConfigureReportCacheRedis(client *redis.Client) {
-	reportCacheRedis.Store(client)
+func ConfigureReportCacheStore(store ReportCacheStore) {
+	if store == nil {
+		reportCacheSharedStore.Store(nil)
+		return
+	}
+	reportCacheSharedStore.Store(&reportCacheStoreHolder{store: store})
+}
+
+func configuredReportCacheStore() ReportCacheStore {
+	holder := reportCacheSharedStore.Load()
+	if holder == nil {
+		return nil
+	}
+	return holder.store
 }
 
 // reportCacheLoadContext lets an in-flight report finish after a browser aborts
@@ -100,13 +122,13 @@ func (c *snapshotCache) redisKey(key string) string {
 }
 
 func (c *snapshotCache) sharedGet(key string) (snapshotCacheEntry, bool) {
-	client := reportCacheRedis.Load()
-	if client == nil || key == "" {
+	store := configuredReportCacheStore()
+	if store == nil || key == "" {
 		return snapshotCacheEntry{}, false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
 	defer cancel()
-	raw, err := client.Get(ctx, c.redisKey(key)).Bytes()
+	raw, err := store.Get(ctx, c.redisKey(key))
 	if err != nil || len(raw) == 0 {
 		return snapshotCacheEntry{}, false
 	}
@@ -121,8 +143,8 @@ func (c *snapshotCache) sharedGet(key string) (snapshotCacheEntry, bool) {
 }
 
 func (c *snapshotCache) sharedSet(key string, payload any) {
-	client := reportCacheRedis.Load()
-	if client == nil || key == "" {
+	store := configuredReportCacheStore()
+	if store == nil || key == "" {
 		return
 	}
 	raw, err := json.Marshal(payload)
@@ -131,17 +153,17 @@ func (c *snapshotCache) sharedSet(key string, payload any) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
 	defer cancel()
-	_ = client.Set(ctx, c.redisKey(key), raw, c.ttl).Err()
+	_ = store.Set(ctx, c.redisKey(key), raw, c.ttl)
 }
 
 func (c *snapshotCache) sharedLock(ctx context.Context, key string) (string, string, bool) {
-	client := reportCacheRedis.Load()
-	if client == nil || key == "" {
+	store := configuredReportCacheStore()
+	if store == nil || key == "" {
 		return "", "", true
 	}
 	token := fmt.Sprintf("%d", time.Now().UnixNano())
 	lockKey := c.redisKey(key) + ":lock"
-	ok, err := client.SetNX(ctx, lockKey, token, reportCacheLoadTimeout+5*time.Second).Result()
+	ok, err := store.TryLock(ctx, lockKey, token, reportCacheLoadTimeout+5*time.Second)
 	if err != nil {
 		// Redis is an optimization. Continue locally if it is unavailable.
 		return "", "", true
@@ -153,14 +175,13 @@ func (c *snapshotCache) sharedLock(ctx context.Context, key string) (string, str
 }
 
 func (c *snapshotCache) sharedUnlock(lockKey, token string) {
-	client := reportCacheRedis.Load()
-	if client == nil || lockKey == "" || token == "" {
+	store := configuredReportCacheStore()
+	if store == nil || lockKey == "" || token == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
 	defer cancel()
-	const releaseScript = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`
-	_, _ = client.Eval(ctx, releaseScript, []string{lockKey}, token).Result()
+	_ = store.Unlock(ctx, lockKey, token)
 }
 
 func (c *snapshotCache) waitForShared(ctx context.Context, key, lockKey string) (snapshotCacheEntry, bool) {

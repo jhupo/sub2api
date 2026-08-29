@@ -436,7 +436,8 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 		model = endpoint
 	}
 	guard, guarded := service.BalancePreauthorizationGuardFromContext(c.Request.Context())
-	if guarded && guard.IsCurrentOwner() && endpoint == "realtime" {
+	preauthorizationOwner := guarded && guard.IsCurrentOwner()
+	if preauthorizationOwner && endpoint == "realtime" {
 		// Realtime keeps its existing reconciliation path: reservation happens
 		// during relay, and this final pass aligns the usage task with the hold.
 		result.RequestID = guard.RequestID()
@@ -456,9 +457,9 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 				zap.Int64("api_key_id", apiKey.ID),
 			).Error("grok_voice.balance_preauthorization_top_up_failed", zap.Error(err))
 		}
-	} else if !(guarded && guard.IsCurrentOwner()) && strings.TrimSpace(result.AudioUsage.Mode) == "realtime" {
+	} else if !preauthorizationOwner && strings.TrimSpace(result.AudioUsage.Mode) == "realtime" {
 		result.RequestID = service.StableGrokRealtimeBillingRequestID(result.RequestID)
-	} else if !(guarded && guard.IsCurrentOwner()) {
+	} else if !preauthorizationOwner {
 		result.RequestID = service.StableGrokAudioBillingRequestID(result.RequestID)
 	}
 	userAgent := c.GetHeader("User-Agent")

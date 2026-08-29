@@ -45,11 +45,6 @@ func (s *AccountTestService) observeCodexQuotaOverdraftTestResult(ctx context.Co
 	}
 }
 
-func (s *AccountTestService) codexQuotaOverdraftTestEnabled(account *Account) bool {
-	enabled, _ := s.codexQuotaOverdraftTestRuntime(context.Background())
-	return enabled && isCodexQuotaOverdraftAccount(account)
-}
-
 func (s *AccountTestService) codexQuotaOverdraftTestRuntime(ctx context.Context) (bool, bool) {
 	if s == nil {
 		return false, false
