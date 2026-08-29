@@ -18,6 +18,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	dbmigrations "github.com/Wei-Shaw/sub2api/migrations"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
@@ -212,7 +213,7 @@ func testTx(t *testing.T) *sql.Tx {
 }
 
 // testEntClient 返回全局的 ent client，用于测试需要内部管理事务的代码（如 Create/Update 方法）。
-// 此 client 的操作会真正提交，因此测试前后都要清空业务表。
+// 此 client 的操作会真正提交，因此测试前后都要恢复数据库基线。
 func testEntClient(t *testing.T) *dbent.Client {
 	t.Helper()
 	resetIntegrationDB(t)
@@ -243,6 +244,11 @@ func resetIntegrationDB(t *testing.T) {
 	}
 	_, err = integrationDB.ExecContext(ctx, statement)
 	require.NoError(t, err, "reset integration database")
+
+	seedSQL, err := dbmigrations.FS.ReadFile("008_seed_default_group.sql")
+	require.NoError(t, err, "read default group seed migration")
+	_, err = integrationDB.ExecContext(ctx, string(seedSQL))
+	require.NoError(t, err, "restore integration database baseline")
 }
 
 // testEntTx 返回一个 ent 事务，用于需要事务隔离的测试。

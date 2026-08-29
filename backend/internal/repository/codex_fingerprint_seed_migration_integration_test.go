@@ -89,6 +89,7 @@ RETURNING id
 
 func TestBulkUpdateGeneratesDistinctStableCodexFingerprintSeedsPerEligibleRow(t *testing.T) {
 	ctx := context.Background()
+	client := testEntClient(t)
 	testName := "bulk-codex-seed-" + uuid.NewString()
 	type fixture struct {
 		name        string
@@ -117,7 +118,7 @@ RETURNING id
 		_, _ = integrationDB.ExecContext(context.Background(), `DELETE FROM accounts WHERE id = ANY($1)`, pq.Array(ids))
 	})
 
-	repo := newAccountRepositoryWithSQL(testEntClient(t), integrationDB, nil)
+	repo := newAccountRepositoryWithSQL(client, integrationDB, nil)
 	updates := service.AccountBulkUpdate{
 		Extra: map[string]any{
 			"codex_fingerprint_mode": "session",
