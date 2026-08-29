@@ -58,6 +58,7 @@ func TestUsageBillingRepositoryApply_DeduplicatesBalanceBilling(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result2)
 	require.False(t, result2.Applied)
+	requireSingleBalanceSettlement(t, ctx, user.ID, 1.25)
 
 	var balance float64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
@@ -360,8 +361,20 @@ func TestUsageBillingRepositoryApply_DeduplicatesAgainstArchivedKey(t *testing.T
 	result2, err := repo.Apply(ctx, cmd)
 	require.NoError(t, err)
 	require.False(t, result2.Applied)
+	requireSingleBalanceSettlement(t, ctx, user.ID, 1.25)
 
 	var balance float64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
 	require.InDelta(t, 98.75, balance, 0.000001)
+}
+
+func requireSingleBalanceSettlement(t *testing.T, ctx context.Context, userID int64, amount float64) {
+	t.Helper()
+
+	results, err := NewUsageBalanceSettlementRepository(integrationDB).FlushPendingBalanceSettlements(ctx, 1000)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, userID, results[0].UserID)
+	require.Equal(t, 1, results[0].EventCount)
+	require.InDelta(t, amount, results[0].Amount, 0.000001)
 }

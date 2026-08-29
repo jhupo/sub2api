@@ -212,10 +212,37 @@ func testTx(t *testing.T) *sql.Tx {
 }
 
 // testEntClient 返回全局的 ent client，用于测试需要内部管理事务的代码（如 Create/Update 方法）。
-// 注意：此 client 的操作会真正写入数据库，测试结束后不会自动回滚。
+// 此 client 的操作会真正提交，因此测试前后都要清空业务表。
 func testEntClient(t *testing.T) *dbent.Client {
 	t.Helper()
+	resetIntegrationDB(t)
+	t.Cleanup(func() {
+		resetIntegrationDB(t)
+	})
 	return integrationEntClient
+}
+
+func resetIntegrationDB(t *testing.T) {
+	t.Helper()
+
+	ctx := context.Background()
+	var statement string
+	err := integrationDB.QueryRowContext(ctx, `
+		SELECT COALESCE(
+			'TRUNCATE TABLE ' ||
+			string_agg(format('%I.%I', schemaname, tablename), ', ' ORDER BY tablename) ||
+			' RESTART IDENTITY CASCADE',
+			''
+		)
+		FROM pg_tables
+		WHERE schemaname = 'public' AND tablename <> 'schema_migrations'
+	`).Scan(&statement)
+	require.NoError(t, err, "build integration database reset")
+	if statement == "" {
+		return
+	}
+	_, err = integrationDB.ExecContext(ctx, statement)
+	require.NoError(t, err, "reset integration database")
 }
 
 // testEntTx 返回一个 ent 事务，用于需要事务隔离的测试。
