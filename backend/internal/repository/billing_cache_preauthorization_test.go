@@ -427,8 +427,9 @@ func TestFinalizeLiveBalanceSettlesOnceAndRetainsTerminalMarker(t *testing.T) {
 
 	ttl, err := client.TTL(ctx, liveBalanceAttemptKey(10, "request-final")).Result()
 	require.NoError(t, err)
-	require.Greater(t, ttl, time.Duration(0))
-	require.LessOrEqual(t, ttl, liveBalanceTerminalAttemptTTL)
+	require.Equal(t, time.Duration(-1), ttl)
+	require.NoError(t, cache.DeleteLiveBalanceAttempt(ctx, 10, "request-final"))
+	require.Zero(t, client.Exists(ctx, liveBalanceAttemptKey(10, "request-final")).Val())
 }
 
 func TestFinalizeLiveBalanceDebitsBoundedOverageEvenBelowZero(t *testing.T) {
@@ -445,7 +446,7 @@ func TestFinalizeLiveBalanceDebitsBoundedOverageEvenBelowZero(t *testing.T) {
 }
 
 func TestRefundLiveBalanceReleasesHoldOnce(t *testing.T) {
-	cache, _ := newLiveBalanceTestCache(t)
+	cache, client := newLiveBalanceTestCache(t)
 	ctx := context.Background()
 
 	_, err := cache.AuthorizeLiveBalance(ctx, 12, "request-refund", 2, 1.25)
@@ -466,6 +467,11 @@ func TestRefundLiveBalanceReleasesHoldOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, LiveBalanceOutcomeConflict, finalize.Outcome)
 	require.Equal(t, LiveBalanceAttemptRefunded, finalize.State)
+	ttl, err := client.TTL(ctx, liveBalanceAttemptKey(12, "request-refund")).Result()
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(-1), ttl)
+	require.NoError(t, cache.DeleteLiveBalanceAttempt(ctx, 12, "request-refund"))
+	require.Zero(t, client.Exists(ctx, liveBalanceAttemptKey(12, "request-refund")).Val())
 }
 
 func TestLiveBalanceMoneyQuantization(t *testing.T) {
@@ -520,6 +526,56 @@ func TestLiveBalanceConcurrentAuthorizationsCannotOverspend(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists)
 	require.Zero(t, balance)
+}
+
+func TestSnapshotWatermarkAuthorizationTrustsNewerLiveWallet(t *testing.T) {
+	cache, _ := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+	_, err := cache.AuthorizeLiveBalanceAtWatermark(ctx, 16, "seed", 10, 7, 0)
+	require.NoError(t, err)
+	_, err = cache.AdjustLiveBalanceAtWatermark(ctx, 16, "outbox:8", 8, 7, 500000000)
+	require.NoError(t, err)
+
+	result, err := cache.AuthorizeLiveBalanceAtSnapshotWatermarkIfSafe(ctx, 16, "next", 10, 7, 1, false)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeApplied, result.Outcome)
+	require.Equal(t, 14.0, result.AvailableBalance)
+}
+
+func TestSnapshotWatermarkAuthorizationFailsClosedBehindAndPreservesHold(t *testing.T) {
+	cache, _ := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+	_, err := cache.AuthorizeLiveBalanceAtWatermark(ctx, 17, "hold", 10, 7, 2)
+	require.NoError(t, err)
+
+	conflict, err := cache.AuthorizeLiveBalanceAtSnapshotWatermarkIfSafe(ctx, 17, "next", 5, 8, 1, false)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeConflict, conflict.Outcome)
+	require.Equal(t, 8.0, conflict.AvailableBalance)
+
+	applied, err := cache.AdjustLiveBalanceAtWatermark(ctx, 17, "outbox:8", 8, 7, -500000000)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeApplied, applied.Outcome)
+	require.Equal(t, 3.0, applied.AvailableBalance)
+}
+
+func TestSnapshotWatermarkTopUpTrustsNewerWalletAndFailsClosedBehind(t *testing.T) {
+	cache, _ := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+	_, err := cache.AuthorizeLiveBalanceAtWatermark(ctx, 18, "stream", 10, 7, 1)
+	require.NoError(t, err)
+	_, err = cache.AdjustLiveBalanceAtWatermark(ctx, 18, "outbox:8", 8, 7, 500000000)
+	require.NoError(t, err)
+
+	newer, err := cache.TopUpLiveBalanceAtSnapshotWatermark(ctx, 18, "stream", 7, 1.5)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeApplied, newer.Outcome)
+	require.Equal(t, 13.5, newer.AvailableBalance)
+
+	behind, err := cache.TopUpLiveBalanceAtSnapshotWatermark(ctx, 18, "stream", 9, 2)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeConflict, behind.Outcome)
+	require.Equal(t, 13.5, behind.AvailableBalance)
 }
 
 func TestGetLiveBalanceMissingAndValidation(t *testing.T) {

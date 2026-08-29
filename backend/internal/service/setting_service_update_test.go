@@ -146,7 +146,8 @@ func (s *forwardedIPMigrationRepoStub) Delete(context.Context, string) error {
 }
 
 type settingAntigravityUARepoStub struct {
-	values map[string]string
+	values      map[string]string
+	getValueErr error
 }
 
 func (s *settingAntigravityUARepoStub) Get(ctx context.Context, key string) (*Setting, error) {
@@ -154,6 +155,9 @@ func (s *settingAntigravityUARepoStub) Get(ctx context.Context, key string) (*Se
 }
 
 func (s *settingAntigravityUARepoStub) GetValue(ctx context.Context, key string) (string, error) {
+	if s.getValueErr != nil {
+		return "", s.getValueErr
+	}
 	if value, ok := s.values[key]; ok {
 		return value, nil
 	}
@@ -215,6 +219,46 @@ func TestSettingService_AffiliateAdminRechargeSetting(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "true", repo.updates[SettingKeyAffiliateAdminRechargeEnabled])
 	})
+}
+
+func TestSettingService_BalancePreauthorizationRuntimeDefaultsOffAndPublishesUpdate(t *testing.T) {
+	missing := NewSettingService(&settingAntigravityUARepoStub{values: map[string]string{}}, &config.Config{
+		Billing: config.BillingConfig{BalancePreauthorizationEnabled: true},
+	})
+	require.False(t, missing.IsBalancePreauthorizationEnabled(context.Background()),
+		"a missing database setting must stay opt-in even when legacy config is enabled")
+
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{BalancePreauthorizationEnabled: true})
+	require.NoError(t, err)
+	require.Equal(t, "true", repo.updates[SettingKeyBalancePreauthorizationEnabled])
+	require.True(t, svc.IsBalancePreauthorizationEnabled(context.Background()),
+		"the writer replica must observe the saved switch immediately without another database read")
+}
+
+func TestSettingService_BalancePreauthorizationRuntimeFailsClosedOnControlPlaneFailure(t *testing.T) {
+	tests := []struct {
+		name    string
+		values  map[string]string
+		repoErr error
+		want    bool
+	}{
+		{name: "missing defaults off", values: map[string]string{}, want: false},
+		{name: "explicit false", values: map[string]string{SettingKeyBalancePreauthorizationEnabled: "false"}, want: false},
+		{name: "explicit true", values: map[string]string{SettingKeyBalancePreauthorizationEnabled: "true"}, want: true},
+		{name: "invalid value", values: map[string]string{SettingKeyBalancePreauthorizationEnabled: "enabled"}, want: true},
+		{name: "repository failure", values: map[string]string{}, repoErr: errors.New("database unavailable"), want: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			svc := NewSettingService(&settingAntigravityUARepoStub{
+				values: test.values, getValueErr: test.repoErr,
+			}, &config.Config{})
+			require.Equal(t, test.want, svc.IsBalancePreauthorizationEnabled(context.Background()))
+		})
+	}
 }
 
 func (s *defaultSubGroupReaderStub) GetByID(ctx context.Context, id int64) (*Group, error) {

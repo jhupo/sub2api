@@ -41,6 +41,8 @@ type liveBalanceSnapshotReaderStub struct {
 func (s *liveBalanceSnapshotReaderStub) LoadLiveBalanceInitializationSnapshot(
 	_ context.Context,
 	userID int64,
+	_ string,
+	_ int64,
 ) (LiveBalanceInitializationSnapshot, error) {
 	s.calls++
 	s.userID = userID
@@ -54,6 +56,23 @@ type liveBalanceReadCacheStub struct {
 	liveErr     error
 	liveCalls   int
 	legacyCalls int
+}
+
+type liveBalanceReadUserRepoStub struct {
+	UserRepository
+	balance float64
+	calls   int
+}
+
+type balancePreauthorizationRuntimeSettingsStub bool
+
+func (s balancePreauthorizationRuntimeSettingsStub) IsBalancePreauthorizationEnabled(context.Context) bool {
+	return bool(s)
+}
+
+func (s *liveBalanceReadUserRepoStub) GetByID(context.Context, int64) (*User, error) {
+	s.calls++
+	return &User{Balance: s.balance}, nil
 }
 
 func (s *liveBalanceReadCacheStub) GetLiveBalance(context.Context, int64) (float64, bool, error) {
@@ -250,7 +269,7 @@ func TestGetUserBalancePrefersPersistentLiveWallet(t *testing.T) {
 	balance, err := service.GetUserBalance(context.Background(), 7)
 	require.NoError(t, err)
 	require.Equal(t, 1.25, balance)
-	require.Zero(t, cache.legacyCalls)
+	require.Equal(t, 1, cache.legacyCalls)
 }
 
 func TestGetUserBalanceDoesNotBypassLiveWalletRedisFailure(t *testing.T) {
@@ -262,35 +281,74 @@ func TestGetUserBalanceDoesNotBypassLiveWalletRedisFailure(t *testing.T) {
 	require.Zero(t, cache.legacyCalls)
 }
 
-func TestGetUserBalanceSkipsStaleLiveWalletWhenPreauthorizationDisabled(t *testing.T) {
+func TestGetUserBalanceUsesLowerProjectionAfterPreauthorizationDisabled(t *testing.T) {
 	tests := []struct {
-		name  string
-		cache *liveBalanceReadCacheStub
+		name string
+		live float64
+		want float64
 	}{
-		{
-			name:  "stale negative wallet",
-			cache: &liveBalanceReadCacheStub{liveBalance: -25, liveExists: true},
-		},
-		{
-			name:  "live wallet redis failure",
-			cache: &liveBalanceReadCacheStub{liveErr: errors.New("redis unavailable")},
-		},
+		{name: "live wallet is lower", live: 25, want: 25},
+		{name: "legacy balance is lower", live: 1200, want: 999},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			service := &BillingCacheService{
-				cache: test.cache,
-				cfg:   &config.Config{},
-			}
+			cache := &liveBalanceReadCacheStub{liveBalance: test.live, liveExists: true}
+			service := &BillingCacheService{cache: cache, cfg: &config.Config{}}
 
 			balance, err := service.GetUserBalance(context.Background(), 7)
 			require.NoError(t, err)
-			require.Equal(t, float64(999), balance)
-			require.Zero(t, test.cache.liveCalls)
-			require.Equal(t, 1, test.cache.legacyCalls)
+			require.Equal(t, test.want, balance)
+			require.Equal(t, 1, cache.liveCalls)
+			require.Equal(t, 1, cache.legacyCalls)
 		})
 	}
+}
+
+func TestGetUserBalanceDisabledGateUsesSnapshotOnLiveWalletReadFailure(t *testing.T) {
+	cache := &liveBalanceReadCacheStub{liveErr: errors.New("redis unavailable")}
+	reader := &liveBalanceSnapshotReaderStub{snapshot: LiveBalanceInitializationSnapshot{Balance: 12.5}}
+	service := &BillingCacheService{
+		cache:                           cache,
+		cfg:                             &config.Config{},
+		balancePreauthorizationSettings: balancePreauthorizationRuntimeSettingsStub(false),
+		balancePreauthorizationSnapshot: reader,
+	}
+
+	balance, err := service.GetUserBalance(context.Background(), 7)
+	require.NoError(t, err)
+	require.Equal(t, 12.5, balance)
+	require.Equal(t, 1, cache.liveCalls)
+	require.Zero(t, cache.legacyCalls)
+	require.Equal(t, 1, reader.calls)
+}
+
+func TestGetUserBalanceDisabledGateRejectsMissingWalletWithUnsettledBilling(t *testing.T) {
+	cache := &liveBalanceReadCacheStub{liveErr: errors.New("redis unavailable")}
+	reader := &liveBalanceSnapshotReaderStub{snapshot: LiveBalanceInitializationSnapshot{Balance: 12.5, HasUnsettled: true}}
+	service := &BillingCacheService{
+		cache:                           cache,
+		cfg:                             &config.Config{},
+		balancePreauthorizationSettings: balancePreauthorizationRuntimeSettingsStub(false),
+		balancePreauthorizationSnapshot: reader,
+	}
+
+	_, err := service.GetUserBalance(context.Background(), 7)
+	require.ErrorIs(t, err, ErrBillingServiceUnavailable)
+	require.Equal(t, 1, cache.liveCalls)
+	require.Zero(t, cache.legacyCalls)
+	require.Equal(t, 1, reader.calls)
+}
+
+func TestGetUserBalanceUsesLegacyProjectionWhenLiveWalletDoesNotExist(t *testing.T) {
+	cache := &liveBalanceReadCacheStub{}
+	service := &BillingCacheService{cache: cache, cfg: &config.Config{}}
+
+	balance, err := service.GetUserBalance(context.Background(), 7)
+	require.NoError(t, err)
+	require.Equal(t, float64(999), balance)
+	require.Equal(t, 1, cache.liveCalls)
+	require.Equal(t, 1, cache.legacyCalls)
 }
 
 func TestGetUserBalanceKeepsLiveWalletFailClosedWhenPreauthorizationEnabled(t *testing.T) {
@@ -306,4 +364,58 @@ func TestGetUserBalanceKeepsLiveWalletFailClosedWhenPreauthorizationEnabled(t *t
 	require.ErrorContains(t, err, "get live user balance")
 	require.Equal(t, 1, cache.liveCalls)
 	require.Zero(t, cache.legacyCalls)
+}
+
+func TestGetUserBalanceWithoutCacheFailsClosedWhenPreauthorizationEnabled(t *testing.T) {
+	repo := &liveBalanceReadUserRepoStub{balance: 12.5}
+	service := &BillingCacheService{
+		userRepo: repo,
+		cfg: &config.Config{RunMode: config.RunModeStandard, Billing: config.BillingConfig{
+			BalancePreauthorizationEnabled: true,
+		}},
+	}
+
+	_, err := service.GetUserBalance(context.Background(), 7)
+	require.ErrorIs(t, err, ErrBillingServiceUnavailable)
+	require.Zero(t, repo.calls)
+}
+
+func TestGetUserBalanceWithoutCacheUsesSafeSnapshotWhenPreauthorizationDisabled(t *testing.T) {
+	reader := &liveBalanceSnapshotReaderStub{snapshot: LiveBalanceInitializationSnapshot{Balance: 12.5}}
+	service := &BillingCacheService{
+		cfg:                             &config.Config{RunMode: config.RunModeStandard},
+		balancePreauthorizationSettings: balancePreauthorizationRuntimeSettingsStub(false),
+		balancePreauthorizationSnapshot: reader,
+	}
+
+	balance, err := service.GetUserBalance(context.Background(), 7)
+	require.NoError(t, err)
+	require.Equal(t, 12.5, balance)
+	require.Equal(t, 1, reader.calls)
+}
+
+func TestGetUserBalanceWithoutCacheRejectsUnsettledBillingWhenPreauthorizationDisabled(t *testing.T) {
+	reader := &liveBalanceSnapshotReaderStub{snapshot: LiveBalanceInitializationSnapshot{Balance: 12.5, HasUnsettled: true}}
+	service := &BillingCacheService{
+		cfg:                             &config.Config{RunMode: config.RunModeStandard},
+		balancePreauthorizationSettings: balancePreauthorizationRuntimeSettingsStub(false),
+		balancePreauthorizationSnapshot: reader,
+	}
+
+	_, err := service.GetUserBalance(context.Background(), 7)
+	require.ErrorIs(t, err, ErrBillingServiceUnavailable)
+	require.Equal(t, 1, reader.calls)
+}
+
+func TestGetUserBalanceWithoutCacheUsesDatabaseInSimpleMode(t *testing.T) {
+	repo := &liveBalanceReadUserRepoStub{balance: 12.5}
+	service := &BillingCacheService{
+		userRepo: repo,
+		cfg:      &config.Config{RunMode: config.RunModeSimple},
+	}
+
+	balance, err := service.GetUserBalance(context.Background(), 7)
+	require.NoError(t, err)
+	require.Equal(t, 12.5, balance)
+	require.Equal(t, 1, repo.calls)
 }

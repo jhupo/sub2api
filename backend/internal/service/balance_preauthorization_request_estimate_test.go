@@ -49,11 +49,17 @@ func TestEstimateBalancePreauthorizationTokensFallsBackWithoutIO(t *testing.T) {
 	body := []byte(`{"model":"custom","prompt":"` + strings.Repeat("x", 700) + `"}`)
 	got := EstimateBalancePreauthorizationTokens(body)
 	require.Equal(t, len(body), got.InputTokens)
-	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, got.OutputTokens)
+	require.Equal(t, DefaultBalancePreauthorizationNonStreamingOutputWindow, got.OutputTokens)
 }
 
 func TestEstimateBalancePreauthorizationTokensIgnoresInvalidOutputLimit(t *testing.T) {
 	body := []byte(`{"model":"gpt-5","input":"hello","max_output_tokens":-1}`)
+	got := EstimateBalancePreauthorizationTokens(body)
+	require.Equal(t, DefaultBalancePreauthorizationNonStreamingOutputWindow, got.OutputTokens)
+}
+
+func TestEstimateBalancePreauthorizationTokensUsesSmallRenewableStreamingWindow(t *testing.T) {
+	body := []byte(`{"model":"gpt-5","input":"hello","stream":true}`)
 	got := EstimateBalancePreauthorizationTokens(body)
 	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, got.OutputTokens)
 }

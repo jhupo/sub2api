@@ -11,6 +11,7 @@ import (
 const (
 	defaultBalancePreauthorizationRecoveryBatch = 500
 	maxBalancePreauthorizationRecoveryBatch     = 5000
+	balancePreauthorizationRecoveryLease        = time.Minute
 )
 
 func (r *usageBillingRepository) ListRecoverableBalancePreauthorizations(
@@ -35,6 +36,38 @@ func (r *usageBillingRepository) ListRecoverableBalancePreauthorizations(
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
+		WITH candidates AS (
+			SELECT id, expires_at
+			FROM billing_balance_settlements
+			WHERE (
+					status IN ($4, $5)
+					AND expires_at <= $1
+					AND updated_at <= NOW() - ($7 * INTERVAL '1 second')
+				)
+				OR (
+					status = $6
+					AND updated_at <= $2
+				)
+			ORDER BY CASE WHEN status = $6 THEN updated_at ELSE expires_at END, id
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		), leased AS (
+			UPDATE billing_balance_settlements AS settlement
+			SET updated_at = NOW()
+			FROM candidates
+			WHERE settlement.id = candidates.id
+			RETURNING settlement.request_id,
+				settlement.api_key_id,
+				settlement.user_id,
+				settlement.request_fingerprint,
+				settlement.authorization_fingerprint,
+				settlement.hold_usd,
+				settlement.amount_usd,
+				settlement.status,
+				settlement.expires_at,
+				COALESCE(settlement.async_task_id, ''),
+				settlement.updated_at
+		)
 		SELECT request_id,
 			api_key_id,
 			user_id,
@@ -44,23 +77,14 @@ func (r *usageBillingRepository) ListRecoverableBalancePreauthorizations(
 			amount_usd,
 			status,
 			expires_at,
+			async_task_id,
 			updated_at
-		FROM billing_balance_settlements
-		WHERE (
-				status IN ($4, $5)
-				AND expires_at <= $1
-			)
-			OR (
-				status = $6
-				AND updated_at <= $2
-			)
-		ORDER BY CASE WHEN status = $6 THEN updated_at ELSE expires_at END, id
-		LIMIT $3
-		FOR UPDATE SKIP LOCKED
+		FROM leased
 	`, authorizationExpiredBefore, finalizationStaleBefore, limit,
 		service.BalanceSettlementPrepared,
 		service.BalanceSettlementAuthorized,
 		service.BalanceSettlementFinalizationPending,
+		int64(balancePreauthorizationRecoveryLease/time.Second),
 	)
 	if err != nil {
 		return nil, err
@@ -80,6 +104,7 @@ func (r *usageBillingRepository) ListRecoverableBalancePreauthorizations(
 			&record.Amount,
 			&record.Status,
 			&record.ExpiresAt,
+			&record.AsyncTaskID,
 			&record.UpdatedAt,
 		); err != nil {
 			return nil, err

@@ -7015,6 +7015,33 @@
 	        <!-- Tab: Features (功能开关) -->
         <div v-show="activeTab === 'features'" class="space-y-6">
 
+          <div class="card">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t('admin.settings.features.balancePreauthorization.title') }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t('admin.settings.features.balancePreauthorization.description') }}
+              </p>
+            </div>
+            <div class="p-6">
+              <div class="flex items-center justify-between">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t('admin.settings.features.balancePreauthorization.enabled') }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('admin.settings.features.balancePreauthorization.enabledHint') }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="form.balance_preauthorization_enabled"
+                  data-testid="balance-preauthorization-enabled"
+                />
+              </div>
+            </div>
+          </div>
+
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -9734,6 +9761,7 @@ const form = reactive<SettingsForm>({
   fallback_model_antigravity: "gemini-2.5-pro",
   grok_default_text_model: "grok-4.5",
   grok_cross_client_model_map_enabled: false,
+  balance_preauthorization_enabled: false,
   grok_default_base_url_mode: "cli",
   // Identity patch (Claude -> Gemini)
   enable_identity_patch: true,
@@ -11336,6 +11364,7 @@ async function saveSettings() {
         form.grok_default_text_model.trim() || "grok-4.5",
       grok_cross_client_model_map_enabled:
         form.grok_cross_client_model_map_enabled,
+      balance_preauthorization_enabled: form.balance_preauthorization_enabled,
       grok_default_base_url_mode: form.grok_default_base_url_mode,
       enable_identity_patch: form.enable_identity_patch,
       identity_patch_prompt: form.identity_patch_prompt,

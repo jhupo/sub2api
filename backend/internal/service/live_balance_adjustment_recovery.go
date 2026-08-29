@@ -54,7 +54,7 @@ func (a *recoveringLiveBalanceAdjustmentApplier) ApplyExternalBalanceOutboxAdjus
 		return fmt.Errorf("recover missing live balance wallet: recovery dependencies are unavailable: %w", err)
 	}
 
-	snapshot, snapshotErr := a.snapshotReader.LoadLiveBalanceInitializationSnapshot(ctx, event.UserID)
+	snapshot, snapshotErr := a.snapshotReader.LoadLiveBalanceInitializationSnapshot(ctx, event.UserID, "", 0)
 	if snapshotErr != nil {
 		return fmt.Errorf("load live balance recovery snapshot: %w", snapshotErr)
 	}

@@ -430,6 +430,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
+	updates[SettingKeyBalancePreauthorizationEnabled] = strconv.FormatBool(settings.BalancePreauthorizationEnabled)
 
 	// Model plaza feature switches + description
 	updates[SettingKeyModelPlazaEnabled] = strconv.FormatBool(settings.ModelPlazaEnabled)
@@ -684,6 +685,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	if settings == nil {
 		return
 	}
+	s.publishBalancePreauthorizationRuntime(settings.BalancePreauthorizationEnabled)
 	// Publish the Codex gates together with the other in-process setting caches;
 	// this makes a panel change take effect immediately on the writer replica.
 	s.publishCodexQuotaOverdraftRuntime(CodexQuotaOverdraftRuntimeSettings{

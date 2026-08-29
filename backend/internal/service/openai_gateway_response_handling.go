@@ -723,22 +723,21 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					shouldFlush = true
 				}
 				eventShouldFlush = eventShouldFlush || shouldFlush
+				// Reserve visible output before staging the line. The guarded
+				// event may flush immediately, so post-write top-ups are too late.
+				if startsVisibleOutput && streamEarlyErr == nil {
+					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(line)); topUpErr != nil {
+						streamEarlyErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
+						s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI responses", topUpErr)
+						return
+					}
+				}
 				if _, err := writePendingString(line); err != nil {
 					handlePendingWriteError(err)
 				} else if _, err := writePendingString("\n"); err != nil {
 					handlePendingWriteError(err)
 				} else {
 					eventInProgress = true
-					// 可见输出帧计量：累加已承诺字节作 token 上界，跨预扣窗口时补扣。
-					// 补扣失败通过 streamEarlyErr 中止：后续行被 processSSELine 顶部的
-					// 守卫跳过，scanner 循环结束后按该错误返回并关闭上游连接。
-					// tracker 为 nil 时整体零开销。
-					if startsVisibleOutput && streamEarlyErr == nil {
-						if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(line)); topUpErr != nil {
-							streamEarlyErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
-							s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI responses", topUpErr)
-						}
-					}
 				}
 			}
 

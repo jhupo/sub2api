@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -19,6 +20,13 @@ import (
 // DefaultGrokRealtimeDialTimeout bounds the pre-accept upstream handshake.
 // The timeout only covers dialing; an established session is not interrupted.
 const DefaultGrokRealtimeDialTimeout = 12 * time.Second
+
+const (
+	grokRealtimeReservationInterval      = 5 * time.Second
+	GrokRealtimeReservationForwardWindow = 15 * time.Second
+)
+
+var ErrGrokRealtimeReservationFailed = errors.New("grok realtime balance reservation failed")
 
 // supportedGrokVoiceHTTPEndpoints are xAI Voice HTTP paths we forward as-is.
 var supportedGrokVoiceHTTPEndpoints = map[string]struct{}{
@@ -106,17 +114,40 @@ func (s *OpenAIGatewayService) ForwardGrokVoice(ctx context.Context, c *gin.Cont
 	if err != nil {
 		return nil, err
 	}
-	writeGrokMediaResponse(c, resp, data, s.responseHeaderFilter)
-	audioUsage := estimateGrokVoiceAudioUsage(baseEndpoint, body, contentType, data, time.Since(started))
+	audioUsage := EstimateGrokVoiceAudioUsage(baseEndpoint, body, contentType, data, time.Since(started))
 	upstreamID := firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id"))
-	return &OpenAIForwardResult{
+	result := &OpenAIForwardResult{
 		// Forced durable money-event id so usage_billing_dedup cannot collapse under a reused client id.
 		RequestID:     StableGrokAudioBillingRequestID(upstreamID),
 		Model:         baseEndpoint,
 		UpstreamModel: baseEndpoint,
 		Duration:      time.Since(started),
 		AudioUsage:    audioUsage,
-	}, nil
+		grokVoiceResponse: &grokMediaBufferedResponse{
+			statusCode: resp.StatusCode,
+			header:     resp.Header.Clone(),
+			body:       append([]byte(nil), data...),
+		},
+	}
+	return result, nil
+}
+
+// CommitGrokVoiceResponse writes a successful Voice HTTP response that
+// ForwardGrokVoice held until guarded billing reconciliation completed.
+func (s *OpenAIGatewayService) CommitGrokVoiceResponse(c *gin.Context, result *OpenAIForwardResult) error {
+	if s == nil || c == nil || result == nil || result.grokVoiceResponse == nil {
+		return fmt.Errorf("grok voice response is unavailable")
+	}
+	buffered := result.grokVoiceResponse
+	if buffered.committed || c.Writer.Written() || IsResponseCommitted(c) {
+		return fmt.Errorf("grok voice response is already committed")
+	}
+	writeGrokMediaResponse(c, &http.Response{
+		StatusCode: buffered.statusCode,
+		Header:     buffered.header,
+	}, buffered.body, s.responseHeaderFilter)
+	buffered.committed = true
+	return nil
 }
 
 // ProxyGrokRealtime relays JSON Realtime events to xAI's native Voice WS.
@@ -134,7 +165,7 @@ func (s *OpenAIGatewayService) ProxyGrokRealtime(ctx context.Context, c *gin.Con
 		return false, err
 	}
 	defer func() { _ = upstream.Close() }()
-	return s.ProxyGrokRealtimeConn(ctx, c, client, upstream)
+	return s.ProxyGrokRealtimeConn(ctx, c, client, upstream, nil)
 }
 
 type GrokRealtimeUpstream struct{ conn openAIWSClientConn }
@@ -197,7 +228,15 @@ func (s *OpenAIGatewayService) HandleGrokRealtimeUpstreamError(ctx context.Conte
 	s.handleGrokAccountUpstreamError(ctx, account, statusCode, nil, body)
 }
 
-func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin.Context, client *coderws.Conn, upstream *GrokRealtimeUpstream) (bool, error) {
+// ProxyGrokRealtimeConn relays one established session. reserve is invoked at
+// a fixed cadence with elapsed session time; an error stops both relay loops.
+func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(
+	ctx context.Context,
+	c *gin.Context,
+	client *coderws.Conn,
+	upstream *GrokRealtimeUpstream,
+	reserve func(context.Context, time.Duration) error,
+) (bool, error) {
 	if s == nil || client == nil || upstream == nil || upstream.conn == nil {
 		return false, fmt.Errorf("realtime connection is required")
 	}
@@ -252,7 +291,12 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 		}
 	}()
 
-	return awaitGrokRealtimeAudioObserved(errCh, &audioObserved)
+	if reserve == nil {
+		return awaitGrokRealtimeAudioObserved(errCh, &audioObserved)
+	}
+	ticker := time.NewTicker(grokRealtimeReservationInterval)
+	defer ticker.Stop()
+	return awaitGrokRealtimeAudioObservedWithReservation(ctx, errCh, &audioObserved, ticker.C, time.Now(), reserve)
 }
 
 // ProbeGrokRealtime performs the upstream WebSocket handshake without sending
@@ -302,6 +346,33 @@ func awaitGrokRealtimeAudioObserved(errCh <-chan error, audioObserved *atomic.Bo
 	return audioObserved.Load(), err
 }
 
+func awaitGrokRealtimeAudioObservedWithReservation(
+	ctx context.Context,
+	errCh <-chan error,
+	audioObserved *atomic.Bool,
+	ticks <-chan time.Time,
+	started time.Time,
+	reserve func(context.Context, time.Duration) error,
+) (bool, error) {
+	for {
+		select {
+		case err := <-errCh:
+			if audioObserved == nil {
+				return false, err
+			}
+			return audioObserved.Load(), err
+		case now := <-ticks:
+			if err := reserve(ctx, now.Sub(started)); err != nil {
+				observed := audioObserved != nil && audioObserved.Load()
+				return observed, fmt.Errorf("%w: %v", ErrGrokRealtimeReservationFailed, err)
+			}
+		case <-ctx.Done():
+			observed := audioObserved != nil && audioObserved.Load()
+			return observed, ctx.Err()
+		}
+	}
+}
+
 func grokRealtimeEventHasAudio(msg []byte) bool {
 	if !gjson.ValidBytes(msg) {
 		return false
@@ -322,7 +393,7 @@ func grokRealtimeEventHasAudio(msg []byte) bool {
 // estimateGrokVoiceAudioUsage derives billing units from the request/response.
 // TTS: million characters of input text; STT: hours approximated from request body size
 // when duration is unknown; custom-voices: no units (nil).
-func estimateGrokVoiceAudioUsage(endpoint string, reqBody []byte, contentType string, respBody []byte, elapsed time.Duration) *AudioUsage {
+func EstimateGrokVoiceAudioUsage(endpoint string, reqBody []byte, contentType string, respBody []byte, elapsed time.Duration) *AudioUsage {
 	switch strings.TrimSpace(endpoint) {
 	case "tts":
 		// Prefer JSON "input" / "text" fields; fallback to raw body length.
@@ -365,24 +436,11 @@ func estimateGrokVoiceAudioUsage(endpoint string, reqBody []byte, contentType st
 				clientSecs = v.Float()
 			}
 		}
-		if secs <= 0 {
-			secs = elapsed.Seconds()
-		}
-		if secs <= 0 {
-			secs = clientSecs
-		}
-		if secs <= 0 {
-			secs = sizeFloor
-		}
-		// Cap untrusted client under-report: if client duration is much smaller than
-		// size/elapsed floors, bill the larger of floors (anti underbill).
-		if clientSecs > 0 && secs == clientSecs {
-			floor := sizeFloor
-			if elapsed.Seconds() > floor {
-				floor = elapsed.Seconds()
-			}
-			if floor > 0 && clientSecs < floor*0.5 {
-				secs = floor
+		// A client-declared duration can increase the estimate, but never lower
+		// the observable request-size, elapsed, or provider-reported floors.
+		for _, candidate := range []float64{clientSecs, sizeFloor, elapsed.Seconds()} {
+			if candidate > secs {
+				secs = candidate
 			}
 		}
 		if secs <= 0 {

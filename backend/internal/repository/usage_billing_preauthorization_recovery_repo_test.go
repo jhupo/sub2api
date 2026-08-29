@@ -20,12 +20,12 @@ func TestListRecoverableBalancePreauthorizationsReturnsFinalizationData(t *testi
 	finalizationCutoff := authorizationCutoff.Add(-30 * time.Second)
 	expiresAt := authorizationCutoff.Add(-time.Minute)
 	updatedAt := finalizationCutoff.Add(-time.Second)
-	mock.ExpectQuery(`(?s)SELECT request_id,.*FROM billing_balance_settlements.*expires_at <= \$1.*updated_at <= \$2.*ORDER BY CASE.*FOR UPDATE SKIP LOCKED`).
-		WithArgs(authorizationCutoff, finalizationCutoff, 500, int16(0), int16(1), int16(2)).
+	mock.ExpectQuery(`(?s)WITH candidates AS .*FROM billing_balance_settlements.*expires_at <= \$1.*updated_at <= NOW\(\) - \(\$7 \* INTERVAL '1 second'\).*updated_at <= \$2.*ORDER BY CASE.*FOR UPDATE SKIP LOCKED.*UPDATE billing_balance_settlements AS settlement.*SET updated_at = NOW\(\).*async_task_id.*FROM leased`).
+		WithArgs(authorizationCutoff, finalizationCutoff, 500, int16(0), int16(1), int16(2), int64(60)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"request_id", "api_key_id", "user_id", "request_fingerprint", "authorization_fingerprint",
-			"hold_usd", "amount_usd", "status", "expires_at", "updated_at",
-		}).AddRow("request", 7, 42, "actual", "authorization", "0.50", "0.25", 2, expiresAt, updatedAt))
+			"hold_usd", "amount_usd", "status", "expires_at", "async_task_id", "updated_at",
+		}).AddRow("request", 7, 42, "actual", "authorization", "0.50", "0.25", 2, expiresAt, "", updatedAt))
 
 	repo := &usageBillingRepository{db: db}
 	records, err := repo.ListRecoverableBalancePreauthorizations(
@@ -46,16 +46,38 @@ func TestListRecoverableBalancePreauthorizationsClampsBatch(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	cutoff := time.Now().UTC()
-	mock.ExpectQuery(`(?s)FROM billing_balance_settlements.*LIMIT \$3`).
-		WithArgs(cutoff, cutoff, 5000, int16(0), int16(1), int16(2)).
+	mock.ExpectQuery(`(?s)FROM billing_balance_settlements.*LIMIT \$3.*FOR UPDATE SKIP LOCKED.*UPDATE billing_balance_settlements`).
+		WithArgs(cutoff, cutoff, 5000, int16(0), int16(1), int16(2), int64(60)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"request_id", "api_key_id", "user_id", "request_fingerprint", "authorization_fingerprint",
-			"hold_usd", "amount_usd", "status", "expires_at", "updated_at",
+			"hold_usd", "amount_usd", "status", "expires_at", "async_task_id", "updated_at",
 		}))
 
 	repo := &usageBillingRepository{db: db}
 	records, err := repo.ListRecoverableBalancePreauthorizations(context.Background(), cutoff, cutoff, 99999)
 	require.NoError(t, err)
 	require.Empty(t, records)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestListRecoverableBalancePreauthorizationsReturnsOriginalExpiryAfterLease(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	cutoff := time.Now().UTC()
+	originalExpiry := cutoff.Add(-time.Minute)
+	mock.ExpectQuery(`(?s)WITH candidates AS \(\s*SELECT id, expires_at.*UPDATE billing_balance_settlements AS settlement.*SET updated_at = NOW\(\).*settlement\.expires_at.*async_task_id`).
+		WithArgs(cutoff, cutoff, 1, int16(0), int16(1), int16(2), int64(60)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"request_id", "api_key_id", "user_id", "request_fingerprint", "authorization_fingerprint",
+			"hold_usd", "amount_usd", "status", "expires_at", "async_task_id", "updated_at",
+		}).AddRow("grok-video:hold:request", 7, 42, "", "authorization", "0.50", "0", 1, originalExpiry, "", cutoff))
+
+	repo := &usageBillingRepository{db: db}
+	records, err := repo.ListRecoverableBalancePreauthorizations(context.Background(), cutoff, cutoff, 1)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	require.Equal(t, originalExpiry, records[0].ExpiresAt)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

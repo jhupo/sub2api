@@ -2,8 +2,18 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
+)
+
+type BalancePreauthorizationRateKind uint8
+
+const (
+	BalancePreauthorizationRateText BalancePreauthorizationRateKind = iota
+	BalancePreauthorizationRateImage
+	BalancePreauthorizationRateVideo
+	BalancePreauthorizationRateBase
 )
 
 // ResolveBalancePreauthorizationRequestID returns the same request key that
@@ -54,6 +64,7 @@ func (s *GatewayService) BalancePreauthorizationCostInput(
 	model string,
 	pricingAt time.Time,
 	serviceTier string,
+	rateKind BalancePreauthorizationRateKind,
 ) CostInput {
 	multiplier := 1.0
 	if s != nil && s.cfg != nil {
@@ -62,7 +73,19 @@ func (s *GatewayService) BalancePreauthorizationCostInput(
 	if s != nil && apiKey != nil && apiKey.GroupID != nil && apiKey.Group != nil {
 		multiplier = s.ResolveUserGroupRateMultiplier(ctx, balancePreauthorizationAPIKeyUserID(apiKey), *apiKey.GroupID, apiKey.Group.RateMultiplier)
 	}
-	multiplier, _ = computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
+	textMultiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
+	videoMultiplier := resolveVideoRateMultiplier(apiKey, multiplier)
+	multiplier = balancePreauthorizationRateMultiplier(rateKind, textMultiplier, imageMultiplier, videoMultiplier, multiplier)
+	resolver := s.gatewayPricingResolver()
+	var resolved *ResolvedPricing
+	if resolver != nil {
+		resolved = resolver.Resolve(ctx, PricingInput{
+			Model: strings.TrimSpace(model), GroupID: apiKeyGroupID(apiKey), Group: balancePreauthorizationAPIKeyGroup(apiKey),
+		})
+		if rateKind != BalancePreauthorizationRateBase && resolved != nil && (resolved.Mode == "" || resolved.Mode == BillingModeToken) {
+			multiplier = textMultiplier
+		}
+	}
 	return CostInput{
 		Ctx:            ctx,
 		Model:          strings.TrimSpace(model),
@@ -71,7 +94,8 @@ func (s *GatewayService) BalancePreauthorizationCostInput(
 		RateMultiplier: multiplier,
 		PricingAt:      pricingAt,
 		ServiceTier:    strings.TrimSpace(serviceTier),
-		Resolver:       s.gatewayPricingResolver(),
+		Resolver:       resolver,
+		Resolved:       resolved,
 	}
 }
 
@@ -84,6 +108,7 @@ func (s *OpenAIGatewayService) BalancePreauthorizationCostInput(
 	model string,
 	pricingAt time.Time,
 	serviceTier string,
+	rateKind BalancePreauthorizationRateKind,
 ) CostInput {
 	multiplier := 1.0
 	if s != nil && s.cfg != nil {
@@ -92,7 +117,19 @@ func (s *OpenAIGatewayService) BalancePreauthorizationCostInput(
 	if s != nil && apiKey != nil && apiKey.GroupID != nil && apiKey.Group != nil {
 		multiplier = s.ResolveUserGroupRateMultiplier(ctx, balancePreauthorizationAPIKeyUserID(apiKey), *apiKey.GroupID, apiKey.Group.RateMultiplier)
 	}
-	multiplier, _ = computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
+	textMultiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
+	videoMultiplier := resolveVideoRateMultiplier(apiKey, multiplier)
+	multiplier = balancePreauthorizationRateMultiplier(rateKind, textMultiplier, imageMultiplier, videoMultiplier, multiplier)
+	resolver := s.openAIGatewayPricingResolver()
+	var resolved *ResolvedPricing
+	if resolver != nil {
+		resolved = resolver.Resolve(ctx, PricingInput{
+			Model: strings.TrimSpace(model), GroupID: apiKeyGroupID(apiKey), Group: balancePreauthorizationAPIKeyGroup(apiKey),
+		})
+		if rateKind != BalancePreauthorizationRateBase && resolved != nil && (resolved.Mode == "" || resolved.Mode == BillingModeToken) {
+			multiplier = textMultiplier
+		}
+	}
 	return CostInput{
 		Ctx:            ctx,
 		Model:          strings.TrimSpace(model),
@@ -101,8 +138,114 @@ func (s *OpenAIGatewayService) BalancePreauthorizationCostInput(
 		RateMultiplier: multiplier,
 		PricingAt:      pricingAt,
 		ServiceTier:    strings.TrimSpace(serviceTier),
-		Resolver:       s.openAIGatewayPricingResolver(),
+		Resolver:       resolver,
+		Resolved:       resolved,
 	}
+}
+
+func balancePreauthorizationRateMultiplier(kind BalancePreauthorizationRateKind, text, image, video, base float64) float64 {
+	switch kind {
+	case BalancePreauthorizationRateImage:
+		return image
+	case BalancePreauthorizationRateVideo:
+		return video
+	case BalancePreauthorizationRateBase:
+		return base
+	default:
+		return text
+	}
+}
+
+// BalancePreauthorizationWebSearchCost uses the same fixed-price calculator
+// and base multiplier as alpha-search settlement.
+func (s *OpenAIGatewayService) BalancePreauthorizationWebSearchCost(
+	ctx context.Context,
+	apiKey *APIKey,
+	pricingAt time.Time,
+) (float64, error) {
+	if s == nil || s.billingService == nil || apiKey == nil {
+		return 0, balancePreauthorizationUnavailable(errors.New("web search preauthorization pricing is unavailable"))
+	}
+	pricing := s.BalancePreauthorizationCostInput(
+		ctx, apiKey, "", pricingAt, "", BalancePreauthorizationRateBase,
+	)
+	breakdown := s.billingService.CalculateWebSearchCost(
+		1, webSearchPricePerCallFromAPIKey(apiKey), pricing.RateMultiplier,
+	)
+	if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
+		return 0, balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
+	}
+	return breakdown.ActualCost, nil
+}
+
+// BalancePreauthorizationAudioCost uses the exact audio branch used by OpenAI
+// usage settlement. Audio may have channel per-request pricing; otherwise it
+// is priced from the group/default audio schedule.
+func (s *OpenAIGatewayService) BalancePreauthorizationAudioCost(
+	ctx context.Context,
+	apiKey *APIKey,
+	model string,
+	mode string,
+	units float64,
+	pricingAt time.Time,
+) (float64, error) {
+	if s == nil || s.billingService == nil || apiKey == nil || apiKey.Group == nil || invalidNonnegativeMoney(units) {
+		return 0, balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
+	}
+	mode = strings.TrimSpace(mode)
+	switch mode {
+	case "tts", "stt", "realtime":
+	default:
+		return 0, balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
+	}
+	pricing := s.BalancePreauthorizationCostInput(ctx, apiKey, model, pricingAt, "", BalancePreauthorizationRateBase)
+	var breakdown *CostBreakdown
+	var err error
+	if pricing.Resolved != nil && pricing.Resolved.Mode == BillingModePerRequest {
+		breakdown, err = s.billingService.CalculateCostUnified(CostInput{
+			Ctx:            ctx,
+			Model:          strings.TrimSpace(model),
+			GroupID:        apiKey.GroupID,
+			Group:          apiKey.Group,
+			UsageUnits:     units,
+			SizeTier:       mode,
+			RateMultiplier: pricing.RateMultiplier,
+			PricingAt:      pricingAt,
+			Resolver:       pricing.Resolver,
+			Resolved:       pricing.Resolved,
+		})
+	} else {
+		breakdown = s.billingService.CalculateAudioCost(mode, units, groupAudioPriceConfigFromAPIKey(apiKey), pricing.RateMultiplier)
+	}
+	if err != nil || breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
+		if err == nil {
+			err = ErrInvalidBillingPreauthorizationEstimate
+		}
+		return 0, balancePreauthorizationUnavailable(err)
+	}
+	return breakdown.ActualCost, nil
+}
+
+// BalancePreauthorizationSearchCost uses the same per-1k search calculator
+// and peak-aware text multiplier as GatewayService.RecordUsage.
+func (s *GatewayService) BalancePreauthorizationSearchCost(
+	ctx context.Context,
+	apiKey *APIKey,
+	pricingAt time.Time,
+) (float64, error) {
+	if s == nil || s.billingService == nil || apiKey == nil {
+		return 0, balancePreauthorizationUnavailable(errors.New("search preauthorization pricing is unavailable"))
+	}
+	pricing := s.BalancePreauthorizationCostInput(
+		ctx, apiKey, "", pricingAt, "", BalancePreauthorizationRateText,
+	)
+	breakdown := s.billingService.CalculateSearchCost(
+		1, groupSearchPricePer1kFromAPIKey(apiKey), pricing.RateMultiplier,
+	)
+	if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
+		return 0, balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
+	}
+	return breakdown.ActualCost, nil
 }
 
 func (s *GatewayService) gatewayPricingResolver() *ModelPricingResolver {

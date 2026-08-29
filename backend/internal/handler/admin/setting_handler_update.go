@@ -343,6 +343,8 @@ type UpdateSettingsRequest struct {
 
 	// Available Channels feature switch (user-facing)
 	AvailableChannelsEnabled *bool `json:"available_channels_enabled"`
+	// Balance preauthorization feature switch (standard balance billing only)
+	BalancePreauthorizationEnabled *bool `json:"balance_preauthorization_enabled"`
 
 	// Model Plaza feature switches + description
 	ModelPlazaEnabled     *bool   `json:"model_plaza_enabled"`
@@ -1937,6 +1939,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.AvailableChannelsEnabled
 		}(),
+		BalancePreauthorizationEnabled: func() bool {
+			if req.BalancePreauthorizationEnabled != nil {
+				return *req.BalancePreauthorizationEnabled
+			}
+			return previousSettings.BalancePreauthorizationEnabled
+		}(),
 		ModelPlazaEnabled: func() bool {
 			if req.ModelPlazaEnabled != nil {
 				return *req.ModelPlazaEnabled
@@ -2380,7 +2388,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		GrokCrossClientModelMapEnabled: updatedSettings.GrokCrossClientModelMapEnabled,
 		GrokDefaultBaseURLMode:         updatedSettings.GrokDefaultBaseURLMode,
 
-		AvailableChannelsEnabled: updatedSettings.AvailableChannelsEnabled,
+		AvailableChannelsEnabled:       updatedSettings.AvailableChannelsEnabled,
+		BalancePreauthorizationEnabled: updatedSettings.BalancePreauthorizationEnabled,
 
 		ModelPlazaEnabled:       updatedSettings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth:   updatedSettings.ModelPlazaRequireAuth,

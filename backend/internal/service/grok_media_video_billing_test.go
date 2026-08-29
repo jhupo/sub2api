@@ -1,11 +1,49 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+type grokVideoPendingCacheStub struct {
+	GatewayCache
+	getPayload []byte
+	getErr     error
+	setErr     error
+	setCalls   int
+}
+
+func (s *grokVideoPendingCacheStub) GetGrokVideoPendingBilling(context.Context, string) ([]byte, error) {
+	return s.getPayload, s.getErr
+}
+
+func (s *grokVideoPendingCacheStub) SetGrokVideoPendingBilling(context.Context, string, []byte, time.Duration) error {
+	s.setCalls++
+	return s.setErr
+}
+
+type grokVideoPendingRepositoryStub struct {
+	UsageBillingRepository
+	bound     []GrokVideoPendingBillingBinding
+	bindErr   error
+	loaded    *GrokVideoPendingBilling
+	loadErr   error
+	loadCalls int
+}
+
+func (s *grokVideoPendingRepositoryStub) BindGrokVideoPendingBilling(_ context.Context, binding GrokVideoPendingBillingBinding) error {
+	s.bound = append(s.bound, binding)
+	return s.bindErr
+}
+
+func (s *grokVideoPendingRepositoryStub) LoadGrokVideoPendingBilling(context.Context, string, int64, int64) (*GrokVideoPendingBilling, error) {
+	s.loadCalls++
+	return s.loaded, s.loadErr
+}
 
 func TestGrokVideoE2EDurationFromCreatedAt(t *testing.T) {
 	t.Parallel()
@@ -28,6 +66,57 @@ func TestGrokVideoPendingCreatedAtStampOnStoreShape(t *testing.T) {
 	d := GrokVideoE2EDuration(stamp, time.Now().UTC().Add(2*time.Second))
 	require.GreaterOrEqual(t, d, time.Second)
 	require.LessOrEqual(t, d, 3*time.Second)
+}
+
+func TestLoadGrokVideoPendingBillingFallsBackToDurableBindingAfterRedisLoss(t *testing.T) {
+	pending := &GrokVideoPendingBilling{
+		Model: "grok-imagine-video", PreauthorizationRequestID: "grok-video:hold:request",
+		AuthorizationFingerprint: "fingerprint", PreauthorizationHoldAmount: 0.5,
+	}
+	cache := &grokVideoPendingCacheStub{}
+	repo := &grokVideoPendingRepositoryStub{loaded: pending}
+	svc := &OpenAIGatewayService{cache: cache, usageBillingRepo: repo}
+
+	loaded, err := svc.LoadGrokVideoPendingBilling(context.Background(), "task", 42, 7)
+
+	require.NoError(t, err)
+	require.Equal(t, pending, loaded)
+	require.Equal(t, 1, repo.loadCalls)
+	require.Equal(t, 1, cache.setCalls, "durable fallback should heal Redis best effort")
+}
+
+func TestLoadGrokVideoPendingBillingFallsBackToDurableBindingAfterRedisError(t *testing.T) {
+	pending := &GrokVideoPendingBilling{
+		Model: "grok-imagine-video", PreauthorizationRequestID: "grok-video:hold:request",
+		AuthorizationFingerprint: "fingerprint", PreauthorizationHoldAmount: 0.5,
+	}
+	cache := &grokVideoPendingCacheStub{getErr: errors.New("redis unavailable")}
+	repo := &grokVideoPendingRepositoryStub{loaded: pending}
+	svc := &OpenAIGatewayService{cache: cache, usageBillingRepo: repo}
+
+	loaded, err := svc.LoadGrokVideoPendingBilling(context.Background(), "task", 42, 7)
+
+	require.NoError(t, err)
+	require.Equal(t, pending, loaded)
+	require.Equal(t, 1, repo.loadCalls)
+	require.Equal(t, 1, cache.setCalls, "durable fallback should heal Redis best effort")
+}
+
+func TestStoreGrokVideoPendingBillingKeepsDurableSuccessWhenRedisWriteFails(t *testing.T) {
+	cache := &grokVideoPendingCacheStub{setErr: errors.New("redis unavailable")}
+	repo := &grokVideoPendingRepositoryStub{}
+	svc := &OpenAIGatewayService{cache: cache, usageBillingRepo: repo}
+	pending := GrokVideoPendingBilling{
+		Model: "grok-imagine-video", PreauthorizationRequestID: "grok-video:hold:request",
+		AuthorizationFingerprint: "fingerprint", PreauthorizationHoldAmount: 0.5,
+	}
+
+	err := svc.StoreGrokVideoPendingBilling(context.Background(), "task", 42, 7, pending)
+
+	require.NoError(t, err)
+	require.Len(t, repo.bound, 1)
+	require.Equal(t, "task", repo.bound[0].TaskID)
+	require.Equal(t, 1, cache.setCalls)
 }
 
 func TestIsGrokVideoStatusBillable(t *testing.T) {

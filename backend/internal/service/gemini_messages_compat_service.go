@@ -2226,6 +2226,13 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					})
 				}
 
+				// Reserve this text delta before it becomes visible. If the
+				// wallet cannot extend the hold, abort without emitting it.
+				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(delta)); topUpErr != nil {
+					logger.LegacyPrintf("service.gemini_messages_compat", "Stream output hold top-up failed, aborting upstream: model=%s error=%v", originalModel, topUpErr)
+					return nil, wrapStreamOutputHoldTopUpFailure(topUpErr)
+				}
+
 				if firstTokenMs == nil {
 					ms := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &ms
@@ -2239,13 +2246,6 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					},
 				})
 				flusher.Flush()
-				// 文本增量计量：累加已发字节作 token 上界，跨预扣窗口时补扣。补扣
-				// 失败中止上游流并返回错误，避免继续产生无法结算的输出成本。
-				// tracker 为 nil 时逐增量零开销。
-				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(delta)); topUpErr != nil {
-					logger.LegacyPrintf("service.gemini_messages_compat", "Stream output hold top-up failed, aborting upstream: model=%s error=%v", originalModel, topUpErr)
-					return nil, wrapStreamOutputHoldTopUpFailure(topUpErr)
-				}
 				continue
 			}
 
@@ -2283,6 +2283,10 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					openToolName = name
 					nextBlockIndex++
 					sawToolUse = true
+					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(name)); topUpErr != nil {
+						logger.LegacyPrintf("service.gemini_messages_compat", "Stream tool output hold top-up failed, aborting upstream: model=%s error=%v", originalModel, topUpErr)
+						return nil, wrapStreamOutputHoldTopUpFailure(topUpErr)
+					}
 
 					writeSSE(c.Writer, "content_block_start", map[string]any{
 						"type":  "content_block_start",
@@ -2313,6 +2317,10 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 				delta, newSeen := computeGeminiTextDelta(seenToolJSON, argsJSONText)
 				seenToolJSON = newSeen
 				if delta != "" {
+					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(delta)); topUpErr != nil {
+						logger.LegacyPrintf("service.gemini_messages_compat", "Stream tool output hold top-up failed, aborting upstream: model=%s error=%v", originalModel, topUpErr)
+						return nil, wrapStreamOutputHoldTopUpFailure(topUpErr)
+					}
 					writeSSE(c.Writer, "content_block_delta", map[string]any{
 						"type":  "content_block_delta",
 						"index": openToolIndex,

@@ -2090,6 +2090,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "billing check failed")
 		return
 	}
+	if requirement, ok := h.balancePreauthorizer.(balancePreauthorizationRequirement); ok &&
+		requirement.RequiresPreauthorization(ctx, service.BalancePreauthorizationBillingType(apiKey, subscription)) {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "use the HTTP Responses API while balance preauthorization is enabled")
+		return
+	}
 
 	sessionHash := h.gatewayService.GenerateSessionHashWithFallback(
 		c,

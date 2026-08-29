@@ -14,6 +14,12 @@ export default {
         payment: '支付设置',
       },
       features: {
+        balancePreauthorization: {
+          title: '余额预授权',
+          description: '在请求前预留预计费用，防止并发超额消费。',
+          enabled: '启用余额预授权',
+          enabledHint: '适用于余额计费，在转发请求前预留预计费用。',
+        },
         channelMonitor: {
           title: '渠道监控',
           description: '启用后在 V1 主动探测与 V2 被动用量监控中二选一。关闭后两种模式的后台任务均停止，用户端入口隐藏。',

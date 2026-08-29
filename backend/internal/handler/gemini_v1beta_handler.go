@@ -253,6 +253,23 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		return
 	}
 
+	balanceGuard, err := preauthorizeTextGatewayRequest(
+		c.Request.Context(), h.balancePreauthorizer, h.gatewayService, apiKey, subscription, body,
+		service.BalancePreauthorizationBillingModel(reqModel, channelMapping), pricingAt, "",
+	)
+	if err != nil {
+		status, _, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		googleError(c, status, message)
+		return
+	}
+	if balanceGuard != nil {
+		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
+		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+	}
+
 	// 3) select account (sticky session based on request body)
 	// 优先使用 Gemini CLI 的会话标识（privileged-user-id + tmp 目录哈希）
 	sessionHash := extractGeminiCLISessionHash(c, body)

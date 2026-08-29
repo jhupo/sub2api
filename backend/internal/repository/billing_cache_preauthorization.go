@@ -19,10 +19,8 @@ const (
 	liveBalanceWalletKeyPrefix = "billing:live_wallet:"
 	liveBalanceMoneyScale      = int32(8)
 
-	// Active attempts must not expire: losing hold metadata before PostgreSQL
-	// recovery runs can make a committed charge impossible to reconcile. Only
-	// terminal markers expire after finalize/refund.
-	liveBalanceTerminalAttemptTTL = 15 * time.Minute
+	// Attempt markers are persisted until the PostgreSQL terminal transition
+	// commits. Lifecycle cleanup then removes terminal markers best-effort.
 	liveBalanceAdjustmentEventTTL = 30 * 24 * time.Hour
 
 	// Redis Lua represents numbers as IEEE-754 doubles. Keeping integer money
@@ -111,6 +109,61 @@ redis.call('PERSIST', KEYS[2])
 return {1, 1, tostring(wallet), ARGV[2], '0'}
 `)
 
+// Preauthorization admission carries one durable balance snapshot and its
+// external-adjustment watermark. Existing attempts replay before the watermark
+// comparison. New attempts only debit a wallet that has applied at least the
+// snapshot's external-adjustment head; no existing wallet is ever overwritten.
+var authorizeLiveBalanceAtSnapshotWatermarkScript = redis.NewScript(`
+local wallet = redis.call('GET', KEYS[1])
+local watermark = redis.call('GET', KEYS[3])
+local state = redis.call('HGET', KEYS[2], 'state')
+if state ~= false then
+  local initial = redis.call('HGET', KEYS[2], 'initial') or '0'
+  local reserved = redis.call('HGET', KEYS[2], 'reserved') or '0'
+  local actual = redis.call('HGET', KEYS[2], 'actual') or '0'
+  if wallet == false or initial ~= ARGV[2] then
+    return {3, state, wallet or '0', reserved, actual}
+  end
+  redis.call('PERSIST', KEYS[1])
+  if watermark ~= false then
+    redis.call('PERSIST', KEYS[3])
+  end
+  if tonumber(state) == 1 then
+    redis.call('PERSIST', KEYS[2])
+  end
+  return {2, state, wallet, reserved, actual}
+end
+
+if wallet == false then
+  if ARGV[4] ~= '1' then
+    return {4, 0, '0', '0', '0'}
+  end
+  redis.call('SET', KEYS[1], ARGV[1])
+  redis.call('SET', KEYS[3], ARGV[3])
+  wallet = ARGV[1]
+else
+  if watermark == false or tonumber(watermark) < tonumber(ARGV[3]) then
+    return {3, 0, wallet, '0', '0'}
+  end
+  redis.call('PERSIST', KEYS[1])
+  redis.call('PERSIST', KEYS[3])
+end
+
+if tonumber(wallet) < tonumber(ARGV[2]) then
+  return {0, 0, wallet, '0', '0'}
+end
+
+redis.call('INCRBY', KEYS[1], -tonumber(ARGV[2]))
+wallet = redis.call('GET', KEYS[1])
+redis.call('HSET', KEYS[2],
+  'state', '1',
+  'initial', ARGV[2],
+  'reserved', ARGV[2],
+  'actual', '0')
+redis.call('PERSIST', KEYS[2])
+return {1, 1, tostring(wallet), ARGV[2], '0'}
+`)
+
 var topUpLiveBalanceScript = redis.NewScript(`
 local wallet = redis.call('GET', KEYS[1])
 local state = redis.call('HGET', KEYS[2], 'state')
@@ -134,6 +187,49 @@ end
 if ARGV[1] == reserved then
   return {2, state, wallet, reserved, actual}
 end
+
+local additional = tonumber(ARGV[1]) - tonumber(reserved)
+if tonumber(wallet) < additional then
+  return {0, state, wallet, reserved, actual}
+end
+
+redis.call('INCRBY', KEYS[1], -additional)
+wallet = redis.call('GET', KEYS[1])
+redis.call('HSET', KEYS[2], 'reserved', ARGV[1])
+return {1, state, tostring(wallet), ARGV[1], actual}
+`)
+
+// A real preauthorization top-up must not debit a wallet that is behind the
+// durable snapshot. Equal targets replay above without requiring the watermark.
+var topUpLiveBalanceAtSnapshotWatermarkScript = redis.NewScript(`
+local wallet = redis.call('GET', KEYS[1])
+local state = redis.call('HGET', KEYS[2], 'state')
+if state == false then
+  return {4, 0, wallet or '0', '0', '0'}
+end
+
+local reserved = redis.call('HGET', KEYS[2], 'reserved') or '0'
+local actual = redis.call('HGET', KEYS[2], 'actual') or '0'
+if wallet == false then
+  return {3, state, '0', reserved, actual}
+end
+redis.call('PERSIST', KEYS[1])
+if tonumber(state) ~= 1 then
+  return {3, state, wallet, reserved, actual}
+end
+redis.call('PERSIST', KEYS[2])
+if tonumber(ARGV[1]) < tonumber(reserved) then
+  return {3, state, wallet, reserved, actual}
+end
+if ARGV[1] == reserved then
+  return {2, state, wallet, reserved, actual}
+end
+
+local watermark = redis.call('GET', KEYS[3])
+if watermark == false or tonumber(watermark) < tonumber(ARGV[2]) then
+  return {3, state, wallet, reserved, actual}
+end
+redis.call('PERSIST', KEYS[3])
 
 local additional = tonumber(ARGV[1]) - tonumber(reserved)
 if tonumber(wallet) < additional then
@@ -175,7 +271,7 @@ if adjustment ~= 0 then
   wallet = redis.call('GET', KEYS[1])
 end
 redis.call('HSET', KEYS[2], 'state', '2', 'actual', ARGV[1])
-redis.call('EXPIRE', KEYS[2], ARGV[2])
+redis.call('PERSIST', KEYS[2])
 return {1, 2, tostring(wallet), reserved, ARGV[1]}
 `)
 
@@ -204,7 +300,7 @@ if tonumber(reserved) ~= 0 then
   wallet = redis.call('GET', KEYS[1])
 end
 redis.call('HSET', KEYS[2], 'state', '3', 'actual', '0')
-redis.call('EXPIRE', KEYS[2], ARGV[1])
+redis.call('PERSIST', KEYS[2])
 return {1, 3, tostring(wallet), reserved, '0'}
 `)
 
@@ -398,6 +494,30 @@ func (c *billingCache) AuthorizeLiveBalanceAtWatermarkIfSafe(
 	return parseLiveBalanceResult(raw)
 }
 
+func (c *billingCache) AuthorizeLiveBalanceAtSnapshotWatermarkIfSafe(ctx context.Context, userID int64, attemptID string, fallbackBalance float64, fallbackWatermark int64, holdAmount float64, allowInitialize bool) (service.LiveBalanceResult, error) {
+	if err := validateLiveBalanceIdentity(userID, attemptID); err != nil {
+		return service.LiveBalanceResult{}, err
+	}
+	if fallbackWatermark < 0 || fallbackWatermark > maxExactLuaInteger {
+		return service.LiveBalanceResult{}, errors.New("live balance snapshot watermark is invalid")
+	}
+	fallbackUnits, err := liveBalanceMoneyToUnits(fallbackBalance, false)
+	if err != nil {
+		return service.LiveBalanceResult{}, fmt.Errorf("fallback balance: %w", err)
+	}
+	holdUnits, err := liveBalanceMoneyToUnits(holdAmount, true)
+	if err != nil || holdAmount < 0 {
+		return service.LiveBalanceResult{}, fmt.Errorf("hold amount: %w", errInvalidLiveBalanceMoney)
+	}
+	raw, err := authorizeLiveBalanceAtSnapshotWatermarkScript.Run(ctx, c.rdb, []string{
+		liveBalanceWalletKey(userID), liveBalanceAttemptKey(userID, attemptID), liveBalanceWatermarkKey(userID),
+	}, fallbackUnits, holdUnits, fallbackWatermark, boolToRedisFlag(allowInitialize)).Result()
+	if err != nil {
+		return service.LiveBalanceResult{}, fmt.Errorf("authorize live balance at snapshot watermark: %w", err)
+	}
+	return parseLiveBalanceResult(raw)
+}
+
 func boolToRedisFlag(value bool) int {
 	if value {
 		return 1
@@ -420,6 +540,26 @@ func (c *billingCache) TopUpLiveBalance(ctx context.Context, userID int64, attem
 		userID, attemptID, targetUnits)
 }
 
+func (c *billingCache) TopUpLiveBalanceAtSnapshotWatermark(ctx context.Context, userID int64, attemptID string, snapshotWatermark int64, targetHoldAmount float64) (service.LiveBalanceResult, error) {
+	if err := validateLiveBalanceIdentity(userID, attemptID); err != nil {
+		return service.LiveBalanceResult{}, err
+	}
+	if snapshotWatermark < 0 || snapshotWatermark > maxExactLuaInteger {
+		return service.LiveBalanceResult{}, errors.New("live balance snapshot watermark is invalid")
+	}
+	targetUnits, err := liveBalanceMoneyToUnits(targetHoldAmount, true)
+	if err != nil || targetHoldAmount < 0 {
+		return service.LiveBalanceResult{}, fmt.Errorf("target hold amount: %w", errInvalidLiveBalanceMoney)
+	}
+	raw, err := topUpLiveBalanceAtSnapshotWatermarkScript.Run(ctx, c.rdb, []string{
+		liveBalanceWalletKey(userID), liveBalanceAttemptKey(userID, attemptID), liveBalanceWatermarkKey(userID),
+	}, targetUnits, snapshotWatermark).Result()
+	if err != nil {
+		return service.LiveBalanceResult{}, fmt.Errorf("top up live balance at snapshot watermark: %w", err)
+	}
+	return parseLiveBalanceResult(raw)
+}
+
 // FinalizeLiveBalance replaces the accumulated hold with the actual charge.
 // If actual exceeds the hold, the bounded difference is still debited so a
 // completed request cannot escape billing; the result may therefore be negative.
@@ -432,8 +572,7 @@ func (c *billingCache) FinalizeLiveBalance(ctx context.Context, userID int64, at
 		return service.LiveBalanceResult{}, fmt.Errorf("actual amount: %w", errInvalidLiveBalanceMoney)
 	}
 
-	return c.runLiveBalanceScript(ctx, finalizeLiveBalanceScript,
-		userID, attemptID, actualUnits, int(liveBalanceTerminalAttemptTTL.Seconds()))
+	return c.runLiveBalanceScript(ctx, finalizeLiveBalanceScript, userID, attemptID, actualUnits)
 }
 
 // RefundLiveBalance releases the complete hold for a failed request.
@@ -441,8 +580,19 @@ func (c *billingCache) RefundLiveBalance(ctx context.Context, userID int64, atte
 	if err := validateLiveBalanceIdentity(userID, attemptID); err != nil {
 		return service.LiveBalanceResult{}, err
 	}
-	return c.runLiveBalanceScript(ctx, refundLiveBalanceScript,
-		userID, attemptID, int(liveBalanceTerminalAttemptTTL.Seconds()))
+	return c.runLiveBalanceScript(ctx, refundLiveBalanceScript, userID, attemptID)
+}
+
+// DeleteLiveBalanceAttempt removes one terminal preauthorization marker after
+// its PostgreSQL lifecycle transition has committed.
+func (c *billingCache) DeleteLiveBalanceAttempt(ctx context.Context, userID int64, attemptID string) error {
+	if err := validateLiveBalanceIdentity(userID, attemptID); err != nil {
+		return err
+	}
+	if err := c.rdb.Del(ctx, liveBalanceAttemptKey(userID, attemptID)).Err(); err != nil {
+		return fmt.Errorf("delete live balance attempt: %w", err)
+	}
+	return nil
 }
 
 // AdjustLiveBalance applies a committed, non-usage balance delta once. It must

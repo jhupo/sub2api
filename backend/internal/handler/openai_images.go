@@ -158,6 +158,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			RequestCount: parsed.N,
 			SizeTier:     parsed.SizeTier,
 		},
+		service.BalancePreauthorizationRateImage,
 	)
 	if h.handlePreauthorizationError(c, err, streamStarted) {
 		return

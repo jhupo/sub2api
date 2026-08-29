@@ -28,6 +28,7 @@ func TestResolveUsageBillingRequestID_ClientWinsOverPlainUpstream(t *testing.T) 
 func TestIsForcedUsageBillingRequestID(t *testing.T) {
 	t.Parallel()
 	require.True(t, isForcedUsageBillingRequestID("web_search:x"))
+	require.True(t, isForcedUsageBillingRequestID("x_search:x"))
 	require.True(t, isForcedUsageBillingRequestID("grok-video:task-1"))
 	require.True(t, isForcedUsageBillingRequestID("grok_audio:up-1"))
 	require.True(t, isForcedUsageBillingRequestID("grok_realtime:sess-1"))

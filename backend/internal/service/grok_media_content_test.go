@@ -24,6 +24,16 @@ type grokMediaContentUpstreamStub struct {
 	responses []*http.Response
 }
 
+type grokMediaContentTrackingBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *grokMediaContentTrackingBody) Close() error {
+	b.closed = true
+	return nil
+}
+
 func (s *grokMediaContentUpstreamStub) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	s.request = req
 	s.requests = append(s.requests, req)
@@ -70,6 +80,21 @@ func grokMediaContentStatusResponse(body string) *http.Response {
 	}
 }
 
+func TestForwardGrokMediaContentClosesNon416ErrorBody(t *testing.T) {
+	body := &grokMediaContentTrackingBody{Reader: strings.NewReader(`{"error":"denied"}`)}
+	upstream := &grokMediaContentUpstreamStub{responses: []*http.Response{
+		grokMediaContentStatusResponse(`{"status":"completed"}`),
+		{StatusCode: http.StatusForbidden, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: body},
+	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	c, _ := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/task-1/content", nil)
+
+	result, err := svc.ForwardGrokMedia(context.Background(), c, grokMediaContentTestAccount(), GrokMediaEndpointVideoContent, "task-1", nil, "")
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.True(t, body.closed)
+}
+
 func TestForwardGrokMediaContentUsesUpstreamCredentialAndStreamsRange(t *testing.T) {
 	upstream := &grokMediaContentUpstreamStub{
 		responses: []*http.Response{grokMediaContentStatusResponse(`{"status":"completed"}`), {
@@ -98,6 +123,8 @@ func TestForwardGrokMediaContentUsesUpstreamCredentialAndStreamsRange(t *testing
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	require.False(t, IsResponseCommitted(c))
+	require.NoError(t, svc.CommitGrokVideoLookupResponse(c, result))
 	require.Equal(t, http.StatusPartialContent, recorder.Code)
 	require.Equal(t, "video-payload", recorder.Body.String())
 	require.Len(t, upstream.requests, 2)
@@ -127,12 +154,14 @@ func TestForwardGrokMediaContentStreamsFullResponseWithSafeDefaults(t *testing.T
 	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 	c, recorder := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/task-1/content", nil)
 
-	_, err := svc.ForwardGrokMedia(
+	result, err := svc.ForwardGrokMedia(
 		context.Background(), c, grokMediaContentTestAccount(),
 		GrokMediaEndpointVideoContent, "task-1", nil, "",
 	)
 
 	require.NoError(t, err)
+	require.False(t, IsResponseCommitted(c))
+	require.NoError(t, svc.CommitGrokVideoLookupResponse(c, result))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, "full-video", recorder.Body.String())
 	require.Len(t, upstream.requests, 2)
@@ -162,12 +191,13 @@ func TestForwardGrokMediaContentPreservesRangeNotSatisfiable(t *testing.T) {
 		"Range": "bytes=500-600",
 	})
 
-	_, err := svc.ForwardGrokMedia(
+	result, err := svc.ForwardGrokMedia(
 		context.Background(), c, grokMediaContentTestAccount(),
 		GrokMediaEndpointVideoContent, "task-1", nil, "",
 	)
 
 	require.NoError(t, err)
+	require.NoError(t, svc.CommitGrokVideoLookupResponse(c, result))
 	require.Equal(t, http.StatusRequestedRangeNotSatisfiable, recorder.Code)
 	require.Equal(t, "bad-range!!", recorder.Body.String())
 	require.Len(t, upstream.requests, 2)
@@ -200,12 +230,13 @@ func TestForwardGrokMediaContentFetchesValidatedSignedURLWithoutCredentials(t *t
 		"Range": "bytes=0-12",
 	})
 
-	_, err := svc.ForwardGrokMedia(
+	result, err := svc.ForwardGrokMedia(
 		context.Background(), c, account,
 		GrokMediaEndpointVideoContent, "task-1", nil, "",
 	)
 
 	require.NoError(t, err)
+	require.NoError(t, svc.CommitGrokVideoLookupResponse(c, result))
 	require.Equal(t, http.StatusPartialContent, recorder.Code)
 	require.Equal(t, "video-payload", recorder.Body.String())
 	require.Len(t, upstream.requests, 2)
@@ -239,12 +270,13 @@ func TestForwardGrokMediaContentFollowsAuthenticatedSub2APIRelay(t *testing.T) {
 			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 			c, recorder := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/task-1/content", nil)
 
-			_, err := svc.ForwardGrokMedia(
+			result, err := svc.ForwardGrokMedia(
 				context.Background(), c, grokMediaContentTestAccount(),
 				GrokMediaEndpointVideoContent, "task-1", nil, "",
 			)
 
 			require.NoError(t, err)
+			require.NoError(t, svc.CommitGrokVideoLookupResponse(c, result))
 			require.Equal(t, http.StatusOK, recorder.Code)
 			require.Equal(t, "video-payload", recorder.Body.String())
 			require.Len(t, upstream.requests, 2)
@@ -310,12 +342,14 @@ func TestForwardGrokVideoStatusRewritesOnlyProtectedContentURL(t *testing.T) {
 		"X-Forwarded-Proto": "https",
 	})
 
-	_, err := svc.ForwardGrokMedia(
+	result, err := svc.ForwardGrokMedia(
 		context.Background(), c, grokMediaContentTestAccount(),
 		GrokMediaEndpointVideoStatus, "task-1", nil, "",
 	)
 
 	require.NoError(t, err)
+	require.False(t, IsResponseCommitted(c))
+	require.NoError(t, svc.CommitGrokVideoLookupResponse(c, result))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, "/v1/videos/task-1/content", gjson.Get(recorder.Body.String(), "url").String())
 	require.Equal(t, "/v1/videos/task-1/content", gjson.Get(recorder.Body.String(), "download_url").String())

@@ -128,7 +128,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 	if channelMapping.Mapped {
 		preauthorizationBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 	}
-	balanceGuard, err := preauthorizeTextGatewayRequest(
+	balanceGuard, err := preauthorizeInputOnlyGatewayRequest(
 		embPricingCtx, h.balancePreauthorizer, h.gatewayService,
 		apiKey, subscription, preauthorizationBody,
 		service.BalancePreauthorizationBillingModel(reqModel, channelMapping),

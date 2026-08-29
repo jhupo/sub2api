@@ -14,6 +14,12 @@ export default {
         payment: 'Payment',
       },
       features: {
+        balancePreauthorization: {
+          title: 'Balance preauthorization',
+          description: 'Reserves estimated balance before requests to prevent overspending.',
+          enabled: 'Enable balance preauthorization',
+          enabledHint: 'Applies to standard balance billing and reserves estimated cost before forwarding.',
+        },
         channelMonitor: {
           title: 'Channel Monitor',
           description: 'Choose either V1 active probes or V2 passive usage monitoring. When disabled, both background jobs stop and the user entry is hidden.',

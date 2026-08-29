@@ -17,6 +17,8 @@ import (
 func (r *usageBillingRepository) LoadLiveBalanceInitializationSnapshot(
 	ctx context.Context,
 	userID int64,
+	requestID string,
+	apiKeyID int64,
 ) (service.LiveBalanceInitializationSnapshot, error) {
 	var snapshot service.LiveBalanceInitializationSnapshot
 	if r == nil || r.db == nil {
@@ -34,7 +36,8 @@ func (r *usageBillingRepository) LoadLiveBalanceInitializationSnapshot(
 				SELECT 1
 				FROM billing_balance_settlements AS pending
 				WHERE pending.user_id = u.id
-					AND pending.status IN ($2, $3, $4)
+					AND pending.status IN ($2, $3, $4, $5)
+					AND NOT ($6 <> '' AND $7 > 0 AND pending.request_id = $6 AND pending.api_key_id = $7)
 			)
 		FROM users AS u
 		LEFT JOIN live_balance_adjustment_heads AS h ON h.user_id = u.id
@@ -43,6 +46,9 @@ func (r *usageBillingRepository) LoadLiveBalanceInitializationSnapshot(
 		service.BalanceSettlementAuthorized,
 		service.BalanceSettlementFinalizationPending,
 		service.BalanceSettlementPending,
+		service.BalanceSettlementPrepared,
+		requestID,
+		apiKeyID,
 	).Scan(&balanceText, &snapshot.Watermark, &snapshot.HasUnsettled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return snapshot, service.ErrUserNotFound

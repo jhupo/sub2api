@@ -2124,6 +2124,15 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					continue
 				}
 			}
+			// Reserve semantic output before writing the line. Control frames
+			// remain free, and a failed top-up cannot expose this billable line.
+			if lineStartsClientOutput {
+				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(line)); topUpErr != nil {
+					flushPendingOutput()
+					s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI passthrough", topUpErr)
+					return resultWithUsage(), wrapStreamOutputHoldTopUpFailure(topUpErr)
+				}
+			}
 			if _, err := fmt.Fprintln(w, line); err != nil {
 				clientDisconnected = true
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
@@ -2132,17 +2141,6 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				flushPending = true
 				if line == "" {
 					flushPendingOutput()
-				}
-				// 语义输出帧计量：累加已发字节作 token 上界，跨预扣窗口时补扣。
-				// 补扣失败（钱包不足或不可用）主动中止上游流，避免继续产生无法
-				// 结算的输出成本。非语义控制帧与 [DONE] 不计量，tracker 为 nil 时
-				// 整体是零开销的空操作。
-				if lineStartsClientOutput {
-					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(line)); topUpErr != nil {
-						flushPendingOutput()
-						s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI passthrough", topUpErr)
-						return resultWithUsage(), wrapStreamOutputHoldTopUpFailure(topUpErr)
-					}
 				}
 			}
 		}

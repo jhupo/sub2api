@@ -1106,6 +1106,102 @@ func TestOpenAIResponsesWebSocket_IngressLeaseReleasedOnEarlyReturn(t *testing.T
 	}, time.Second, 10*time.Millisecond)
 }
 
+type responsesWSBalancePreauthorizationStub struct {
+	billingTypes []int8
+}
+
+func (s *responsesWSBalancePreauthorizationStub) Preauthorize(context.Context, service.BalancePreauthorizationRequest) (*service.BalancePreauthorizationGuard, error) {
+	return nil, nil
+}
+
+func (s *responsesWSBalancePreauthorizationStub) RequiresPreauthorization(_ context.Context, billingType int8) bool {
+	s.billingTypes = append(s.billingTypes, billingType)
+	return billingType == service.BillingTypeBalance
+}
+
+type responsesWSBalanceCacheStub struct {
+	service.BillingCache
+}
+
+func (responsesWSBalanceCacheStub) GetLiveBalance(context.Context, int64) (float64, bool, error) {
+	return 0, false, nil
+}
+
+func (responsesWSBalanceCacheStub) GetUserBalance(context.Context, int64) (float64, error) {
+	return 1, nil
+}
+
+type responsesWSPreauthorizationAccountRepoStub struct {
+	service.AccountRepository
+	selectionCalls atomic.Int32
+}
+
+func (s *responsesWSPreauthorizationAccountRepoStub) ListSchedulableByGroupIDAndPlatform(context.Context, int64, string) ([]service.Account, error) {
+	s.selectionCalls.Add(1)
+	return nil, nil
+}
+
+func TestOpenAIResponsesWebSocket_RejectsBalancePreauthorizationBeforeAccountSelection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	billingCacheSvc := service.NewBillingCacheService(responsesWSBalanceCacheStub{}, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+	accountRepo := &responsesWSPreauthorizationAccountRepoStub{}
+	gatewaySvc := service.NewOpenAIGatewayService(
+		accountRepo, nil, nil, nil, nil, nil, nil, cfg, nil, nil,
+		service.NewBillingService(cfg, nil), nil, billingCacheSvc, nil,
+		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
+	)
+	preauthorizer := &responsesWSBalancePreauthorizationStub{}
+	h := &OpenAIGatewayHandler{
+		gatewayService:       gatewaySvc,
+		billingCacheService:  billingCacheSvc,
+		apiKeyService:        &service.APIKeyService{},
+		balancePreauthorizer: preauthorizer,
+		concurrencyHelper:    NewConcurrencyHelper(service.NewConcurrencyService(nil), SSEPingFormatNone, time.Second),
+		cfg:                  cfg,
+	}
+
+	groupID := int64(8801)
+	apiKey := &service.APIKey{
+		ID:      8802,
+		GroupID: &groupID,
+		User:    &service.User{ID: 8803, Status: service.StatusActive},
+		Group:   &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive},
+	}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
+		c.Next()
+	})
+	router.GET("/openai/v1/responses", h.ResponsesWebSocket)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(server.URL, "http")+"/openai/v1/responses", nil)
+	cancelDial()
+	require.NoError(t, err)
+	defer func() { _ = clientConn.CloseNow() }()
+
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5","stream":false}`))
+	cancelWrite()
+	require.NoError(t, err)
+
+	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+	_, _, err = clientConn.Read(readCtx)
+	cancelRead()
+	var closeErr coderws.CloseError
+	require.ErrorAs(t, err, &closeErr)
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+	require.Contains(t, closeErr.Reason, "HTTP Responses API")
+	require.Equal(t, []int8{service.BillingTypeBalance}, preauthorizer.billingTypes)
+	require.Zero(t, accountRepo.selectionCalls.Load())
+}
+
 func TestOpenAIResponsesWebSocket_IngressLeaseReleasedWhenUpgradeFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cache := &concurrencyCacheMock{

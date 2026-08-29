@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -122,6 +123,26 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		}})
 		return
 	}
+	pricingAt := time.Now()
+	// Generate the durable billing key before any upstream work so the hold and
+	// final settlement always target the same ledger row.
+	searchRequestID := searchLabel + ":" + uuid.NewString()
+	balanceGuard, preauthorizationErr := preauthorizeSearchGatewayRequest(
+		c.Request.Context(), h.balancePreauthorizer, h.gatewayService,
+		apiKey, subscription, []byte(req.Query), pricingAt, searchRequestID,
+	)
+	if preauthorizationErr != nil {
+		status, code, message, retryAfter := billingErrorDetails(preauthorizationErr)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		c.JSON(status, gin.H{"error": gin.H{"type": code, "message": message}})
+		return
+	}
+	if balanceGuard != nil {
+		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
+		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+	}
 
 	failedAccounts := make(map[int64]struct{})
 	var account *service.Account
@@ -217,9 +238,6 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 	requestPayloadHash := service.HashUsageRequestPayload([]byte(req.Query))
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
-	// Request IDs are billing idempotency keys, so they must be unique per invocation.
-	// Query/IP/UA hashes would collapse repeated identical searches into one charge.
-	searchRequestID := searchLabel + ":" + uuid.NewString()
 	if apiKey.Group != nil {
 		if p := apiKey.Group.GetSearchPricePer1k(); p != nil && *p == 0 {
 			logger.L().With(
@@ -247,6 +265,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 			RequestPayloadHash: requestPayloadHash,
 			APIKeyService:      h.apiKeyService,
 			QuotaPlatform:      quotaPlatform,
+			PricingAt:          pricingAt,
 		}); err != nil {
 			logger.L().With(
 				zap.String("component", "handler.gateway.web_search"),

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -124,6 +125,20 @@ func TestGrokMediaScheduleModelUsesNormalizedMappedUpstream(t *testing.T) {
 	}))
 	require.Equal(t, "mapped-video-model", grokMediaScheduleModel(account, "grok-imagine-video", &service.OpenAIForwardResult{}))
 	require.Equal(t, "grok-imagine-video", grokMediaScheduleModel(nil, " grok-imagine-video ", nil))
+}
+
+func TestPrepareGrokVideoCompletionBillingFailsClosedOnIncompleteBillingMetadata(t *testing.T) {
+	h := &OpenAIGatewayHandler{gatewayService: &service.OpenAIGatewayService{}}
+	result, guard, err := prepareGrokVideoCompletionBillingWithGuard(
+		context.Background(), h, nil,
+		&service.APIKey{ID: 7, UserID: 42},
+		middleware2.AuthSubject{UserID: 42},
+		"task-1", &service.OpenAIForwardResult{ResponseID: "task-1", VideoCount: 1},
+	)
+
+	require.Nil(t, result)
+	require.Nil(t, guard)
+	require.ErrorIs(t, err, service.ErrBillingServiceUnavailable)
 }
 
 func TestEnsureGrokMediaAccountEligibility(t *testing.T) {

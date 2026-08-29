@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -48,6 +49,24 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	model := c.Query("model")
 	if strings.TrimSpace(model) == "" {
 		model = "grok-voice-latest"
+	}
+	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+	c.Request = c.Request.WithContext(pricingCtx)
+	balanceGuard, err := preauthorizeGrokRealtimeGatewayRequest(
+		c.Request.Context(), h.balancePreauthorizer, h.gatewayService, apiKey, subscription,
+		model, service.ExtractClientSessionID(c), pricingAt,
+	)
+	if err != nil {
+		status, code, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		h.errorResponse(c, status, code, message)
+		return
+	}
+	if balanceGuard != nil {
+		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
+		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
 	}
 	// Keep the HTTP response uncommitted while selecting and probing an account.
 	// Realtime is not an HTTP streaming response; using reqStream=true here would
@@ -130,17 +149,31 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	defer func() { _ = conn.CloseNow() }()
 
 	started := time.Now()
-	audioObserved, proxyErr := h.gatewayService.ProxyGrokRealtimeConn(c.Request.Context(), c, conn, upstream)
+	var reserve func(context.Context, time.Duration) error
+	if balanceGuard != nil {
+		reserve = func(ctx context.Context, elapsed time.Duration) error {
+			cost, err := h.gatewayService.BalancePreauthorizationAudioCost(
+				ctx, apiKey, model, "realtime", (elapsed + service.GrokRealtimeReservationForwardWindow).Minutes(), pricingAt,
+			)
+			if err != nil {
+				return err
+			}
+			return balanceGuard.TopUpTo(ctx, cost)
+		}
+	}
+	audioObserved, proxyErr := h.gatewayService.ProxyGrokRealtimeConn(c.Request.Context(), c, conn, upstream, reserve)
 	elapsed := time.Since(started)
+	reservationFailed := errors.Is(proxyErr, service.ErrGrokRealtimeReservationFailed)
 	if proxyErr != nil {
 		reqLog.Info("grok_realtime.proxy_failed", zap.Error(proxyErr))
-		if !isExpectedGrokRealtimeClose(proxyErr) {
+		if reservationFailed {
+			_ = conn.Close(coderws.StatusInternalError, "billing reservation failed")
+		} else if !isExpectedGrokRealtimeClose(proxyErr) {
 			_ = conn.Close(coderws.StatusInternalError, "upstream realtime websocket failed")
-			return
 		}
 	}
 	if result := grokRealtimeBillingResult(model, elapsed, audioObserved); result != nil {
-		h.recordGrokVoiceUsage(c, apiKey, selection.Account, subscription, "realtime", nil, result)
+		h.recordGrokVoiceUsage(c, apiKey, selection.Account, subscription, "realtime", nil, result, pricingAt)
 	}
 }
 
@@ -216,6 +249,23 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	if strings.TrimSpace(contentType) == "" {
 		contentType = "application/json"
 	}
+	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+	c.Request = c.Request.WithContext(pricingCtx)
+	balanceGuard, err := preauthorizeGrokAudioGatewayRequest(
+		c.Request.Context(), h.balancePreauthorizer, h.gatewayService, apiKey, subscription, body, endpoint, pricingAt,
+	)
+	if err != nil {
+		status, code, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		h.errorResponse(c, status, code, message)
+		return
+	}
+	if balanceGuard != nil {
+		defer deferBalancePreauthorizationRefund(requestLogger(c, "handler.openai_gateway.grok_voice"), balanceGuard)
+		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
+	}
 
 	failed := map[int64]struct{}{}
 	var last *service.UpstreamFailoverError
@@ -266,7 +316,7 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 			return h.gatewayService.ForwardGrokVoice(c.Request.Context(), c, account, endpoint, body, contentType)
 		}()
 		if forwardErr == nil {
-			h.recordGrokVoiceUsage(c, apiKey, account, subscription, endpoint, body, result)
+			h.finalizeGrokVoiceForwardSuccess(c, reqLog, apiKey, account, subscription, endpoint, body, result, pricingAt)
 			return
 		}
 		var failoverErr *service.UpstreamFailoverError
@@ -283,6 +333,87 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	}
 }
 
+// finalizeGrokVoiceForwardSuccess reconciles guarded Voice HTTP billing before
+// exposing an upstream success response. The usage task takes ownership of a
+// reconciled guard before the buffered response is committed.
+func (h *OpenAIGatewayHandler) finalizeGrokVoiceForwardSuccess(
+	c *gin.Context,
+	reqLog *zap.Logger,
+	apiKey *service.APIKey,
+	account *service.Account,
+	subscription *service.UserSubscription,
+	endpoint string,
+	body []byte,
+	result *service.OpenAIForwardResult,
+	pricingAt time.Time,
+) {
+	guard, guarded := service.BalancePreauthorizationGuardFromContext(c.Request.Context())
+	if guarded && guard.IsCurrentOwner() {
+		if err := h.reconcileGrokVoiceBalancePreauthorization(c, apiKey, endpoint, result, pricingAt, guard); err != nil {
+			if reqLog != nil {
+				reqLog.Error("grok_voice.balance_preauthorization_reconciliation_failed", zap.Error(err))
+			}
+			status, code, message, retryAfter := billingErrorDetails(err)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			h.errorResponse(c, status, code, message)
+			return
+		}
+		h.recordGrokVoiceUsage(c, apiKey, account, subscription, endpoint, body, result, pricingAt)
+		if err := h.gatewayService.CommitGrokVoiceResponse(c, result); err != nil {
+			if reqLog != nil {
+				reqLog.Error("grok_voice.commit_response_failed", zap.Error(err))
+			}
+			if !c.Writer.Written() && !service.IsResponseCommitted(c) {
+				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Voice response failed")
+			}
+		}
+		return
+	}
+	if err := h.gatewayService.CommitGrokVoiceResponse(c, result); err != nil {
+		if reqLog != nil {
+			reqLog.Error("grok_voice.commit_response_failed", zap.Error(err))
+		}
+		if !c.Writer.Written() && !service.IsResponseCommitted(c) {
+			h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Voice response failed")
+		}
+		return
+	}
+	h.recordGrokVoiceUsage(c, apiKey, account, subscription, endpoint, body, result, pricingAt)
+}
+
+func (h *OpenAIGatewayHandler) reconcileGrokVoiceBalancePreauthorization(
+	c *gin.Context,
+	apiKey *service.APIKey,
+	endpoint string,
+	result *service.OpenAIForwardResult,
+	pricingAt time.Time,
+	guard *service.BalancePreauthorizationGuard,
+) error {
+	mode := ""
+	if result != nil && result.AudioUsage != nil {
+		mode = strings.TrimSpace(result.AudioUsage.Mode)
+	}
+	if h == nil || h.gatewayService == nil || c == nil || apiKey == nil || result == nil || guard == nil ||
+		result.AudioUsage == nil || (endpoint != "tts" && endpoint != "stt") || mode != endpoint ||
+		result.AudioUsage.DurationOrUnits <= 0 || math.IsNaN(result.AudioUsage.DurationOrUnits) || math.IsInf(result.AudioUsage.DurationOrUnits, 0) {
+		return service.ErrBillingServiceUnavailable.WithCause(service.ErrInvalidBillingPreauthorizationEstimate)
+	}
+	result.RequestID = guard.RequestID()
+	model := strings.TrimSpace(result.Model)
+	if model == "" {
+		model = endpoint
+	}
+	actualCost, err := h.gatewayService.BalancePreauthorizationAudioCost(
+		c.Request.Context(), apiKey, model, mode, result.AudioUsage.DurationOrUnits, pricingAt,
+	)
+	if err != nil {
+		return err
+	}
+	return guard.TopUpTo(c.Request.Context(), actualCost)
+}
+
 // recordGrokVoiceUsage bills TTS/STT/realtime via group audio prices when AudioUsage is set.
 func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 	c *gin.Context,
@@ -292,6 +423,7 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 	endpoint string,
 	body []byte,
 	result *service.OpenAIForwardResult,
+	pricingAt time.Time,
 ) {
 	if h == nil || c == nil || apiKey == nil || account == nil || result == nil {
 		return
@@ -299,10 +431,34 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 	if result.AudioUsage == nil {
 		return
 	}
-	// Ensure forced durable request ids even if callers forget (realtime/tts/stt money path).
-	if mode := strings.TrimSpace(result.AudioUsage.Mode); mode == "realtime" {
+	model := strings.TrimSpace(result.Model)
+	if model == "" {
+		model = endpoint
+	}
+	guard, guarded := service.BalancePreauthorizationGuardFromContext(c.Request.Context())
+	if guarded && guard.IsCurrentOwner() && endpoint == "realtime" {
+		// Realtime keeps its existing reconciliation path: reservation happens
+		// during relay, and this final pass aligns the usage task with the hold.
+		result.RequestID = guard.RequestID()
+		actualCost, err := h.gatewayService.BalancePreauthorizationAudioCost(
+			c.Request.Context(), apiKey, model, result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, pricingAt,
+		)
+		if err != nil {
+			logger.L().With(
+				zap.String("component", "handler.openai_gateway.grok_voice"),
+				zap.String("endpoint", endpoint),
+				zap.Int64("api_key_id", apiKey.ID),
+			).Error("grok_voice.balance_preauthorization_audio_cost_failed", zap.Error(err))
+		} else if err := guard.TopUpTo(c.Request.Context(), actualCost); err != nil {
+			logger.L().With(
+				zap.String("component", "handler.openai_gateway.grok_voice"),
+				zap.String("endpoint", endpoint),
+				zap.Int64("api_key_id", apiKey.ID),
+			).Error("grok_voice.balance_preauthorization_top_up_failed", zap.Error(err))
+		}
+	} else if !(guarded && guard.IsCurrentOwner()) && strings.TrimSpace(result.AudioUsage.Mode) == "realtime" {
 		result.RequestID = service.StableGrokRealtimeBillingRequestID(result.RequestID)
-	} else {
+	} else if !(guarded && guard.IsCurrentOwner()) {
 		result.RequestID = service.StableGrokAudioBillingRequestID(result.RequestID)
 	}
 	userAgent := c.GetHeader("User-Agent")
@@ -315,11 +471,6 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 	inboundEndpoint := GetInboundEndpoint(c)
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
-	model := strings.TrimSpace(result.Model)
-	if model == "" {
-		model = endpoint
-	}
-
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 			Result:             result,
@@ -335,6 +486,7 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 			APIKeyService:      h.apiKeyService,
 			QuotaPlatform:      quotaPlatform,
 			SessionID:          sessionID,
+			PricingAt:          pricingAt,
 			ChannelUsageFields: clientRequestedUsageFields(c, service.ChannelMappingResult{}, model, result.UpstreamModel),
 		}); err != nil {
 			logger.L().With(

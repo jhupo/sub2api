@@ -40,7 +40,7 @@ type balancePreauthorizationCostCalculator interface {
 }
 
 type balancePreauthorizationSnapshotReader interface {
-	LoadLiveBalanceInitializationSnapshot(ctx context.Context, userID int64) (LiveBalanceInitializationSnapshot, error)
+	LoadLiveBalanceInitializationSnapshot(context.Context, int64, string, int64) (LiveBalanceInitializationSnapshot, error)
 }
 
 type balancePreauthorizationWallet interface {
@@ -48,6 +48,13 @@ type balancePreauthorizationWallet interface {
 	TopUpLiveBalance(ctx context.Context, userID int64, attemptID string, targetHoldAmount float64) (LiveBalanceResult, error)
 	FinalizeLiveBalance(ctx context.Context, userID int64, attemptID string, actualAmount float64) (LiveBalanceResult, error)
 	RefundLiveBalance(ctx context.Context, userID int64, attemptID string) (LiveBalanceResult, error)
+}
+
+// balancePreauthorizationAttemptCleaner is intentionally optional. Terminal
+// attempt markers are needed until PostgreSQL records the terminal transition;
+// implementations that can remove them may do so afterwards.
+type balancePreauthorizationAttemptCleaner interface {
+	DeleteLiveBalanceAttempt(context.Context, int64, string) error
 }
 
 type balancePreauthorizationWatermarkedWallet interface {
@@ -74,6 +81,16 @@ type balancePreauthorizationWatermarkedWallet interface {
 		holdAmount float64,
 		allowInitialize bool,
 	) (LiveBalanceResult, error)
+	AuthorizeLiveBalanceAtSnapshotWatermarkIfSafe(
+		ctx context.Context,
+		userID int64,
+		attemptID string,
+		fallbackBalance float64,
+		fallbackWatermark int64,
+		holdAmount float64,
+		allowInitialize bool,
+	) (LiveBalanceResult, error)
+	TopUpLiveBalanceAtSnapshotWatermark(context.Context, int64, string, int64, float64) (LiveBalanceResult, error)
 }
 
 type balancePreauthorizationRepository interface {
@@ -90,6 +107,7 @@ type balancePreauthorizationRepository interface {
 // every uncertain dependency result is fail-closed and left recoverable in PG.
 type BalancePreauthorizationService struct {
 	cfg             *config.Config
+	settingService  *SettingService
 	costCalculator  balancePreauthorizationCostCalculator
 	snapshotReader  balancePreauthorizationSnapshotReader
 	wallet          balancePreauthorizationWallet
@@ -97,14 +115,27 @@ type BalancePreauthorizationService struct {
 	repo            balancePreauthorizationRepository
 }
 
+func (s *BalancePreauthorizationService) cleanupLiveBalanceAttempt(ctx context.Context, userID int64, attemptID string) {
+	if s == nil {
+		return
+	}
+	cleaner, ok := s.wallet.(balancePreauthorizationAttemptCleaner)
+	if !ok {
+		return
+	}
+	_ = cleaner.DeleteLiveBalanceAttempt(ctx, userID, attemptID)
+}
+
 func NewBalancePreauthorizationService(
 	cfg *config.Config,
+	settingService *SettingService,
 	billingService *BillingService,
 	billingCacheService *BillingCacheService,
 	repo UsageBillingRepository,
 ) *BalancePreauthorizationService {
 	service := &BalancePreauthorizationService{
 		cfg:            cfg,
+		settingService: settingService,
 		costCalculator: billingService,
 		repo:           repo,
 	}
@@ -131,6 +162,9 @@ const (
 	// per-request billing units (image count, size tier, video seconds) using
 	// the same BillingModeImage/Video/PerRequest path as post-usage settlement.
 	PreauthorizationEstimatePerRequest
+	// PreauthorizationEstimateFixed reserves a trusted, already calculated
+	// non-model charge such as standalone search.
+	PreauthorizationEstimateFixed
 )
 
 // PerRequestPreauthorizationEstimate carries the already-parsed billing units
@@ -161,18 +195,41 @@ type BalancePreauthorizationRequest struct {
 	BillableInputBytes        int
 	EstimatedInputTokens      int
 	InitialOutputWindowTokens int
+	DisableOutputReservation  bool
 	CostInput                 CostInput
 	EstimateKind              PreauthorizationEstimateKind
 	PerRequestEstimate        PerRequestPreauthorizationEstimate
+	FixedAmount               float64
+	ExpiresAt                 time.Time
+}
+
+// BalancePreauthorizationResumeRequest identifies one exact existing hold.
+// Resume never estimates, prepares a new charge, or initializes a wallet.
+type BalancePreauthorizationResumeRequest struct {
+	RequestID                string
+	APIKeyID                 int64
+	UserID                   int64
+	AuthorizationFingerprint string
+	HoldAmount               float64
 }
 
 // RequiresPreauthorization lets handlers avoid pricing and hashing work for
 // modes that Preauthorize would immediately skip.
-func (s *BalancePreauthorizationService) RequiresPreauthorization(billingType int8) bool {
+func (s *BalancePreauthorizationService) RequiresPreauthorization(ctx context.Context, billingType int8) bool {
 	if s == nil || billingType != BillingTypeBalance {
 		return false
 	}
-	return s.cfg == nil || (s.cfg.RunMode != config.RunModeSimple && s.cfg.Billing.BalancePreauthorizationEnabled)
+	return (s.cfg == nil || s.cfg.RunMode != config.RunModeSimple) && s.balancePreauthorizationEnabled(ctx)
+}
+
+func (s *BalancePreauthorizationService) balancePreauthorizationEnabled(ctx context.Context) bool {
+	if s == nil {
+		return false
+	}
+	if s.settingService != nil {
+		return s.settingService.IsBalancePreauthorizationEnabled(ctx)
+	}
+	return true
 }
 
 // Preauthorize returns nil without touching billing state in simple or
@@ -184,7 +241,7 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	if s == nil {
 		return nil, balancePreauthorizationUnavailable(errors.New("balance preauthorization service is nil"))
 	}
-	if s.cfg != nil && (s.cfg.RunMode == config.RunModeSimple || !s.cfg.Billing.BalancePreauthorizationEnabled) {
+	if (s.cfg != nil && s.cfg.RunMode == config.RunModeSimple) || !s.balancePreauthorizationEnabled(ctx) {
 		return nil, nil
 	}
 	if request.BillingType == BillingTypeSubscription {
@@ -212,6 +269,7 @@ func (s *BalancePreauthorizationService) Preauthorize(
 		UserID:                   request.UserID,
 		AuthorizationFingerprint: fingerprint,
 		HoldAmount:               holdAmount,
+		ExpiresAt:                request.ExpiresAt,
 	})
 	if err != nil {
 		return nil, balancePreauthorizationUnavailable(err)
@@ -223,34 +281,16 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	}
 
 	attemptID := BalancePreauthorizationAttemptID(requestID, request.APIKeyID)
-	authorized, err := s.watermarkWallet.AuthorizeExistingLiveBalance(
-		ctx,
-		request.UserID,
-		attemptID,
-		record.HoldAmount,
-	)
-	// 活期钱包缓存缺失（冷启动或被驱逐）时，从 PG 权威快照按其 watermark
-	//（外部调整 outbox 的重放边界）在水位处初始化后再授权。
-	// allowInitialize 传 !HasUnsettled 是关键守恒条件：HasUnsettled 表示存在
-	// Authorized/FinalizationPending/Pending 的用量结算（在途 hold），此时 PG
-	// u.balance 未必反映这些在途扣减，用快照重建会漏扣（掩盖在途占用）或重扣
-	//（已扣金额被恢复后再次结算），故仅在无未结算时才允许初始化；存在未结算时
-	// 本调用返回 NotFound，随后走 compensate + unavailable 失败闭合，绝不带病初始化。
-	if err == nil && authorized.Outcome == LiveBalanceOutcomeNotFound {
-		var snapshot LiveBalanceInitializationSnapshot
-		snapshot, err = s.snapshotReader.LoadLiveBalanceInitializationSnapshot(ctx, request.UserID)
-		if err == nil {
-			authorized, err = s.watermarkWallet.AuthorizeLiveBalanceAtWatermarkIfSafe(
-				ctx,
-				request.UserID,
-				attemptID,
-				snapshot.Balance,
-				snapshot.Watermark,
-				record.HoldAmount,
-				!snapshot.HasUnsettled,
-			)
-		}
+	snapshot, err := s.snapshotReader.LoadLiveBalanceInitializationSnapshot(ctx, request.UserID, requestID, request.APIKeyID)
+	if err != nil {
+		return nil, balancePreauthorizationUnavailable(fmt.Errorf("load live balance snapshot: %w", err))
 	}
+	// A cold wallet can be reconstructed only with no unsettled usage hold.
+	// Existing wallets are never assigned the snapshot's absolute balance.
+	authorized, err := s.watermarkWallet.AuthorizeLiveBalanceAtSnapshotWatermarkIfSafe(
+		ctx, request.UserID, attemptID, snapshot.Balance, snapshot.Watermark,
+		record.HoldAmount, !snapshot.HasUnsettled,
+	)
 	if err != nil {
 		s.compensateAuthorizationFailure(requestID, request.APIKeyID, request.UserID)
 		return nil, balancePreauthorizationUnavailable(fmt.Errorf("authorize live balance: %w", err))
@@ -296,6 +336,62 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	return &BalancePreauthorizationGuard{core: core, ownerToken: 1}, nil
 }
 
+// Resume reconstructs a guard for an exact active authorization or an identical
+// finalization retry. Settled and refunded rows are explicit outcomes so an
+// async response can distinguish a completed charge from an unsafe conflict.
+func (s *BalancePreauthorizationService) Resume(ctx context.Context, request BalancePreauthorizationResumeRequest) (*BalancePreauthorizationGuard, error) {
+	if s == nil || s.wallet == nil || s.repo == nil {
+		return nil, balancePreauthorizationUnavailable(errors.New("balance preauthorization resume dependency is unavailable"))
+	}
+	request.RequestID = strings.TrimSpace(request.RequestID)
+	request.AuthorizationFingerprint = strings.TrimSpace(request.AuthorizationFingerprint)
+	if request.RequestID == "" || request.AuthorizationFingerprint == "" || request.APIKeyID <= 0 || request.UserID <= 0 || invalidNonnegativeMoney(request.HoldAmount) {
+		return nil, balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
+	}
+	request.HoldAmount = QuantizeUsageBillingAmount(request.HoldAmount)
+	ctx = nonNilContext(ctx)
+	record, err := s.repo.PrepareBalancePreauthorization(ctx, &BalancePreauthorizationCommand{
+		RequestID: request.RequestID, APIKeyID: request.APIKeyID, UserID: request.UserID,
+		AuthorizationFingerprint: request.AuthorizationFingerprint, HoldAmount: request.HoldAmount,
+	})
+	if err != nil || record == nil || record.RequestID != request.RequestID || record.APIKeyID != request.APIKeyID ||
+		record.UserID != request.UserID || record.AuthorizationFingerprint != request.AuthorizationFingerprint ||
+		QuantizeUsageBillingAmount(record.HoldAmount) != request.HoldAmount {
+		if err == nil {
+			err = ErrUsageBillingRequestConflict
+		}
+		return nil, balancePreauthorizationUnavailable(fmt.Errorf("resume balance preauthorization: %w", err))
+	}
+	if record.Status == BalanceSettlementRefunded {
+		return nil, ErrBalancePreauthorizationAlreadyRefunded
+	}
+	if record.Status == BalanceSettlementPending || record.Status == BalanceSettlementApplied || record.Status == BalanceSettlementTerminal {
+		return nil, ErrBalancePreauthorizationAlreadyFinalized
+	}
+	resumedHoldAmount := request.HoldAmount
+	switch record.Status {
+	case BalanceSettlementAuthorized:
+		if !record.ExpiresAt.After(time.Now()) {
+			return nil, balancePreauthorizationUnavailable(fmt.Errorf("resume balance preauthorization: %w", ErrUsageBillingRequestConflict))
+		}
+	case BalanceSettlementFinalizationPending:
+		if invalidNonnegativeMoney(record.Amount) {
+			return nil, balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
+		}
+		// The Redis marker may already be finalized at this durable amount. Give
+		// the retry that exact effective hold so applyUsageBilling does not try to
+		// top it up before replaying the idempotent finalization transition.
+		resumedHoldAmount = QuantizeUsageBillingAmount(record.Amount)
+	default:
+		return nil, balancePreauthorizationUnavailable(fmt.Errorf("resume balance preauthorization: %w", ErrUsageBillingRequestConflict))
+	}
+	return &BalancePreauthorizationGuard{core: &balancePreauthorizationGuardCore{
+		service: s, requestID: request.RequestID, apiKeyID: request.APIKeyID, userID: request.UserID,
+		attemptID: BalancePreauthorizationAttemptID(request.RequestID, request.APIKeyID), holdAmount: resumedHoldAmount,
+		ownerToken: 1, terminalState: balancePreauthorizationGuardActive,
+	}, ownerToken: 1}, nil
+}
+
 // balancePreauthorizationEstimate is the frozen pricing result of a request.
 // OutputUnitPrice is the effective per-output-token price (after all pricing
 // policy), used to plan streaming top-ups; it is zero for per-request endpoints
@@ -313,12 +409,29 @@ func (s *BalancePreauthorizationService) estimateHold(
 	ctx context.Context,
 	request BalancePreauthorizationRequest,
 ) (balancePreauthorizationEstimate, error) {
-	switch request.EstimateKind {
-	case PreauthorizationEstimatePerRequest:
-		return s.estimatePerRequestHold(ctx, request)
-	default:
-		return s.estimateTokenUpperBoundHold(ctx, request)
+	if request.EstimateKind == PreauthorizationEstimateFixed {
+		if invalidNonnegativeMoney(request.FixedAmount) {
+			return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
+		}
+		return balancePreauthorizationEstimate{HoldAmount: quantizeBillingHoldUpFromFloat(request.FixedAmount)}, nil
 	}
+	base, err := s.resolvedPricingCostInput(ctx, request.CostInput)
+	if err != nil {
+		return balancePreauthorizationEstimate{}, err
+	}
+	request.CostInput = base
+	if base.Resolved != nil {
+		switch base.Resolved.Mode {
+		case BillingModePerRequest, BillingModeImage, BillingModeVideo:
+			return s.estimatePerRequestHold(ctx, request)
+		default:
+			return s.estimateTokenUpperBoundHold(ctx, request)
+		}
+	}
+	if request.EstimateKind == PreauthorizationEstimatePerRequest {
+		return s.estimatePerRequestHold(ctx, request)
+	}
+	return s.estimateTokenUpperBoundHold(ctx, request)
 }
 
 // estimateTokenUpperBoundHold prices chat/text traffic from the current
@@ -330,7 +443,7 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 	request BalancePreauthorizationRequest,
 ) (balancePreauthorizationEstimate, error) {
 	outputWindow := request.InitialOutputWindowTokens
-	if outputWindow == 0 {
+	if outputWindow == 0 && !request.DisableOutputReservation {
 		outputWindow = DefaultBalancePreauthorizationOutputWindow
 	}
 	base, err := s.resolvedPricingCostInput(ctx, request.CostInput)
@@ -341,75 +454,73 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 	if inputTokens <= 0 {
 		inputTokens = request.BillableInputBytes
 	}
-	input := base
-	input.Tokens = UsageTokens{InputTokens: inputTokens, OutputTokens: outputWindow}
-	breakdown, err := s.costCalculator.CalculateCostUnified(input)
-	if err != nil {
-		return balancePreauthorizationEstimate{}, err
+	scenarios := []UsageTokens{
+		{InputTokens: inputTokens, OutputTokens: outputWindow},
+		{CacheReadTokens: inputTokens, OutputTokens: outputWindow},
+		{CacheCreationTokens: inputTokens, CacheCreation5mTokens: inputTokens, OutputTokens: outputWindow},
+		{CacheCreationTokens: inputTokens, CacheCreation1hTokens: inputTokens, OutputTokens: outputWindow},
 	}
-	if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
-		return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
+	maxCost := -1.0
+	maxTokens := scenarios[0]
+	for _, tokens := range scenarios {
+		input := base
+		input.Tokens = tokens
+		breakdown, priceErr := s.costCalculator.CalculateCostUnified(input)
+		if priceErr != nil {
+			return balancePreauthorizationEstimate{}, priceErr
+		}
+		if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
+			return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
+		}
+		if breakdown.ActualCost > maxCost {
+			maxCost = breakdown.ActualCost
+			maxTokens = tokens
+		}
 	}
 
-	// Effective per-output-token price via difference: the output window is the
-	// only term that varies between the plain-input scenario already priced
-	// above and an output-free baseline, so (windowed - baseline) / windowTokens
-	// matches the exact policy (intervals, priority tier, long-context, time
-	// multipliers) used at settlement without reaching into pricing internals.
-	// Only one extra pricing call runs, once per request at preauthorization,
-	// never on the hot path.
-	outputUnitPrice, err := s.estimateOutputUnitPrice(base, inputTokens, outputWindow)
+	outputUnitPrice, err := s.estimateOutputUnitPrice(base, maxTokens, outputWindow, maxCost)
 	if err != nil {
 		return balancePreauthorizationEstimate{}, err
 	}
 	return balancePreauthorizationEstimate{
-		HoldAmount:      quantizeBillingHoldUpFromFloat(breakdown.ActualCost),
+		HoldAmount:      quantizeBillingHoldUpFromFloat(maxCost),
 		OutputWindow:    outputWindow,
 		OutputUnitPrice: outputUnitPrice,
 	}, nil
 }
 
 // estimateOutputUnitPrice derives the effective per-output-token price from a
-// windowed-minus-baseline cost difference. Both the windowed and baseline
-// prices are computed here over the SAME plain-input disposition (InputTokens
-// only), differing solely in the output window, so the difference isolates the
-// output marginal price regardless of how the hold itself weights cache_read vs
-// input. This keeps output-unit-price derivation self-contained and decoupled
-// from the cache-aware hold estimate. Output pricing is independent of input
-// disposition, so one representative input scenario suffices.
+// windowed-minus-baseline cost difference. Both prices use the same input
+// disposition selected for the maximum hold and differ only in output tokens,
+// so cache pricing cannot leak into streaming top-up targets.
 // Returns zero (top-ups disabled) for non-positive results.
 func (s *BalancePreauthorizationService) estimateOutputUnitPrice(
 	base CostInput,
-	billableInputBytes int,
+	windowedTokens UsageTokens,
 	outputWindow int,
+	windowedCost float64,
 ) (float64, error) {
 	if outputWindow <= 0 {
 		return 0, nil
 	}
-	windowed := base
-	windowed.Tokens = UsageTokens{InputTokens: billableInputBytes, OutputTokens: outputWindow}
-	windowedBreakdown, err := s.costCalculator.CalculateCostUnified(windowed)
-	if err != nil {
-		return 0, err
-	}
 	baseline := base
-	baseline.Tokens = UsageTokens{InputTokens: billableInputBytes, OutputTokens: 0}
+	windowedTokens.OutputTokens = 0
+	baseline.Tokens = windowedTokens
 	baselineCost, err := s.costCalculator.CalculateCostUnified(baseline)
 	if err != nil {
 		return 0, err
 	}
-	if windowedBreakdown == nil || invalidNonnegativeMoney(windowedBreakdown.ActualCost) ||
-		baselineCost == nil || invalidNonnegativeMoney(baselineCost.ActualCost) {
+	if invalidNonnegativeMoney(windowedCost) || baselineCost == nil || invalidNonnegativeMoney(baselineCost.ActualCost) {
 		return 0, ErrInvalidBillingPreauthorizationEstimate
 	}
-	delta := windowedBreakdown.ActualCost - baselineCost.ActualCost
+	delta := windowedCost - baselineCost.ActualCost
 	// delta<=0 表示在当前定价下，输出窗口未产生额外边际成本（免费输出，或已并入
 	// 打包/按次价，由 maxCost 场景 hold 覆盖）。此时返回 0 会使 OutputUnitPrice=0，
 	// NewBillingOutputHoldTracker 返回 nil（见 billing_output_hold_tracker.go），
 	// 从而禁用流式补扣——这是安全的：既然输出无边际计价，长流不会随长度增加欠扣，
 	// 结算时仍按实际用量退差。
-	// 前提1（守恒关键）：差分必须用与 baseline 同一输入处置（plain-input）的 windowed
-	// 成本（firstScenarioCost / scenarios[0]），否则会把输入/缓存侧价差混入输出单价，
+	// 前提1（守恒关键）：差分必须用与 baseline 同一输入处置（当前为 maxTokens）的
+	// windowed 成本，否则会把输入/缓存侧价差混入输出单价，
 	// 污染补扣目标额。切勿对真实计费的输出误禁补扣。
 	// 前提2：差分仅在 outputWindow 处单点采样边际价，故"长流不欠扣"依赖输出边际价在
 	// 整段流长上均匀；若将来出现阶梯/阈值型输出定价（窗口内免费、越过阈值才计费），
@@ -435,6 +546,9 @@ func (s *BalancePreauthorizationService) estimatePerRequestHold(
 	base.RequestCount = request.PerRequestEstimate.RequestCount
 	base.UsageUnits = request.PerRequestEstimate.UsageUnits
 	base.SizeTier = request.PerRequestEstimate.SizeTier
+	if base.RequestCount <= 0 && base.UsageUnits <= 0 {
+		base.RequestCount = 1
+	}
 
 	breakdown, err := s.costCalculator.CalculateCostUnified(base)
 	if err != nil {
@@ -490,7 +604,9 @@ func (s *BalancePreauthorizationService) compensateAuthorizationFailure(requestI
 		return
 	}
 	if result.Outcome == LiveBalanceOutcomeNotFound || liveBalanceRefundSucceeded(result) {
-		_ = s.repo.CompleteBalancePreauthorizationRefund(ctx, requestID, apiKeyID)
+		if s.repo.CompleteBalancePreauthorizationRefund(ctx, requestID, apiKeyID) == nil {
+			s.cleanupLiveBalanceAttempt(ctx, userID, BalancePreauthorizationAttemptID(requestID, apiKeyID))
+		}
 	}
 }
 
@@ -498,7 +614,8 @@ func validateBalancePreauthorizationRequest(request *BalancePreauthorizationRequ
 	if request == nil || strings.TrimSpace(request.RequestID) == "" ||
 		strings.TrimSpace(request.AuthorizationFingerprint) == "" ||
 		request.APIKeyID <= 0 || request.UserID <= 0 ||
-		request.BillableInputBytes < 0 || request.EstimatedInputTokens < 0 || request.InitialOutputWindowTokens < 0 {
+		request.BillableInputBytes < 0 || request.EstimatedInputTokens < 0 || request.InitialOutputWindowTokens < 0 ||
+		invalidNonnegativeMoney(request.FixedAmount) || (!request.ExpiresAt.IsZero() && !request.ExpiresAt.After(time.Now())) {
 		return ErrInvalidBillingPreauthorizationEstimate
 	}
 	if request.BillingType != BillingTypeBalance {

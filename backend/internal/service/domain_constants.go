@@ -521,6 +521,10 @@ const (
 	// not stop or otherwise change already loaded plugin runtimes.
 	SettingKeyPluginManagementEnabled = "plugin_management_enabled"
 
+	// SettingKeyBalancePreauthorizationEnabled controls request-time balance
+	// holds for standard balance billing. It is opt-in and fail-closed.
+	SettingKeyBalancePreauthorizationEnabled = "balance_preauthorization_enabled"
+
 	// SettingKeyUpstreamBillingProbeSettings stores the global enable switch and interval
 	// for probing remote Sub2API API-key billing metadata.
 	SettingKeyUpstreamBillingProbeSettings = "upstream_billing_probe_settings"

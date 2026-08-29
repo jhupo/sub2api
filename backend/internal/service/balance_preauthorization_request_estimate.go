@@ -6,7 +6,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const DefaultBalancePreauthorizationInputTokens = 500
+const (
+	DefaultBalancePreauthorizationInputTokens              = 500
+	DefaultBalancePreauthorizationNonStreamingOutputWindow = 4096
+)
 
 // BalancePreauthorizationTokenEstimate is derived entirely from the current
 // request. It deliberately carries no historical usage dependency: reserve
@@ -33,7 +36,10 @@ func EstimateBalancePreauthorizationTokens(body []byte) BalancePreauthorizationT
 
 	outputTokens := requestedBalancePreauthorizationOutputTokens(body)
 	if outputTokens <= 0 {
-		outputTokens = DefaultBalancePreauthorizationOutputWindow
+		outputTokens = DefaultBalancePreauthorizationNonStreamingOutputWindow
+		if gjson.GetBytes(body, "stream").Bool() {
+			outputTokens = DefaultBalancePreauthorizationOutputWindow
+		}
 	}
 
 	return BalancePreauthorizationTokenEstimate{

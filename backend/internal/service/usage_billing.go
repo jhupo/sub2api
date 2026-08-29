@@ -216,6 +216,24 @@ type BalancePreauthorizationRecord struct {
 	Status                   int16
 	ExpiresAt                time.Time
 	UpdatedAt                time.Time
+	AsyncTaskID              string
+}
+
+// GrokVideoPendingBillingBinding connects an accepted async video task to the
+// exact authorized hold that owns its deferred settlement.
+type GrokVideoPendingBillingBinding struct {
+	TaskID   string
+	APIKeyID int64
+	UserID   int64
+	Pending  GrokVideoPendingBilling
+}
+
+// GrokVideoPendingBillingRepository is deliberately narrow and optional. It
+// keeps async-media durability out of the broad usage billing repository
+// contract used by unrelated request paths.
+type GrokVideoPendingBillingRepository interface {
+	BindGrokVideoPendingBilling(ctx context.Context, binding GrokVideoPendingBillingBinding) error
+	LoadGrokVideoPendingBilling(ctx context.Context, taskID string, userID, apiKeyID int64) (*GrokVideoPendingBilling, error)
 }
 
 // BatchImageBalanceHoldCommand describes an idempotent balance hold operation.

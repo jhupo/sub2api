@@ -14,6 +14,66 @@ import (
 	"time"
 )
 
+const (
+	balancePreauthorizationRuntimeCacheTTL  = 5 * time.Second
+	balancePreauthorizationRuntimeDBTimeout = 500 * time.Millisecond
+	balancePreauthorizationRuntimeCacheKey  = "balance_preauthorization_runtime"
+)
+
+type cachedBalancePreauthorizationRuntime struct {
+	enabled   bool
+	expiresAt int64
+}
+
+// IsBalancePreauthorizationEnabled is the request-path runtime gate. The
+// database setting is cached briefly so an admin change propagates across
+// replicas without adding a database read to every gateway request.
+func (s *SettingService) IsBalancePreauthorizationEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return true
+	}
+	now := time.Now().UnixNano()
+	if cached, _ := s.balancePreauthorizationRuntimeCache.Load().(*cachedBalancePreauthorizationRuntime); cached != nil && cached.expiresAt > now {
+		return cached.enabled
+	}
+	value, _, _ := s.balancePreauthorizationRuntimeSF.Do(balancePreauthorizationRuntimeCacheKey, func() (any, error) {
+		now := time.Now().UnixNano()
+		if cached, _ := s.balancePreauthorizationRuntimeCache.Load().(*cachedBalancePreauthorizationRuntime); cached != nil && cached.expiresAt > now {
+			return cached.enabled, nil
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(nonNilContext(ctx)), balancePreauthorizationRuntimeDBTimeout)
+		defer cancel()
+		raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyBalancePreauthorizationEnabled)
+		enabled := true
+		switch {
+		case errors.Is(err, ErrSettingNotFound):
+			enabled = false
+		case err != nil:
+			// Once the control plane is unavailable, fail closed into the
+			// preauthorization path instead of silently bypassing money holds.
+		case strings.TrimSpace(raw) == "false":
+			enabled = false
+		case strings.TrimSpace(raw) == "true":
+		default:
+			// Invalid stored values are control-plane corruption, not an opt-out.
+		}
+		s.publishBalancePreauthorizationRuntime(enabled)
+		return enabled, nil
+	})
+	enabled, _ := value.(bool)
+	return enabled
+}
+
+func (s *SettingService) publishBalancePreauthorizationRuntime(enabled bool) {
+	if s == nil {
+		return
+	}
+	s.balancePreauthorizationRuntimeSF.Forget(balancePreauthorizationRuntimeCacheKey)
+	s.balancePreauthorizationRuntimeCache.Store(&cachedBalancePreauthorizationRuntime{
+		enabled: enabled, expiresAt: time.Now().Add(balancePreauthorizationRuntimeCacheTTL).UnixNano(),
+	})
+}
+
 // IsRegistrationEnabled 检查是否开放注册
 func (s *SettingService) IsRegistrationEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyRegistrationEnabled)

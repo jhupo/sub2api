@@ -808,8 +808,13 @@ func ProvideBillingCacheService(
 	rateRepo UserGroupRateRepository,
 	cfg *config.Config,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	settingService *SettingService,
+	usageBillingRepo UsageBillingRepository,
 ) *BillingCacheService {
-	return NewBillingCacheService(cache, userRepo, subRepo, apiKeyRepo, rpmCache, rateRepo, cfg, userPlatformQuotaRepo)
+	service := NewBillingCacheService(cache, userRepo, subRepo, apiKeyRepo, rpmCache, rateRepo, cfg, userPlatformQuotaRepo)
+	service.balancePreauthorizationSettings = settingService
+	service.balancePreauthorizationSnapshot, _ = usageBillingRepo.(balancePreauthorizationSnapshotReader)
+	return service
 }
 
 // ProvideAPIKeyService wires APIKeyService and connects rate-limit cache invalidation.

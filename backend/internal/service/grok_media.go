@@ -23,6 +23,18 @@ import (
 
 type GrokMediaEndpoint string
 
+type grokMediaBufferedResponse struct {
+	statusCode int
+	header     http.Header
+	body       []byte
+	committed  bool
+}
+
+type grokMediaContentResponse struct {
+	response  *http.Response
+	committed bool
+}
+
 const (
 	GrokMediaEndpointImagesGenerations GrokMediaEndpoint = "images_generations"
 	GrokMediaEndpointImagesEdits       GrokMediaEndpoint = "images_edits"
@@ -359,7 +371,38 @@ type GrokVideoPendingBilling struct {
 	// duration_ms for deferred billing is measured from this instant until the
 	// first official done+video.url observation (status poll or content download),
 	// not the latency of that single discovery request alone.
-	CreatedAt string `json:"created_at,omitempty"`
+	CreatedAt                  string  `json:"created_at,omitempty"`
+	PreauthorizationRequestID  string  `json:"preauthorization_request_id,omitempty"`
+	AuthorizationFingerprint   string  `json:"authorization_fingerprint,omitempty"`
+	PreauthorizationHoldAmount float64 `json:"preauthorization_hold_amount,omitempty"`
+}
+
+// This deliberately nests under the existing durable Grok-video request-id
+// namespace. The usage recorder preserves grok-video:* ids verbatim, while
+// the hold segment still lets recovery distinguish job holds from task ids.
+const grokVideoHoldRequestIDPrefix = "grok-video:hold:"
+
+// GrokVideoHoldRequestID namespaces a create request's durable balance hold so
+// recovery can distinguish asynchronous jobs from ordinary HTTP holds.
+func GrokVideoHoldRequestID(requestID string) string {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return ""
+	}
+	if strings.HasPrefix(requestID, grokVideoHoldRequestIDPrefix) {
+		return requestID
+	}
+	return grokVideoHoldRequestIDPrefix + requestID
+}
+
+// NewGrokVideoHoldRequestID allocates one server-owned hold identity for each
+// async create. It must not reuse a caller correlation/request ID.
+func NewGrokVideoHoldRequestID() string {
+	return GrokVideoHoldRequestID(generateRequestID())
+}
+
+func IsGrokVideoHoldRequestID(requestID string) bool {
+	return strings.HasPrefix(strings.TrimSpace(requestID), grokVideoHoldRequestIDPrefix)
 }
 
 // GrokVideoPendingCreatedAtNow formats a create-accept timestamp for pending billing.
@@ -420,8 +463,8 @@ func (s *OpenAIGatewayService) StoreGrokVideoPendingBilling(
 	userID, apiKeyID int64,
 	pending GrokVideoPendingBilling,
 ) error {
-	if s == nil || s.cache == nil {
-		return fmt.Errorf("grok video pending billing cache is unavailable")
+	if s == nil {
+		return fmt.Errorf("grok video pending billing service is unavailable")
 	}
 	key := grokVideoPendingBillingKey(requestID, userID, apiKeyID)
 	if key == "" {
@@ -431,6 +474,14 @@ func (s *OpenAIGatewayService) StoreGrokVideoPendingBilling(
 	pending.BillingModel = strings.TrimSpace(pending.BillingModel)
 	pending.UpstreamModel = strings.TrimSpace(pending.UpstreamModel)
 	pending.OriginalModel = strings.TrimSpace(pending.OriginalModel)
+	pending.PreauthorizationRequestID = strings.TrimSpace(pending.PreauthorizationRequestID)
+	pending.AuthorizationFingerprint = strings.TrimSpace(pending.AuthorizationFingerprint)
+	if pending.PreauthorizationRequestID != "" || pending.AuthorizationFingerprint != "" || pending.PreauthorizationHoldAmount != 0 {
+		if !IsGrokVideoHoldRequestID(pending.PreauthorizationRequestID) || pending.AuthorizationFingerprint == "" || invalidNonnegativeMoney(pending.PreauthorizationHoldAmount) {
+			return ErrInvalidBillingPreauthorizationEstimate
+		}
+		pending.PreauthorizationHoldAmount = QuantizeUsageBillingAmount(pending.PreauthorizationHoldAmount)
+	}
 	if pending.VideoResolution != "" {
 		pending.VideoResolution = NormalizeVideoBillingResolutionOrDefault(pending.VideoResolution)
 	}
@@ -447,7 +498,33 @@ func (s *OpenAIGatewayService) StoreGrokVideoPendingBilling(
 	if err != nil {
 		return err
 	}
-	return s.cache.SetGrokVideoPendingBilling(ctx, key, payload, grokVideoPendingBillingTTL(s.cfg))
+	preauthorized := pending.PreauthorizationRequestID != ""
+	if preauthorized {
+		repo, ok := s.usageBillingRepo.(GrokVideoPendingBillingRepository)
+		if !ok {
+			return fmt.Errorf("grok video pending billing repository is unavailable")
+		}
+		if err := repo.BindGrokVideoPendingBilling(ctx, GrokVideoPendingBillingBinding{
+			TaskID: requestID, APIKeyID: apiKeyID, UserID: userID, Pending: pending,
+		}); err != nil {
+			return err
+		}
+	}
+	if s.cache == nil {
+		if preauthorized {
+			return nil
+		}
+		return fmt.Errorf("grok video pending billing cache is unavailable")
+	}
+	if err := s.cache.SetGrokVideoPendingBilling(ctx, key, payload, grokVideoPendingBillingTTL(s.cfg)); err != nil {
+		if preauthorized {
+			// The authoritative PG binding already succeeded. Redis is only a
+			// performance cache and will be healed by a later load.
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // LoadGrokVideoPendingBilling returns the create-time snapshot (may be nil on miss).
@@ -456,22 +533,43 @@ func (s *OpenAIGatewayService) LoadGrokVideoPendingBilling(
 	requestID string,
 	userID, apiKeyID int64,
 ) (*GrokVideoPendingBilling, error) {
-	if s == nil || s.cache == nil {
-		return nil, fmt.Errorf("grok video pending billing cache is unavailable")
+	if s == nil {
+		return nil, fmt.Errorf("grok video pending billing service is unavailable")
 	}
 	key := grokVideoPendingBillingKey(requestID, userID, apiKeyID)
 	if key == "" {
 		return nil, fmt.Errorf("grok video pending billing key is invalid")
 	}
-	payload, err := s.cache.GetGrokVideoPendingBilling(ctx, key)
-	if err != nil || len(payload) == 0 {
-		return nil, err
+	var cacheErr error
+	if s.cache != nil {
+		payload, err := s.cache.GetGrokVideoPendingBilling(ctx, key)
+		if err == nil && len(payload) > 0 {
+			var pending GrokVideoPendingBilling
+			if err := json.Unmarshal(payload, &pending); err == nil {
+				return &pending, nil
+			} else {
+				cacheErr = err
+			}
+		} else if err != nil {
+			cacheErr = err
+		}
 	}
-	var pending GrokVideoPendingBilling
-	if err := json.Unmarshal(payload, &pending); err != nil {
-		return nil, err
+	repo, ok := s.usageBillingRepo.(GrokVideoPendingBillingRepository)
+	if !ok {
+		return nil, cacheErr
 	}
-	return &pending, nil
+	pending, err := repo.LoadGrokVideoPendingBilling(ctx, requestID, userID, apiKeyID)
+	if err != nil || pending == nil {
+		return pending, err
+	}
+	// PG is authoritative. A cache repopulation failure must not hide a valid
+	// durable pending record from terminal billing or refund processing.
+	if s.cache != nil {
+		if payload, marshalErr := json.Marshal(pending); marshalErr == nil {
+			_ = s.cache.SetGrokVideoPendingBilling(ctx, key, payload, grokVideoPendingBillingTTL(s.cfg))
+		}
+	}
+	return pending, nil
 }
 
 // ClaimGrokVideoBilling returns true once for a completed video request so status
@@ -538,6 +636,13 @@ func IsGrokVideoStatusBillable(statusBody []byte) bool {
 		return false
 	}
 	return strings.TrimSpace(gjson.GetBytes(statusBody, "video.url").String()) != ""
+}
+
+func NormalizedGrokVideoStatus(statusBody []byte) string {
+	if len(statusBody) == 0 || !gjson.ValidBytes(statusBody) {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(gjson.GetBytes(statusBody, "status").String()))
 }
 
 func isOfficialGrokVideoStatusDone(statusBody []byte) bool {
@@ -737,7 +842,6 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 			grokMediaContentProxyURL(c, requestID),
 		)
 	}
-	writeGrokMediaResponse(c, resp, respBody, s.responseHeaderFilter)
 	usage := grokMediaUsageFromResponse(endpoint, requestInfo, respBody)
 	resultModel := requestModel
 	resultBillingModel := requestModel
@@ -750,7 +854,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 			resultBillingModel = m
 		}
 	}
-	return &OpenAIForwardResult{
+	result := &OpenAIForwardResult{
 		RequestID:            requestIDHeader,
 		ResponseID:           usage.ResponseID,
 		Usage:                usage.Usage,
@@ -764,9 +868,92 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		ImageInputSize:       usage.ImageInputSize,
 		ImageOutputSizes:     usage.ImageOutputSizes,
 		VideoCount:           usage.VideoCount,
+		VideoStatus:          NormalizedGrokVideoStatus(respBody),
 		VideoResolution:      usage.VideoResolution,
 		VideoDurationSeconds: usage.VideoDurationSeconds,
-	}, nil
+	}
+	if isGrokMediaVideoCreateEndpoint(endpoint) {
+		result.grokVideoCreateResponse = &grokMediaBufferedResponse{
+			statusCode: resp.StatusCode,
+			header:     resp.Header.Clone(),
+			body:       append([]byte(nil), respBody...),
+		}
+		return result, nil
+	}
+	if endpoint == GrokMediaEndpointVideoStatus {
+		result.grokVideoStatusResponse = &grokMediaBufferedResponse{
+			statusCode: resp.StatusCode,
+			header:     resp.Header.Clone(),
+			body:       append([]byte(nil), respBody...),
+		}
+		return result, nil
+	}
+	writeGrokMediaResponse(c, resp, respBody, s.responseHeaderFilter)
+	return result, nil
+}
+
+func isGrokMediaVideoCreateEndpoint(endpoint GrokMediaEndpoint) bool {
+	switch endpoint {
+	case GrokMediaEndpointVideosGenerations, GrokMediaEndpointVideosEdits, GrokMediaEndpointVideosExtensions:
+		return true
+	default:
+		return false
+	}
+}
+
+// CommitGrokVideoCreateResponse writes a successful video-create response that
+// ForwardGrokMedia intentionally held until the handler persisted its task state.
+func (s *OpenAIGatewayService) CommitGrokVideoCreateResponse(c *gin.Context, result *OpenAIForwardResult) error {
+	if s == nil || c == nil || result == nil || result.grokVideoCreateResponse == nil {
+		return fmt.Errorf("grok video create response is unavailable")
+	}
+	buffered := result.grokVideoCreateResponse
+	if buffered.committed || c.Writer.Written() || IsResponseCommitted(c) {
+		return fmt.Errorf("grok video create response is already committed")
+	}
+	writeGrokMediaResponse(c, &http.Response{
+		StatusCode: buffered.statusCode,
+		Header:     buffered.header,
+	}, buffered.body, s.responseHeaderFilter)
+	buffered.committed = true
+	return nil
+}
+
+// CommitGrokVideoLookupResponse releases a status or content response only
+// after the handler has completed any deferred video billing.
+func (s *OpenAIGatewayService) CommitGrokVideoLookupResponse(c *gin.Context, result *OpenAIForwardResult) error {
+	if s == nil || c == nil || result == nil || c.Writer.Written() || IsResponseCommitted(c) {
+		return fmt.Errorf("grok video lookup response is unavailable")
+	}
+	if buffered := result.grokVideoStatusResponse; buffered != nil {
+		if buffered.committed {
+			return fmt.Errorf("grok video status response is already committed")
+		}
+		writeGrokMediaResponse(c, &http.Response{StatusCode: buffered.statusCode, Header: buffered.header}, buffered.body, s.responseHeaderFilter)
+		buffered.committed = true
+		return nil
+	}
+	if content := result.grokVideoContentResponse; content != nil && content.response != nil && content.response.Body != nil {
+		if content.committed {
+			return fmt.Errorf("grok video content response is already committed")
+		}
+		defer func() { _ = content.response.Body.Close() }()
+		if err := writeGrokMediaContentResponse(c, content.response); err != nil {
+			return err
+		}
+		content.committed = true
+		return nil
+	}
+	return fmt.Errorf("grok video lookup response is unavailable")
+}
+
+// DiscardGrokVideoLookupResponse closes an uncommitted content body after a
+// billing failure. Status JSON needs no resource cleanup.
+func (s *OpenAIGatewayService) DiscardGrokVideoLookupResponse(result *OpenAIForwardResult) {
+	if result == nil || result.grokVideoContentResponse == nil || result.grokVideoContentResponse.committed || result.grokVideoContentResponse.response == nil || result.grokVideoContentResponse.response.Body == nil {
+		return
+	}
+	_ = result.grokVideoContentResponse.response.Body.Close()
 }
 
 func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
@@ -868,26 +1055,27 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
-	defer func() { _ = contentResp.Body.Close() }()
 	contentRequestID := firstNonEmpty(contentResp.Header.Get("x-request-id"), contentResp.Header.Get("xai-request-id"), statusRequestID)
 	if contentResp.StatusCode >= 300 && contentResp.StatusCode < 400 {
+		_ = contentResp.Body.Close()
 		return nil, fmt.Errorf("grok media signed content redirect is not allowed")
 	}
 	if contentResp.StatusCode >= 400 && contentResp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
-		return s.handleGrokMediaErrorResponse(ctx, contentResp, c, account, contentRequestID, "")
+		result, err := s.handleGrokMediaErrorResponse(ctx, contentResp, c, account, contentRequestID, "")
+		_ = contentResp.Body.Close()
+		return result, err
 	}
 
 	s.updateGrokUsageFromResponse(withGrokTeamRateLimitModel(ctx, ""), account, contentResp.Header, contentResp.StatusCode)
-	if err := writeGrokMediaContentResponse(c, contentResp); err != nil {
-		return nil, err
-	}
 	// Content download is an alternate completion observation: when status body is
 	// official done+video.url, attach billable units so the handler can claim once
 	// (same path as status polling). Pending snapshot is merged in the handler.
 	result := &OpenAIForwardResult{
-		RequestID:       contentRequestID,
-		ResponseHeaders: contentResp.Header.Clone(),
-		Duration:        time.Since(startTime),
+		RequestID:                contentRequestID,
+		ResponseHeaders:          contentResp.Header.Clone(),
+		Duration:                 time.Since(startTime),
+		VideoStatus:              NormalizedGrokVideoStatus(statusBody),
+		grokVideoContentResponse: &grokMediaContentResponse{response: contentResp},
 	}
 	if billed := ExtractGrokVideoBillingFromStatusBody(statusBody, nil, requestID); billed != nil {
 		result.ResponseID = firstNonEmpty(billed.ResponseID, strings.TrimSpace(requestID))

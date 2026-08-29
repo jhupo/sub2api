@@ -455,6 +455,7 @@ const baseSettingsResponse = {
   fallback_model_antigravity: "",
   grok_default_text_model: "grok-4.5",
   grok_cross_client_model_map_enabled: false,
+  balance_preauthorization_enabled: false,
   enable_identity_patch: false,
   identity_patch_prompt: "",
   ops_monitoring_enabled: false,
@@ -732,6 +733,25 @@ describe("admin SettingsView payment visible method controls", () => {
 
     expect(updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({ compact_home_enabled: true }),
+    );
+  });
+
+  it("loads and saves the balance preauthorization toggle", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      balance_preauthorization_enabled: false,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const toggle = wrapper.get('[data-testid="balance-preauthorization-enabled"]');
+    expect((toggle.element as HTMLInputElement).checked).toBe(false);
+    await toggle.setValue(true);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ balance_preauthorization_enabled: true }),
     );
   });
 

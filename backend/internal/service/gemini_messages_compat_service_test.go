@@ -1150,6 +1150,35 @@ func TestGeminiMessagesHandleStreamingResponse_TopUpAbortSurfacesSentinel(t *tes
 		"Gemini-compat top-up abort must surface the withholding sentinel so Forward preserves the delivered-output result")
 }
 
+func TestGeminiMessagesHandleStreamingResponse_ToolArgsTopUpBeforeWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fixture := newPreauthorizationFixture()
+	fixture.wallet.topUp = []LiveBalanceResult{{Outcome: LiveBalanceOutcomeInsufficient, State: LiveBalanceAttemptAuthorized}}
+	guard := streamingPreauthorizationGuard(t, fixture)
+
+	toolArgs := strings.Repeat("a", 512)
+	upstreamEvent := fmt.Sprintf(
+		"data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"lookup\",\"args\":%q}}]}}]}\n\n",
+		toolArgs,
+	)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamEvent)),
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", http.NoBody)
+	c.Request = c.Request.WithContext(ContextWithBalancePreauthorizationGuard(c.Request.Context(), guard))
+
+	svc := &GeminiMessagesCompatService{}
+	_, err := svc.handleStreamingResponse(c, resp, time.Now(), "claude-3-5-sonnet")
+
+	require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
+	require.Equal(t, 1, fixture.wallet.topUpCalls)
+	require.NotContains(t, rec.Body.String(), "partial_json", "unreserved tool arguments must not be emitted")
+}
+
 type anthropicContentBlockEvent struct {
 	event     string
 	index     int

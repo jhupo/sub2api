@@ -280,7 +280,10 @@ type OpenAIForwardResult struct {
 	ImageSizeSource          string
 	ImageSizeBreakdown       map[string]int
 	VideoCount               int
-	VideoResolution          string
+	// VideoStatus is the normalized upstream async-video status observed by a
+	// status or content lookup; it is internal billing metadata only.
+	VideoStatus     string
+	VideoResolution string
 	// VideoDurationSeconds 是提交时请求的生成时长（xAI 按输出秒数计费），已归一化到 1-15 秒。
 	VideoDurationSeconds int
 	// WebSearchCalls 是 Codex alpha/search 网页搜索调用次数（每次成功请求为 1）。
@@ -294,6 +297,10 @@ type OpenAIForwardResult struct {
 	wsReplayInput                []json.RawMessage
 	wsReplayInputExists          bool
 	wsAccountFailoverReplayInput []json.RawMessage
+	grokVideoCreateResponse      *grokMediaBufferedResponse
+	grokVideoStatusResponse      *grokMediaBufferedResponse
+	grokVideoContentResponse     *grokMediaContentResponse
+	grokVoiceResponse            *grokMediaBufferedResponse
 }
 
 // SucceededForScheduling reports whether this result is an upstream success

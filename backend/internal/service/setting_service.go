@@ -158,6 +158,8 @@ type SettingService struct {
 	codexQuotaOverdraftRuntimeCache      atomic.Value // *cachedCodexQuotaOverdraftRuntime
 	codexQuotaOverdraftRuntimeSF         singleflight.Group
 	codexQuotaOverdraftRuntimeRefreshing atomic.Bool
+	balancePreauthorizationRuntimeCache  atomic.Value // *cachedBalancePreauthorizationRuntime
+	balancePreauthorizationRuntimeSF     singleflight.Group
 
 	channelMonitorRuntimeListenersMu sync.Mutex
 	channelMonitorRuntimeListeners   []func()

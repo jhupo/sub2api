@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -105,15 +106,17 @@ type subscriptionCacheInvalidationPubSub interface {
 // BillingCacheService 计费缓存服务
 // 负责余额和订阅数据的缓存管理，提供高性能的计费资格检查
 type BillingCacheService struct {
-	cache                 BillingCache
-	userRepo              UserRepository
-	subRepo               UserSubscriptionRepository
-	apiKeyRateLimitLoader apiKeyRateLimitLoader
-	userRPMCache          UserRPMCache
-	userGroupRateRepo     UserGroupRateRepository
-	cfg                   *config.Config
-	circuitBreaker        *billingCircuitBreaker
-	userPlatformQuotaRepo UserPlatformQuotaRepository
+	cache                           BillingCache
+	userRepo                        UserRepository
+	subRepo                         UserSubscriptionRepository
+	apiKeyRateLimitLoader           apiKeyRateLimitLoader
+	userRPMCache                    UserRPMCache
+	userGroupRateRepo               UserGroupRateRepository
+	cfg                             *config.Config
+	circuitBreaker                  *billingCircuitBreaker
+	userPlatformQuotaRepo           UserPlatformQuotaRepository
+	balancePreauthorizationSettings balancePreauthorizationRuntimeSettings
+	balancePreauthorizationSnapshot balancePreauthorizationSnapshotReader
 
 	cacheWriteChan     chan cacheWriteTask
 	cacheWriteWg       sync.WaitGroup
@@ -135,6 +138,10 @@ type balanceCacheSetIfAbsent interface {
 
 type balanceCacheSetIfLower interface {
 	SetUserBalanceIfLower(ctx context.Context, userID int64, balance float64) error
+}
+
+type balancePreauthorizationRuntimeSettings interface {
+	IsBalancePreauthorizationEnabled(context.Context) bool
 }
 
 // NewBillingCacheService 创建计费缓存服务
@@ -320,33 +327,69 @@ func (s *BillingCacheService) logCacheWriteDrop(task cacheWriteTask, reason stri
 // 余额缓存方法
 // ============================================
 
-// GetUserBalance returns the persistent live wallet only while request-time
-// preauthorization is enabled. With preauthorization disabled, that wallet is
-// no longer updated by new requests and must not participate in admission;
-// use the normal balance cache and PostgreSQL fallback instead.
+// GetUserBalance keeps the legacy Redis-to-PostgreSQL fallback while the
+// preauthorization switch is off. If a live wallet still exists after a
+// mid-request disable, admission uses the lower of the live and legacy
+// projections. If Redis lost that wallet, the durable snapshot permits the
+// fallback only when PostgreSQL confirms there is no unsettled billing.
 func (s *BillingCacheService) GetUserBalance(ctx context.Context, userID int64) (float64, error) {
+	strictLiveBalance := s.balancePreauthorizationStrictMode(ctx)
 	if s.cache == nil {
-		// Redis不可用，直接查询数据库
+		if strictLiveBalance {
+			return 0, ErrBillingServiceUnavailable
+		}
+		return s.getBalanceWithoutLiveWallet(ctx, userID)
+	}
+
+	var (
+		liveBalance float64
+		liveExists  bool
+	)
+	if s.cfg == nil || s.cfg.RunMode != config.RunModeSimple {
+		var err error
+		liveBalance, liveExists, err = s.cache.GetLiveBalance(ctx, userID)
+		if err != nil {
+			if strictLiveBalance {
+				return 0, fmt.Errorf("get live user balance: %w", err)
+			}
+			return s.getBalanceWithoutLiveWallet(ctx, userID)
+		}
+	}
+	legacyBalance, err := s.getLegacyUserBalance(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	if liveExists {
+		return math.Min(liveBalance, legacyBalance), nil
+	}
+	return legacyBalance, nil
+}
+
+func (s *BillingCacheService) balancePreauthorizationStrictMode(ctx context.Context) bool {
+	if s == nil || (s.cfg != nil && s.cfg.RunMode == config.RunModeSimple) {
+		return false
+	}
+	if s.balancePreauthorizationSettings != nil {
+		return s.balancePreauthorizationSettings.IsBalancePreauthorizationEnabled(ctx)
+	}
+	return s.cfg == nil || s.cfg.Billing.BalancePreauthorizationEnabled
+}
+
+func (s *BillingCacheService) getBalanceWithoutLiveWallet(ctx context.Context, userID int64) (float64, error) {
+	if s.balancePreauthorizationSnapshot == nil {
 		return s.getUserBalanceFromDB(ctx, userID)
 	}
-
-	// A nil config is retained as the legacy strict mode for focused tests and
-	// lightweight embeddings. Production always supplies cfg, so the feature
-	// switch is authoritative there.
-	useLiveBalance := s.cfg == nil ||
-		(s.cfg.RunMode != config.RunModeSimple && s.cfg.Billing.BalancePreauthorizationEnabled)
-	if useLiveBalance {
-		liveBalance, exists, err := s.cache.GetLiveBalance(ctx, userID)
-		if err != nil {
-			// Falling back to PostgreSQL here would ignore active holds and can
-			// authorize spend twice while preauthorization is active.
-			return 0, fmt.Errorf("get live user balance: %w", err)
-		}
-		if exists {
-			return liveBalance, nil
-		}
+	snapshot, err := s.balancePreauthorizationSnapshot.LoadLiveBalanceInitializationSnapshot(ctx, userID, "", 0)
+	if err != nil {
+		return 0, err
 	}
+	if snapshot.HasUnsettled {
+		return 0, ErrBillingServiceUnavailable
+	}
+	return snapshot.Balance, nil
+}
 
+func (s *BillingCacheService) getLegacyUserBalance(ctx context.Context, userID int64) (float64, error) {
 	// 尝试从缓存读取
 	balance, err := s.cache.GetUserBalance(ctx, userID)
 	if err == nil {

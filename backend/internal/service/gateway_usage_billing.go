@@ -229,6 +229,7 @@ func resolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string)
 func isForcedUsageBillingRequestID(requestID string) bool {
 	id := strings.TrimSpace(requestID)
 	return strings.HasPrefix(id, "web_search:") ||
+		strings.HasPrefix(id, "x_search:") ||
 		strings.HasPrefix(id, "grok-video:") ||
 		strings.HasPrefix(id, "grok_audio:") ||
 		strings.HasPrefix(id, "grok_realtime:")
@@ -369,15 +370,25 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
+	if balancePreauthorized {
+		if err := guard.TopUpTo(billingCtx, cmd.BalanceCost); err != nil {
+			return false, err
+		}
+	}
 
 	result, applyErr := repo.Apply(billingCtx, cmd)
 	if balancePreauthorized {
+		if applyErr != nil {
+			return false, applyErr
+		}
+		if result == nil {
+			return false, balancePreauthorizationUnavailable(errors.New("guarded usage billing repository returned no result"))
+		}
 		// Finalize even when Apply reports a duplicate. A prior worker may have
 		// committed finalization_pending and crashed before settling the Redis
 		// hold; Applied=false is therefore not proof that settlement completed.
-		finalizeErr := guard.Finalize(billingCtx, cmd.BalanceCost, cmd.RequestFingerprint)
-		if applyErr != nil || finalizeErr != nil {
-			return false, errors.Join(applyErr, finalizeErr)
+		if err := guard.Finalize(billingCtx, cmd.BalanceCost, cmd.RequestFingerprint); err != nil {
+			return false, err
 		}
 	} else if applyErr != nil {
 		return false, applyErr

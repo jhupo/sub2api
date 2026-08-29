@@ -1085,6 +1085,12 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				for _, block := range outputBlocks {
 					if !clientDisconnected {
 						restored := reverseToolNamesIfPresent(c, []byte(block))
+						// Reserve the next billable block before exposing it to the
+						// client. A failed top-up must not leak unreserved output.
+						if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(restored)); topUpErr != nil {
+							logger.LegacyPrintf("service.gateway", "Stream output hold top-up failed, aborting upstream: account=%d error=%v", account.ID, topUpErr)
+							return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, wrapStreamOutputHoldTopUpFailure(topUpErr)
+						}
 						if _, werr := fmt.Fprint(w, string(restored)); werr != nil {
 							clientDisconnected = true
 							logger.LegacyPrintf("service.gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
@@ -1095,13 +1101,6 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 							flusher.Flush()
 							lastDataAt = time.Now()
 							resetKeepaliveTimer()
-							// 输出块计量：累加已发字节作 token 上界，跨预扣窗口时补扣。
-							// 补扣失败中止上游流并返回错误，避免继续产生无法结算的输出
-							// 成本。tracker 为 nil 时逐块零开销。
-							if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(restored)); topUpErr != nil {
-								logger.LegacyPrintf("service.gateway", "Stream output hold top-up failed, aborting upstream: account=%d error=%v", account.ID, topUpErr)
-								return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, wrapStreamOutputHoldTopUpFailure(topUpErr)
-							}
 						}
 					}
 					if data != "" {

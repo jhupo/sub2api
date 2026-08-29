@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 )
 
 // RecoverBalancePreauthorization resumes one durable nonterminal record. It is
@@ -33,6 +34,12 @@ func (s *BalancePreauthorizationService) RecoverBalancePreauthorization(
 		}
 		return s.recoverBalancePreauthorizationRefund(ctx, record)
 	case BalanceSettlementAuthorized:
+		if IsGrokVideoHoldRequestID(record.RequestID) && strings.TrimSpace(record.AsyncTaskID) != "" && !record.ExpiresAt.IsZero() && !record.ExpiresAt.After(time.Now()) {
+			if err := s.repo.BeginBalancePreauthorizationRefund(ctx, record.RequestID, record.APIKeyID); err != nil {
+				return balancePreauthorizationUnavailable(err)
+			}
+			return s.recoverBalancePreauthorizationRefund(ctx, record)
+		}
 		// Redis authorization succeeded, but the process may have crashed after
 		// returning a successful provider response and before its in-memory usage
 		// task reached repo.Apply. The exact spend is unknowable here; refunding
@@ -93,6 +100,7 @@ func (s *BalancePreauthorizationService) recoverBalancePreauthorizationRefund(
 	if err := s.repo.CompleteBalancePreauthorizationRefund(ctx, record.RequestID, record.APIKeyID); err != nil {
 		return balancePreauthorizationUnavailable(err)
 	}
+	s.cleanupLiveBalanceAttempt(ctx, record.UserID, BalancePreauthorizationAttemptID(record.RequestID, record.APIKeyID))
 	return nil
 }
 
@@ -119,5 +127,6 @@ func (s *BalancePreauthorizationService) recoverBalancePreauthorizationSettlemen
 	if err := s.repo.CompleteBalancePreauthorizationSettlement(ctx, record.RequestID, record.APIKeyID); err != nil {
 		return balancePreauthorizationUnavailable(err)
 	}
+	s.cleanupLiveBalanceAttempt(ctx, record.UserID, BalancePreauthorizationAttemptID(record.RequestID, record.APIKeyID))
 	return nil
 }

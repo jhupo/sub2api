@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -1481,6 +1482,14 @@ func TestForwardGrokMediaVideoGenerationReturnsUsageAndResponseID(t *testing.T) 
 	require.Equal(t, 0, result.VideoCount)
 	require.Equal(t, VideoBillingResolution720P, result.VideoResolution)
 	require.Equal(t, 10, result.VideoDurationSeconds)
+	require.False(t, c.Writer.Written())
+	require.Empty(t, recorder.Body.String())
+
+	require.NoError(t, svc.CommitGrokVideoCreateResponse(c, result))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
+	require.JSONEq(t, `{"request_id":"video-request-123","usage":{"prompt_tokens":3,"completion_tokens":4}}`, recorder.Body.String())
+	require.Error(t, svc.CommitGrokVideoCreateResponse(c, result))
 }
 
 func TestForwardGrokMediaVideoGenerationReturnsTaskIDAsResponseID(t *testing.T) {
@@ -1514,6 +1523,45 @@ func TestForwardGrokMediaVideoGenerationReturnsTaskIDAsResponseID(t *testing.T) 
 	result, err := svc.ForwardGrokMedia(context.Background(), c, account, GrokMediaEndpointVideosGenerations, "", body, "application/json")
 	require.NoError(t, err)
 	require.Equal(t, "video-task-123", result.ResponseID)
+}
+
+func TestForwardGrokMediaVideoPreauthorizationBindingFailureDoesNotCommit(t *testing.T) {
+	t.Setenv(xai.EnvAllowUnsafeURLOverrides, "true")
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"grok-imagine-video","prompt":"waves"}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos/generations", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	account := &Account{
+		ID: 63, Name: "grok", Platform: PlatformGrok, Type: AccountTypeAPIKey, Concurrency: 1,
+		Credentials: map[string]any{"api_key": "api-key", "base_url": "https://xai.test/v1"},
+	}
+	cache := &grokVideoPendingCacheStub{}
+	repo := &grokVideoPendingRepositoryStub{bindErr: errors.New("postgres unavailable")}
+	svc := &OpenAIGatewayService{
+		httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"request_id":"video-request-123"}`)),
+		}},
+		cache:            cache,
+		usageBillingRepo: repo,
+	}
+
+	result, err := svc.ForwardGrokMedia(context.Background(), c, account, GrokMediaEndpointVideosGenerations, "", body, "application/json")
+	require.NoError(t, err)
+	require.ErrorIs(t, svc.StoreGrokVideoPendingBilling(context.Background(), result.ResponseID, 42, 7, GrokVideoPendingBilling{
+		Model:                      "grok-imagine-video",
+		PreauthorizationRequestID:  GrokVideoHoldRequestID("hold-123"),
+		AuthorizationFingerprint:   "fingerprint",
+		PreauthorizationHoldAmount: 0.25,
+	}), repo.bindErr)
+	require.Zero(t, cache.setCalls)
+	require.False(t, c.Writer.Written())
+	require.Empty(t, recorder.Body.String())
 }
 
 func TestExtractGrokMediaVideoRequestIDPreservesExistingPrecedence(t *testing.T) {
@@ -1642,6 +1690,8 @@ func TestForwardGrokMediaVideoStatusUsesGETWithoutBody(t *testing.T) {
 
 	result, err := svc.ForwardGrokMedia(context.Background(), c, account, GrokMediaEndpointVideoStatus, "request-123", nil, "")
 	require.NoError(t, err)
+	require.False(t, IsResponseCommitted(c))
+	require.NoError(t, svc.CommitGrokVideoLookupResponse(c, result))
 	require.Equal(t, "https://xai.test/v1/videos/request-123", upstream.lastReq.URL.String())
 	require.Equal(t, http.MethodGet, upstream.lastReq.Method)
 	require.Equal(t, "Bearer api-key", upstream.lastReq.Header.Get("Authorization"))

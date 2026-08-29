@@ -117,6 +117,19 @@ type preauthorizationWalletStub struct {
 	topUpCalls       int
 }
 
+type preauthorizationWalletCleanerStub struct {
+	*preauthorizationWalletStub
+	cleanupCalls     int
+	cleanupAttemptID string
+	cleanupErr       error
+}
+
+func (s *preauthorizationWalletCleanerStub) DeleteLiveBalanceAttempt(_ context.Context, _ int64, attemptID string) error {
+	s.cleanupCalls++
+	s.cleanupAttemptID = attemptID
+	return s.cleanupErr
+}
+
 func (s *preauthorizationWalletStub) AuthorizeExistingLiveBalance(
 	_ context.Context,
 	_ int64,
@@ -178,6 +191,10 @@ func (s *preauthorizationWalletStub) AuthorizeLiveBalanceAtWatermarkIfSafe(
 	return result, s.authorizeErr
 }
 
+func (s *preauthorizationWalletStub) AuthorizeLiveBalanceAtSnapshotWatermarkIfSafe(ctx context.Context, userID int64, attemptID string, fallbackBalance float64, fallbackWatermark int64, holdAmount float64, allowInitialize bool) (LiveBalanceResult, error) {
+	return s.AuthorizeLiveBalanceAtWatermarkIfSafe(ctx, userID, attemptID, fallbackBalance, fallbackWatermark, holdAmount, allowInitialize)
+}
+
 func (s *preauthorizationWalletStub) TopUpLiveBalance(ctx context.Context, _ int64, attemptID string, targetHoldAmount float64) (LiveBalanceResult, error) {
 	s.recorder.add("wallet_topup")
 	s.lastAttemptID = attemptID
@@ -200,6 +217,10 @@ func (s *preauthorizationWalletStub) TopUpLiveBalance(ctx context.Context, _ int
 		result.ReservedAmount = targetHoldAmount
 	}
 	return result, nil
+}
+
+func (s *preauthorizationWalletStub) TopUpLiveBalanceAtSnapshotWatermark(ctx context.Context, userID int64, attemptID string, _ int64, targetHoldAmount float64) (LiveBalanceResult, error) {
+	return s.TopUpLiveBalance(ctx, userID, attemptID, targetHoldAmount)
 }
 
 func (s *preauthorizationWalletStub) FinalizeLiveBalance(_ context.Context, _ int64, _ string, actualAmount float64) (LiveBalanceResult, error) {
@@ -250,8 +271,14 @@ type preauthorizationRepositoryStub struct {
 	snapshotErr              error
 }
 
+func (s *preauthorizationRepositoryStub) GetUserBalance(context.Context, int64) (float64, error) {
+	return 10, nil
+}
+
 func (s *preauthorizationRepositoryStub) LoadLiveBalanceInitializationSnapshot(
 	_ context.Context,
+	_ int64,
+	_ string,
 	_ int64,
 ) (LiveBalanceInitializationSnapshot, error) {
 	s.recorder.add("balance_snapshot")
@@ -380,29 +407,30 @@ func TestBalancePreauthorizationLifecycleUsesRequestLocalPlainInput(t *testing.T
 	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
 	require.NoError(t, err)
 	require.NotNil(t, guard)
-	// Plain input: base 0.003 + input 0.010 = 0.013 (no output term; stub
-	// outputUnitPrice unset), rounded up by hold quantization. Old behavior held
-	// 0.028 (cache_creation+1h max).
-	require.InDelta(t, 0.013, guard.HoldAmount(), 1e-4)
+	// Cache-creation 1h is the most expensive request-local input scenario:
+	// base 0.003 + input 0.025 = 0.028 (the output term is disabled in this
+	// fixture), rounded up by hold quantization.
+	require.InDelta(t, 0.028, guard.HoldAmount(), 1e-4)
 	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, guard.ReservedOutputTokens())
-	// Three pricing calls: plain-input hold, then output-unit-price windowed +
-	// baseline (both plain-input, decoupled from the hold's input disposition).
-	require.Len(t, fixture.calculator.inputs, 3)
+	// Five pricing calls: four input dispositions, then the output-free baseline
+	// for the most expensive disposition.
+	require.Len(t, fixture.calculator.inputs, 5)
 	require.Equal(t, 100, fixture.calculator.inputs[0].Tokens.InputTokens)
 	require.Equal(t, 0, fixture.calculator.inputs[0].Tokens.CacheReadTokens)
 	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, fixture.calculator.inputs[0].Tokens.OutputTokens)
 	require.Equal(t, "gpt-test", fixture.calculator.inputs[0].Model)
 	require.Equal(t, 1.25, fixture.calculator.inputs[0].RateMultiplier)
-	// Output-unit-price probes: windowed has the output window, baseline is
-	// output-free; both plain-input.
+	// The second scenario is cache-read; the final call is the output-free
+	// baseline for the selected cache-creation 1h scenario.
 	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, fixture.calculator.inputs[1].Tokens.OutputTokens)
-	require.Equal(t, 0, fixture.calculator.inputs[2].Tokens.OutputTokens)
-	require.InDelta(t, 0.013, fixture.repo.prepared.HoldAmount, 1e-4)
+	require.Equal(t, 0, fixture.calculator.inputs[4].Tokens.OutputTokens)
+	require.Equal(t, 100, fixture.calculator.inputs[4].Tokens.CacheCreation1hTokens)
+	require.InDelta(t, 0.028, fixture.repo.prepared.HoldAmount, 1e-4)
 	require.Equal(t, "request-1:7", fixture.wallet.lastAttemptID)
 	require.Equal(t, 10.0, fixture.wallet.lastFallback)
 	require.Equal(t, int64(17), fixture.wallet.lastWatermark)
 	require.Equal(t, []string{
-		"price", "price", "price", "repo_prepare", "wallet_authorize_existing", "balance_snapshot", "wallet_authorize", "repo_authorized",
+		"price", "price", "price", "price", "price", "repo_prepare", "balance_snapshot", "wallet_authorize", "repo_authorized",
 	}, fixture.recorder.snapshot())
 
 	err = guard.Finalize(context.Background(), 0.019999999, " actual-fingerprint ")
@@ -416,6 +444,21 @@ func TestBalancePreauthorizationLifecycleUsesRequestLocalPlainInput(t *testing.T
 	require.Equal(t, 1, fixture.wallet.finalizeCalls)
 }
 
+func TestBalancePreauthorizationInputOnlyKeepsOutputWindowZero(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	request := balancePreauthorizationTestRequest()
+	request.InitialOutputWindowTokens = 0
+	request.DisableOutputReservation = true
+
+	guard, err := fixture.service.Preauthorize(context.Background(), request)
+	require.NoError(t, err)
+	require.NotNil(t, guard)
+	require.Zero(t, guard.ReservedOutputTokens())
+	for _, input := range fixture.calculator.inputs {
+		require.Zero(t, input.Tokens.OutputTokens)
+	}
+}
+
 func TestBalancePreauthorizationLifecycleHotWalletSkipsPostgreSQLSnapshot(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	existing := LiveBalanceResult{Outcome: LiveBalanceOutcomeApplied, State: LiveBalanceAttemptAuthorized}
@@ -424,10 +467,10 @@ func TestBalancePreauthorizationLifecycleHotWalletSkipsPostgreSQLSnapshot(t *tes
 	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
 	require.NoError(t, err)
 	require.NotNil(t, guard)
-	require.NotContains(t, fixture.recorder.snapshot(), "balance_snapshot")
-	require.NotContains(t, fixture.recorder.snapshot(), "wallet_authorize")
+	require.Contains(t, fixture.recorder.snapshot(), "balance_snapshot")
+	require.Contains(t, fixture.recorder.snapshot(), "wallet_authorize")
 	require.Equal(t, []string{
-		"price", "price", "price", "repo_prepare", "wallet_authorize_existing", "repo_authorized",
+		"price", "price", "price", "price", "price", "repo_prepare", "balance_snapshot", "wallet_authorize", "repo_authorized",
 	}, fixture.recorder.snapshot())
 }
 
@@ -482,6 +525,20 @@ func TestBalancePreauthorizationPricesPerRequestEndpointsByParameters(t *testing
 	require.InDelta(t, 0.12, fixture.wallet.lastActual, 1e-12)
 }
 
+func TestBalancePreauthorizationFixedEstimateSkipsModelPricing(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	request := balancePreauthorizationTestRequest()
+	request.EstimateKind = PreauthorizationEstimateFixed
+	request.FixedAmount = 0.012345671
+	request.CostInput = CostInput{}
+
+	guard, err := fixture.service.Preauthorize(context.Background(), request)
+	require.NoError(t, err)
+	require.NotNil(t, guard)
+	require.Equal(t, 0.01234568, guard.HoldAmount())
+	require.Empty(t, fixture.calculator.inputs)
+}
+
 // TestBalancePreauthorizationPerRequestFailsClosedOnUnknownPricing proves an
 // unpriced paid model is rejected before any wallet mutation rather than
 // silently reserving zero (the §6.9 silent-zero-charge guard for the
@@ -521,7 +578,7 @@ func TestBalancePreauthorizationLifecycleInsufficientReturnsRequired403AndCompen
 	require.Equal(t, 403, infraerrors.Code(err))
 	require.Equal(t, "Insufficient balance, withholding failed", infraerrors.Message(err))
 	require.Equal(t, []string{
-		"price", "price", "price", "repo_prepare", "wallet_authorize_existing", "balance_snapshot", "wallet_authorize",
+		"price", "price", "price", "price", "price", "repo_prepare", "balance_snapshot", "wallet_authorize",
 		"repo_begin_refund", "wallet_refund", "repo_complete_refund",
 	}, fixture.recorder.snapshot())
 }
@@ -584,19 +641,19 @@ func TestBalancePreauthorizationLifecycleSkipsSimpleAndSubscription(t *testing.T
 
 func TestBalancePreauthorizationRequirementMatchesLifecycleModes(t *testing.T) {
 	fixture := newPreauthorizationFixture()
-	require.True(t, fixture.service.RequiresPreauthorization(BillingTypeBalance))
-	require.False(t, fixture.service.RequiresPreauthorization(BillingTypeSubscription))
+	require.True(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeBalance))
+	require.False(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeSubscription))
 
 	fixture.service.cfg.Billing.BalancePreauthorizationEnabled = false
-	require.False(t, fixture.service.RequiresPreauthorization(BillingTypeBalance))
+	require.True(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeBalance))
 	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
 	require.NoError(t, err)
-	require.Nil(t, guard)
-	require.Empty(t, fixture.recorder.snapshot())
+	require.NotNil(t, guard)
+	require.NotEmpty(t, fixture.recorder.snapshot())
 
 	fixture.service.cfg.Billing.BalancePreauthorizationEnabled = true
 	fixture.service.cfg.RunMode = config.RunModeSimple
-	require.False(t, fixture.service.RequiresPreauthorization(BillingTypeBalance))
+	require.False(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeBalance))
 }
 
 func TestBalancePreauthorizationGuardTransferInvalidatesHandlerOwnership(t *testing.T) {
@@ -701,6 +758,38 @@ func TestRecoverBalancePreauthorizationRefundsPreparedAttemptThatNeverAuthorized
 	require.Equal(t, []string{"repo_begin_refund", "wallet_refund", "repo_complete_refund"}, fixture.recorder.snapshot())
 }
 
+func TestBalancePreauthorizationCleanupRunsAfterTerminalCompletionAndIgnoresFailure(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	cleaner := &preauthorizationWalletCleanerStub{preauthorizationWalletStub: fixture.wallet, cleanupErr: errors.New("redis unavailable")}
+	fixture.service.wallet = cleaner
+	fixture.service.watermarkWallet = cleaner
+
+	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
+	require.NoError(t, err)
+	require.NoError(t, guard.Finalize(context.Background(), 0.02, "actual-fingerprint"))
+	require.Equal(t, 1, cleaner.cleanupCalls)
+	require.Equal(t, "request-1:7", cleaner.cleanupAttemptID)
+	require.Equal(t, 1, fixture.repo.completeSettlementCalls)
+}
+
+func TestRecoverBalancePreauthorizationCleansTerminalAttemptAfterPGCompletion(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	cleaner := &preauthorizationWalletCleanerStub{preauthorizationWalletStub: fixture.wallet}
+	fixture.service.wallet = cleaner
+	fixture.service.watermarkWallet = cleaner
+
+	err := fixture.service.RecoverBalancePreauthorization(context.Background(), BalancePreauthorizationRecord{
+		RequestID:  "prepared-crash",
+		APIKeyID:   7,
+		UserID:     42,
+		HoldAmount: 0.10,
+		Status:     BalanceSettlementPrepared,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, cleaner.cleanupCalls)
+	require.Equal(t, "prepared-crash:7", cleaner.cleanupAttemptID)
+}
+
 func TestRecoverAuthorizedAfterSuccessfulResponseBeforeUsageTaskSettlesHold(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	fixture.wallet.finalize = []LiveBalanceResult{{
@@ -741,6 +830,70 @@ func TestRecoverAuthorizedMissingWalletStaysRecoverable(t *testing.T) {
 	require.Equal(t, []string{"repo_begin_finalize", "wallet_finalize"}, fixture.recorder.snapshot())
 	require.Zero(t, fixture.repo.completeSettlementCalls)
 	require.Zero(t, fixture.wallet.refundCalls)
+}
+
+func TestRecoverExpiredBoundGrokVideoHoldRefundsInsteadOfSettling(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	err := fixture.service.RecoverBalancePreauthorization(context.Background(), BalancePreauthorizationRecord{
+		RequestID:                "grok-video:hold:request-1",
+		APIKeyID:                 7,
+		UserID:                   42,
+		AuthorizationFingerprint: "request-payload-hash",
+		HoldAmount:               0.10,
+		Status:                   BalanceSettlementAuthorized,
+		ExpiresAt:                time.Now().Add(-time.Minute),
+		AsyncTaskID:              "task-1",
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"repo_begin_refund", "wallet_refund", "repo_complete_refund"}, fixture.recorder.snapshot())
+	require.Zero(t, fixture.wallet.finalizeCalls)
+}
+
+func TestRecoverExpiredUnboundGrokVideoHoldSettlesHold(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	fixture.wallet.finalize = []LiveBalanceResult{{
+		Outcome: LiveBalanceOutcomeApplied,
+		State:   LiveBalanceAttemptFinalized,
+	}}
+	record := BalancePreauthorizationRecord{
+		RequestID:                "grok-video:hold:request-1",
+		APIKeyID:                 7,
+		UserID:                   42,
+		AuthorizationFingerprint: "request-payload-hash",
+		HoldAmount:               0.10,
+		Status:                   BalanceSettlementAuthorized,
+		ExpiresAt:                time.Now().Add(-time.Minute),
+	}
+	require.NoError(t, fixture.service.RecoverBalancePreauthorization(context.Background(), record))
+	require.Equal(t, []string{"repo_begin_finalize", "wallet_finalize", "repo_complete_settlement"}, fixture.recorder.snapshot())
+	require.InDelta(t, record.HoldAmount, fixture.wallet.lastActual, 1e-12)
+}
+
+func TestResumeRejectsOriginalExpiredGrokVideoHoldAfterRecoveryLease(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	fixture.repo.prepareRecord = &BalancePreauthorizationRecord{
+		RequestID:                "grok-video:hold:request-1",
+		APIKeyID:                 7,
+		UserID:                   42,
+		AuthorizationFingerprint: "request-payload-hash",
+		HoldAmount:               0.10,
+		Status:                   BalanceSettlementAuthorized,
+		// Recovery leases update updated_at, never this original expiry.
+		ExpiresAt: time.Now().Add(-time.Minute),
+	}
+
+	guard, err := fixture.service.Resume(context.Background(), BalancePreauthorizationResumeRequest{
+		RequestID:                "grok-video:hold:request-1",
+		APIKeyID:                 7,
+		UserID:                   42,
+		AuthorizationFingerprint: "request-payload-hash",
+		HoldAmount:               0.10,
+	})
+
+	require.Nil(t, guard)
+	require.ErrorIs(t, err, ErrBillingServiceUnavailable)
+	require.ErrorIs(t, err, ErrUsageBillingRequestConflict)
+	require.Equal(t, []string{"repo_prepare"}, fixture.recorder.snapshot())
 }
 
 func TestRecoverBalancePreauthorizationCompletesStaleFinalization(t *testing.T) {
@@ -854,4 +1007,34 @@ func TestObserveStreamingOutputNoopWithoutTracker(t *testing.T) {
 		require.NoError(t, guard.ObserveStreamingOutput(context.Background(), 1024))
 	}
 	require.Zero(t, fixture.wallet.topUpCalls)
+}
+
+func TestBalancePreauthorizationGuardTopUpToIsCumulativeAndOwnershipBound(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
+	require.NoError(t, err)
+	target := guard.HoldAmount() + 0.125
+
+	require.NoError(t, guard.TopUpTo(context.Background(), target))
+	require.Equal(t, 1, fixture.wallet.topUpCalls)
+	require.InDelta(t, QuantizeUsageBillingAmount(target), guard.HoldAmount(), 1e-12)
+	// A lower or equal final cost does not mutate the wallet again.
+	require.NoError(t, guard.TopUpTo(context.Background(), target))
+	require.Equal(t, 1, fixture.wallet.topUpCalls)
+
+	worker, ok := guard.TransferToWorker()
+	require.True(t, ok)
+	require.ErrorIs(t, guard.TopUpTo(context.Background(), target+0.1), ErrBalancePreauthorizationOwnershipTransferred)
+	require.NoError(t, worker.TopUpTo(context.Background(), target+0.1))
+	require.Equal(t, 2, fixture.wallet.topUpCalls)
+}
+
+func TestBalancePreauthorizationGuardTopUpToReturnsWithholdingFailure(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	fixture.wallet.topUp = []LiveBalanceResult{{Outcome: LiveBalanceOutcomeInsufficient, State: LiveBalanceAttemptAuthorized}}
+	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
+	require.NoError(t, err)
+
+	require.ErrorIs(t, guard.TopUpTo(context.Background(), guard.HoldAmount()+0.1), ErrBalanceWithholdingFailed)
+	require.Equal(t, 1, fixture.wallet.topUpCalls)
 }

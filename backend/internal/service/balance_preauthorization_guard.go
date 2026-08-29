@@ -81,7 +81,19 @@ func (g *BalancePreauthorizationGuard) HoldAmount() float64 {
 	if g == nil || g.core == nil {
 		return 0
 	}
+	g.core.mu.Lock()
+	defer g.core.mu.Unlock()
 	return g.core.holdAmount
+}
+
+// RequestID returns the durable hold identity for asynchronous handoff.
+func (g *BalancePreauthorizationGuard) RequestID() string {
+	if g == nil || g.core == nil {
+		return ""
+	}
+	g.core.mu.Lock()
+	defer g.core.mu.Unlock()
+	return g.core.requestID
 }
 
 func (g *BalancePreauthorizationGuard) ReservedOutputTokens() int {
@@ -143,10 +155,47 @@ func (g *BalancePreauthorizationGuard) ObserveStreamingOutput(ctx context.Contex
 		return nil
 	}
 
+	return g.topUpToLocked(ctx, decision.TargetHoldAmount)
+}
+
+// TopUpTo raises the live hold to targetHoldAmount. It is intentionally
+// cumulative: callers can safely use the final measured cost after an
+// upstream response without needing to know the current reservation.
+func (g *BalancePreauthorizationGuard) TopUpTo(ctx context.Context, targetHoldAmount float64) error {
+	if g == nil || g.core == nil {
+		return nil
+	}
+	if invalidNonnegativeMoney(targetHoldAmount) {
+		return ErrInvalidBillingPreauthorizationEstimate
+	}
+	targetHoldAmount = QuantizeUsageBillingAmount(targetHoldAmount)
+	g.core.mu.Lock()
+	defer g.core.mu.Unlock()
+	return g.topUpToLocked(ctx, targetHoldAmount)
+}
+
+func (g *BalancePreauthorizationGuard) topUpToLocked(ctx context.Context, targetHoldAmount float64) error {
+	if invalidNonnegativeMoney(targetHoldAmount) {
+		return ErrInvalidBillingPreauthorizationEstimate
+	}
+	targetHoldAmount = QuantizeUsageBillingAmount(targetHoldAmount)
+	if g.core.ownerToken != g.ownerToken {
+		return ErrBalancePreauthorizationOwnershipTransferred
+	}
+	if g.core.terminalState != balancePreauthorizationGuardActive || targetHoldAmount <= g.core.holdAmount {
+		return nil
+	}
 	walletCtx, cancel := detachedBalancePreauthorizationWalletContext(ctx)
 	defer cancel()
-	result, err := g.core.service.wallet.TopUpLiveBalance(
-		walletCtx, g.core.userID, g.core.attemptID, decision.TargetHoldAmount,
+	if g.core.service == nil || g.core.service.snapshotReader == nil || g.core.service.watermarkWallet == nil {
+		return balancePreauthorizationUnavailable(errors.New("watermarked live balance wallet is unavailable"))
+	}
+	snapshot, err := g.core.service.snapshotReader.LoadLiveBalanceInitializationSnapshot(walletCtx, g.core.userID, g.core.requestID, g.core.apiKeyID)
+	if err != nil {
+		return balancePreauthorizationUnavailable(fmt.Errorf("load live balance snapshot: %w", err))
+	}
+	result, err := g.core.service.watermarkWallet.TopUpLiveBalanceAtSnapshotWatermark(
+		walletCtx, g.core.userID, g.core.attemptID, snapshot.Watermark, targetHoldAmount,
 	)
 	if err != nil {
 		return balancePreauthorizationUnavailable(err)
@@ -156,11 +205,11 @@ func (g *BalancePreauthorizationGuard) ObserveStreamingOutput(ctx context.Contex
 			return ErrBalanceWithholdingFailed
 		}
 		return balancePreauthorizationUnavailable(fmt.Errorf(
-			"top up streaming output hold returned outcome=%d state=%d",
+			"top up live balance returned outcome=%d state=%d",
 			result.Outcome, result.State,
 		))
 	}
-	g.core.holdAmount = decision.TargetHoldAmount
+	g.core.holdAmount = targetHoldAmount
 	return nil
 }
 
@@ -218,6 +267,7 @@ func (g *BalancePreauthorizationGuard) finalizeZeroCost(ctx context.Context) err
 	if err := g.core.service.repo.CompleteBalancePreauthorizationRefund(ctx, g.core.requestID, g.core.apiKeyID); err != nil {
 		return balancePreauthorizationUnavailable(err)
 	}
+	g.core.service.cleanupLiveBalanceAttempt(ctx, g.core.userID, g.core.attemptID)
 	return nil
 }
 
@@ -232,6 +282,7 @@ func (g *BalancePreauthorizationGuard) finalizePositiveCost(ctx context.Context,
 	if err := g.core.service.repo.CompleteBalancePreauthorizationSettlement(ctx, g.core.requestID, g.core.apiKeyID); err != nil {
 		return balancePreauthorizationUnavailable(err)
 	}
+	g.core.service.cleanupLiveBalanceAttempt(ctx, g.core.userID, g.core.attemptID)
 	return nil
 }
 
@@ -266,6 +317,7 @@ func (g *BalancePreauthorizationGuard) Refund(ctx context.Context) error {
 	if err := g.core.service.repo.CompleteBalancePreauthorizationRefund(ctx, g.core.requestID, g.core.apiKeyID); err != nil {
 		return balancePreauthorizationUnavailable(err)
 	}
+	g.core.service.cleanupLiveBalanceAttempt(ctx, g.core.userID, g.core.attemptID)
 	g.core.terminalState = balancePreauthorizationGuardRefunded
 	return nil
 }
