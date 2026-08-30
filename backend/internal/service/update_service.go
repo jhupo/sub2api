@@ -433,7 +433,7 @@ func (s *UpdateService) GetUpdateStatus(_ context.Context, operationID string) (
 		}
 		return nil, infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	openedInfo, err := file.Stat()
 	if err != nil || !openedInfo.Mode().IsRegular() {
 		return nil, infraerrors.InternalServer("UPDATE_STATUS_INVALID", "update status is invalid").WithCause(err)
