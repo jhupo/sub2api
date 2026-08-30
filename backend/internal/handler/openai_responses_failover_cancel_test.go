@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -26,6 +27,49 @@ type openAIResponsesFailoverCancelUpstream struct {
 	mu         sync.Mutex
 	accountIDs []int64
 	onFirstDo  func()
+}
+
+type openAIResponsesNonStreamingSSEFailoverUpstream struct {
+	service.HTTPUpstream
+	mu         sync.Mutex
+	accountIDs []int64
+}
+
+func (u *openAIResponsesNonStreamingSSEFailoverUpstream) Do(_ *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
+	u.mu.Lock()
+	u.accountIDs = append(u.accountIDs, accountID)
+	u.mu.Unlock()
+
+	if accountID == 1 {
+		body := strings.Join([]string{
+			"event: response.failed",
+			`data: {"type":"response.failed","error":{"message":"Selected model is at capacity. Please try a different model.","type":"invalid_request_error"}}`,
+			"",
+			"data: [DONE]",
+		}, "\n")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": []string{"text/event-stream"},
+				"X-Request-Id": []string{"rid-capacity"},
+			},
+			Body: io.NopCloser(strings.NewReader(body)),
+		}, nil
+	}
+
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"resp_recovered","object":"response","status":"completed","model":"gpt-5.1","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`,
+		)),
+	}, nil
+}
+
+func (u *openAIResponsesNonStreamingSSEFailoverUpstream) calls() []int64 {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]int64(nil), u.accountIDs...)
 }
 
 func (u *openAIResponsesFailoverCancelUpstream) Do(_ *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
@@ -191,4 +235,23 @@ func TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient(t *te
 	require.Equal(t, []int64{1, 2}, upstream.calls(), "在线客户端应正常切换账号")
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Equal(t, "upstream_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+}
+
+func TestOpenAIGatewayHandlerResponses_NonStreamingSSEFailureFailsOverWithSinglePreauthorization(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upstream := &openAIResponsesNonStreamingSSEFailoverUpstream{}
+	handler := newOpenAIResponsesFailoverTestHandler(t, upstream)
+	preauthorizer := &preauthorizerStub{requires: true}
+	handler.balancePreauthorizer = preauthorizer
+	c, rec := newOpenAIResponsesFailoverTestContext(t, nil)
+
+	handler.Responses(c)
+
+	require.Equal(t, []int64{1, 2}, upstream.calls(), "容量失败后应切换到第二个账号")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "resp_recovered", gjson.GetBytes(rec.Body.Bytes(), "id").String())
+	require.Equal(t, "completed", gjson.GetBytes(rec.Body.Bytes(), "status").String())
+	require.Len(t, preauthorizer.capturedAll, 1, "账号重试循环不得重复冻结余额")
+	require.True(t, preauthorizer.requiresCalled)
 }
