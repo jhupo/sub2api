@@ -5,6 +5,9 @@ package service
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -63,7 +66,7 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 		"release",
 	)
 
-	err := svc.PerformUpdate(context.Background())
+	_, err := svc.PerformUpdate(context.Background(), "sysop-no-update")
 
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrNoUpdateAvailable))
@@ -86,9 +89,38 @@ func TestUpdateServiceOrchestratedStrategyRequiresConfiguredRunner(t *testing.T)
 		"release",
 	)
 
-	err := svc.PerformUpdate(context.Background())
+	_, err := svc.PerformUpdate(context.Background(), "sysop-runner-required")
 
 	require.ErrorIs(t, err, ErrUpdateOrchestratorMissing)
+}
+
+func TestUpdateServiceOrchestratedStrategyReturnsAfterStartingRunner(t *testing.T) {
+	t.Setenv("UPDATE_STRATEGY", "orchestrated")
+	t.Setenv("SUB2API_UPDATE_STATUS_DIR", t.TempDir())
+	runner, err := exec.LookPath("false")
+	if err != nil {
+		runner, err = exec.LookPath("where.exe")
+	}
+	require.NoError(t, err)
+	t.Setenv("UPDATE_ORCHESTRATOR", runner)
+
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v0.1.133", Name: "v0.1.133"}},
+		"0.1.132",
+		"release",
+	)
+
+	started := time.Now()
+	execution, err := svc.PerformUpdate(context.Background(), "sysop-async-runner")
+
+	require.NoError(t, err)
+	require.True(t, execution.Pending)
+	require.Less(t, time.Since(started), 5*time.Second)
+	require.Eventually(t, func() bool {
+		status, statusErr := svc.GetUpdateStatus(context.Background(), "sysop-async-runner")
+		return statusErr == nil && status.Status == UpdateStatusFailed
+	}, 5*time.Second, 10*time.Millisecond)
 }
 
 func TestUpdateServiceNeedsRestartDependsOnStrategy(t *testing.T) {
@@ -213,7 +245,7 @@ func TestUpdateServiceRollbackToVersionRejectsDisallowedTargets(t *testing.T) {
 		"0.1.142",  // older than the 3 most recent
 		"9.9.9",    // nonexistent
 	} {
-		err := svc.RollbackToVersion(context.Background(), target)
+		_, err := svc.RollbackToVersion(context.Background(), target, "sysop-rollback-rejected")
 		require.ErrorIs(t, err, ErrRollbackVersionNotAllowed, "target %q should be rejected", target)
 	}
 }
@@ -227,9 +259,193 @@ func TestUpdateServiceRollbackToVersionAcceptsVPrefix(t *testing.T) {
 	}
 	svc := newRollbackTestService("0.1.147", releases)
 
-	err := svc.RollbackToVersion(context.Background(), "v0.1.146")
+	_, err := svc.RollbackToVersion(context.Background(), "v0.1.146", "sysop-rollback-accepted")
 
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrRollbackVersionNotAllowed)
 	require.Contains(t, err.Error(), "no compatible release found")
+}
+
+func TestUpdateServiceGetUpdateStatus(t *testing.T) {
+	statusDir := t.TempDir()
+	t.Setenv("SUB2API_UPDATE_STATUS_DIR", statusDir)
+	operationID := "sysop-update123"
+	require.NoError(t, os.WriteFile(filepath.Join(statusDir, operationID+".json"), []byte(`{
+		"operation_id":"sysop-update123",
+		"status":"succeeded",
+		"current_version":"0.1.241",
+		"target_version":"0.1.242"
+	}`), 0o600))
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+	status, err := svc.GetUpdateStatus(context.Background(), operationID)
+
+	require.NoError(t, err)
+	require.Equal(t, UpdateStatusSucceeded, status.Status)
+	require.Equal(t, "0.1.242", status.TargetVersion)
+}
+
+func TestUpdateServiceGetUpdateStatusRejectsUnsafeOperationID(t *testing.T) {
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+	_, err := svc.GetUpdateStatus(context.Background(), "sysop-../../config")
+
+	require.ErrorIs(t, err, ErrUpdateOperationIDInvalid)
+}
+
+func TestUpdateServiceGetUpdateStatusReturnsNotFound(t *testing.T) {
+	t.Setenv("SUB2API_UPDATE_STATUS_DIR", t.TempDir())
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+	_, err := svc.GetUpdateStatus(context.Background(), "sysop-missing")
+
+	require.ErrorIs(t, err, ErrUpdateStatusNotFound)
+}
+
+func TestUpdateServiceGetUpdateStatusRejectsMismatchedFile(t *testing.T) {
+	statusDir := t.TempDir()
+	t.Setenv("SUB2API_UPDATE_STATUS_DIR", statusDir)
+	operationID := "sysop-requested"
+	require.NoError(t, os.WriteFile(filepath.Join(statusDir, operationID+".json"), []byte(
+		`{"operation_id":"sysop-different","status":"succeeded"}`,
+	), 0o600))
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+	_, err := svc.GetUpdateStatus(context.Background(), operationID)
+
+	require.Equal(t, "UPDATE_STATUS_INVALID", infraerrors.Reason(err))
+}
+
+func TestUpdateServiceGetUpdateStatusRejectsSymlink(t *testing.T) {
+	statusDir := t.TempDir()
+	t.Setenv("SUB2API_UPDATE_STATUS_DIR", statusDir)
+	target := filepath.Join(statusDir, "target.json")
+	require.NoError(t, os.WriteFile(target, []byte(`{"operation_id":"sysop-linked","status":"succeeded"}`), 0o600))
+	path := filepath.Join(statusDir, "sysop-linked.json")
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+	_, err := svc.GetUpdateStatus(context.Background(), "sysop-linked")
+
+	require.Equal(t, "UPDATE_STATUS_INVALID", infraerrors.Reason(err))
+}
+
+func TestUpdateServiceGetUpdateStatusRejectsNonRegularFile(t *testing.T) {
+	statusDir := t.TempDir()
+	t.Setenv("SUB2API_UPDATE_STATUS_DIR", statusDir)
+	require.NoError(t, os.Mkdir(filepath.Join(statusDir, "sysop-directory.json"), 0o700))
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+	_, err := svc.GetUpdateStatus(context.Background(), "sysop-directory")
+
+	require.Equal(t, "UPDATE_STATUS_INVALID", infraerrors.Reason(err))
+}
+
+func TestUpdateServiceGetUpdateStatusRejectsUncleanStatusDirectory(t *testing.T) {
+	uncleanDir := filepath.Join(t.TempDir(), "nested") + string(os.PathSeparator) + ".."
+	t.Setenv("SUB2API_UPDATE_STATUS_DIR", uncleanDir)
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+	_, err := svc.GetUpdateStatus(context.Background(), "sysop-unclean")
+
+	require.Equal(t, "UPDATE_STATUS_INVALID", infraerrors.Reason(err))
+}
+
+func TestUpdateServiceGetUpdateStatusRejectsSymlinkStatusDirectory(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	require.NoError(t, os.Mkdir(target, 0o700))
+	statusDir := filepath.Join(root, "linked")
+	if err := os.Symlink(target, statusDir); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	t.Setenv("SUB2API_UPDATE_STATUS_DIR", statusDir)
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+	_, err := svc.GetUpdateStatus(context.Background(), "sysop-linked-directory")
+
+	require.Equal(t, "UPDATE_STATUS_INVALID", infraerrors.Reason(err))
+}
+
+func TestUpdateServiceGetUpdateStatusRejectsNonDirectoryStatusPath(t *testing.T) {
+	statusDir := filepath.Join(t.TempDir(), "status-file")
+	require.NoError(t, os.WriteFile(statusDir, nil, 0o600))
+	t.Setenv("SUB2API_UPDATE_STATUS_DIR", statusDir)
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+	_, err := svc.GetUpdateStatus(context.Background(), "sysop-status-file")
+
+	require.Equal(t, "UPDATE_STATUS_INVALID", infraerrors.Reason(err))
+}
+
+func TestUpdateServiceEnsureNoActiveRolloutRejectsFreshPending(t *testing.T) {
+	statusDir := t.TempDir()
+	t.Setenv("SUB2API_UPDATE_STATUS_DIR", statusDir)
+	require.NoError(t, os.WriteFile(filepath.Join(statusDir, "sysop-active.json"), []byte(
+		`{"operation_id":"sysop-active","status":"pending","current_version":"0.1.241","target_version":"0.1.242"}`,
+	), 0o600))
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+	err := svc.EnsureNoActiveRollout(context.Background(), "sysop-new")
+
+	require.ErrorIs(t, err, ErrSystemOperationBusy)
+}
+
+func TestUpdateServiceEnsureNoActiveRolloutRejectsFreshPendingWithSameOperationID(t *testing.T) {
+	statusDir := t.TempDir()
+	t.Setenv("SUB2API_UPDATE_STATUS_DIR", statusDir)
+	require.NoError(t, os.WriteFile(filepath.Join(statusDir, "sysop-replayed.json"), []byte(
+		`{"operation_id":"sysop-replayed","status":"pending","current_version":"0.1.241","target_version":"0.1.242"}`,
+	), 0o600))
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+	err := svc.EnsureNoActiveRollout(context.Background(), "sysop-replayed")
+
+	require.ErrorIs(t, err, ErrSystemOperationBusy)
+}
+
+func TestUpdateServiceEnsureNoActiveRolloutRejectsNonRegularStatusFile(t *testing.T) {
+	statusDir := t.TempDir()
+	t.Setenv("SUB2API_UPDATE_STATUS_DIR", statusDir)
+	require.NoError(t, os.Mkdir(filepath.Join(statusDir, "sysop-directory.json"), 0o700))
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+	err := svc.EnsureNoActiveRollout(context.Background(), "sysop-new")
+
+	require.Equal(t, "UPDATE_STATUS_INVALID", infraerrors.Reason(err))
+}
+
+func TestUpdateServiceEnsureNoActiveRolloutAllowsTerminalStates(t *testing.T) {
+	for _, status := range []string{UpdateStatusSucceeded, UpdateStatusRolledBack, UpdateStatusFailed} {
+		t.Run(status, func(t *testing.T) {
+			statusDir := t.TempDir()
+			t.Setenv("SUB2API_UPDATE_STATUS_DIR", statusDir)
+			require.NoError(t, os.WriteFile(filepath.Join(statusDir, "sysop-finished.json"), []byte(
+				`{"operation_id":"sysop-finished","status":"`+status+`","current_version":"0.1.241","target_version":"0.1.242"}`,
+			), 0o600))
+			svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+			require.NoError(t, svc.EnsureNoActiveRollout(context.Background(), "sysop-new"))
+		})
+	}
+}
+
+func TestUpdateServiceEnsureNoActiveRolloutAllowsStalePending(t *testing.T) {
+	statusDir := t.TempDir()
+	t.Setenv("SUB2API_UPDATE_STATUS_DIR", statusDir)
+	path := filepath.Join(statusDir, "sysop-stale.json")
+	require.NoError(t, os.WriteFile(path, []byte(
+		`{"operation_id":"sysop-stale","status":"pending","current_version":"0.1.241","target_version":"0.1.242"}`,
+	), 0o600))
+	staleTime := time.Now().Add(-activeRolloutMaxAge - time.Minute)
+	require.NoError(t, os.Chtimes(path, staleTime, staleTime))
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.241", "release")
+
+	status, err := svc.GetUpdateStatus(context.Background(), "sysop-stale")
+	require.NoError(t, err)
+	require.Equal(t, UpdateStatusFailed, status.Status)
+	require.Equal(t, "lease_expired", status.Reason)
+	require.NoError(t, svc.EnsureNoActiveRollout(context.Background(), "sysop-new"))
 }

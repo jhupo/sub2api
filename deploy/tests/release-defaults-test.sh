@@ -27,6 +27,7 @@ assert_contains frontend/src/components/common/VersionBadge.vue "const GITHUB_RE
 assert_contains frontend/src/components/common/VersionBadge.vue "const DOCKER_IMAGE = 'ghcr.io/jhupo/sub2api'"
 assert_contains deploy/install.sh 'GITHUB_REPO="jhupo/sub2api"'
 assert_contains deploy/update-orchestrator.sh 'REPOSITORY="${SUB2API_UPDATE_REPOSITORY:-jhupo/sub2api}"'
+assert_contains deploy/.env.example 'UPDATE_STRATEGY=binary'
 
 for compose_file in \
   deploy/docker-compose.yml \
@@ -36,6 +37,9 @@ do
   assert_contains "$compose_file" 'image: ghcr.io/jhupo/sub2api:${SUB2API_VERSION:-latest}'
   assert_contains "$compose_file" 'SUB2API_UPDATE_REPOSITORY=${SUB2API_UPDATE_REPOSITORY:-jhupo/sub2api}'
 done
+
+assert_contains deploy/docker-compose.local.yml 'http://localhost:8080/readyz'
+assert_not_contains deploy/docker-compose.local.yml 'http://localhost:8080/health'
 
 assert_contains .github/workflows/release.yml "      - 'v*'"
 assert_contains .github/workflows/release.yml "RELEASE_TAG: \${{ github.event.inputs.tag || github.ref_name }}"

@@ -86,7 +86,7 @@ environment:
   SUB2API_UPDATE_MODE: image
   SUB2API_UPDATE_COMPOSE_FILE: /opt/sub2api/docker-compose.yml
   SUB2API_UPDATE_SERVICES: sub2api-1,sub2api-2,sub2api-3
-  SUB2API_UPDATE_HEALTH_URLS: http://127.0.0.1:7101/health,http://127.0.0.1:7102/health,http://127.0.0.1:7103/health
+  SUB2API_UPDATE_HEALTH_URLS: http://127.0.0.1:7101/readyz,http://127.0.0.1:7102/readyz,http://127.0.0.1:7103/readyz
   SUB2API_UPDATE_PROJECT: sub2api
   SERVER_SHUTDOWN_TIMEOUT_SECONDS: "600"
   # Keep Docker's hard stop above the application drain window.
@@ -97,6 +97,7 @@ environment:
   SUB2API_UPDATE_AUTO_DOCKER_GROUP: "true"
   # Optional when .env is mode 600 and the app runs as a non-root user.
   SUB2API_UPDATE_HELPER_IMAGE: ghcr.io/jhupo/sub2api:latest
+stop_grace_period: 610s
 volumes:
   - /var/run/docker.sock:/var/run/docker.sock
   - /opt/sub2api:/opt/sub2api:ro
@@ -118,21 +119,37 @@ must be mounted at the same path inside the updater container. In `image` mode
 the script pulls the target image, recreates each configured service in order,
 waits for its health endpoint, and restores the previous version if any step
 fails. If the mounted `.env` is root-only, the script starts the configured
-helper image as UID 0 with only the Compose file, env file, and Docker socket
-mounted; it never changes secret-file permissions. Compose files should use the
-version variable so the target image is unambiguous:
+helper image as UID 0 and inherits the current container's mounts, including
+the Compose file, env file, Docker socket, and data volume; it never changes
+secret-file permissions. Compose files should use the version variable so the
+target image is unambiguous:
 
 ```yaml
 image: ghcr.io/jhupo/sub2api:${SUB2API_VERSION:-latest}
 ```
 
+The API atomically records `pending`, starts the orchestrator in the background,
+and returns the operation ID before image pulls or rolling work begin. When the
+updater reaches the service that hosts it, it starts a detached helper from the
+known-good current image. The helper inherits the current container's mounts,
+including the read-only Compose project and Docker socket, recreates the final
+service at the target version, waits for readiness, and recreates the previous
+version if readiness fails. The orchestrator records `succeeded`, `rolled_back`,
+or `failed` under `/app/data/update-status`; the admin UI follows that shared
+status before reporting completion. A bounded heartbeat renews the pending
+lease while the orchestrator or helper is alive, so slow pulls cannot release
+the cross-request update lock. These files do not change the PostgreSQL database
+or Redis cache.
+
 During each replacement the updater sends `SIGTERM` to exactly one replica.
 The Go server closes its listener immediately, which prevents new requests
 from entering that replica, and then waits for active HTTP/SSE requests to
-finish. Docker applies `SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS` as the hard stop;
-it must remain greater than `SERVER_SHUTDOWN_TIMEOUT_SECONDS`. Only after the
-replica exits, starts on the new version, and passes its health check does the
-updater continue to the next service.
+finish. The updater passes `SUB2API_UPDATE_DRAIN_TIMEOUT_SECONDS` to every
+`docker compose up --timeout` call as the hard stop; set the same value as the
+service's `stop_grace_period`, and keep it greater than
+`SERVER_SHUTDOWN_TIMEOUT_SECONDS`. Only after the replica exits, starts on the
+new version, and passes its health check does the updater continue to the next
+service.
 
 When the release image is private or the deployment uses a locally built image,
 use `runtime` mode instead. It downloads and verifies the matching release
@@ -146,24 +163,26 @@ environment:
   UPDATE_STRATEGY: orchestrated
   UPDATE_ORCHESTRATOR: /usr/local/bin/sub2api-update
   SUB2API_UPDATE_MODE: runtime
-   SUB2API_UPDATE_RUNTIME_PATH: /app/runtime/sub2api
-   SUB2API_UPDATE_REPOSITORY: jhupo/sub2api
-   SUB2API_UPDATE_PROJECT: sub2api
-   SUB2API_UPDATE_SERVICES: api,worker
+  SUB2API_UPDATE_RUNTIME_PATH: /app/runtime/sub2api
+  SUB2API_UPDATE_REPOSITORY: jhupo/sub2api
+  SUB2API_UPDATE_PROJECT: sub2api
+  SUB2API_UPDATE_SERVICES: api,worker
 command: ["/app/runtime/sub2api"]
 volumes:
-   - /opt/sub2api/runtime:/app/runtime
-   - /var/run/docker.sock:/var/run/docker.sock
+  - /opt/sub2api/runtime:/app/runtime
+  - /var/run/docker.sock:/var/run/docker.sock
 group_add:
-   - "989"
+  - "989"
 ```
 
-For a source-built systemd service, keep `UPDATE_STRATEGY=orchestrated`, set
-`SUB2API_UPDATE_MODE=runtime`, point `SUB2API_UPDATE_RUNTIME_PATH` at the
-installed binary, and provide a fixed command such as
-`SUB2API_UPDATE_RESTART_COMMAND="systemctl restart sub2api"`. Use health URLs
-for every service; the command is executed only after checksum verification and
-is never accepted from the HTTP request.
+For the shipped systemd service, keep the default `UPDATE_STRATEGY=binary`.
+After atomically replacing the verified binary, the admin UI asks the running
+process to exit and systemd's `Restart=always` starts the new version. An
+API-triggered orchestrated runtime update with
+`SUB2API_UPDATE_RESTART_COMMAND` is rejected: a child finalizer remains in the
+service cgroup and cannot survive `systemctl restart` to verify readiness. The
+restart-command backend remains available only when an operator invokes the
+orchestrator manually from an external shell.
 
 The updater API does not expose arbitrary shell commands; it executes only the
 absolute path configured in `UPDATE_ORCHESTRATOR` and passes the current and
@@ -171,5 +190,5 @@ target versions as arguments.
 
 ## Links
 
-- [GitHub Repository](https://github.com/weishaw/sub2api)
-- [Documentation](https://github.com/weishaw/sub2api#readme)
+- [GitHub Repository](https://github.com/jhupo/sub2api)
+- [Documentation](https://github.com/jhupo/sub2api#readme)

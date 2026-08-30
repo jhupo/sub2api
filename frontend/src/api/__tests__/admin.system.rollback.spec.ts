@@ -12,7 +12,12 @@ vi.mock('../client', () => ({
   },
 }))
 
-import { getRollbackVersions, rollback, type RollbackVersionInfo } from '@/api/admin/system'
+import {
+  getRollbackVersions,
+  getUpdateStatus,
+  rollback,
+  type RollbackVersionInfo
+} from '@/api/admin/system'
 
 describe('admin system rollback API', () => {
   beforeEach(() => {
@@ -34,6 +39,22 @@ describe('admin system rollback API', () => {
 
     expect(get).toHaveBeenCalledWith('/admin/system/rollback-versions')
     expect(result.versions).toEqual(versions)
+  })
+
+  it('getUpdateStatus fetches the authoritative detached rollout state', async () => {
+    get.mockResolvedValue({
+      data: {
+        operation_id: 'sysop-update123',
+        status: 'succeeded',
+        current_version: '0.1.241',
+        target_version: '0.1.242'
+      }
+    })
+
+    const result = await getUpdateStatus('sysop-update123')
+
+    expect(get).toHaveBeenCalledWith('/admin/system/update-status/sysop-update123')
+    expect(result.status).toBe('succeeded')
   })
 
   it('rollback posts the target version in the request body', async () => {

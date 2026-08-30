@@ -149,7 +149,37 @@
                 </button>
               </div>
 
-              <!-- Priority 2: Update success - need restart -->
+              <!-- Priority 2: Detached rollout is still being verified. -->
+              <div v-else-if="updatePending" class="space-y-2">
+                <div
+                  class="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/50 dark:bg-amber-900/20"
+                >
+                  <div
+                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/50"
+                  >
+                    <Icon
+                      name="refresh"
+                      size="sm"
+                      :stroke-width="2"
+                      class="animate-spin text-amber-600 dark:text-amber-400"
+                    />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium text-amber-700 dark:text-amber-300">
+                      {{
+                        successKind === 'rollback'
+                          ? t('version.rollbackVerifying')
+                          : t('version.updateVerifying')
+                      }}
+                    </p>
+                    <p class="text-xs text-amber-600/70 dark:text-amber-400/70">
+                      {{ t('version.rolloutPending') }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Priority 3: Update success - need restart -->
               <div v-else-if="updateSuccess && needRestart" class="space-y-2">
                 <div
                   class="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-800/50 dark:bg-green-900/20"
@@ -664,10 +694,12 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import {
   performUpdate,
+  getUpdateStatus,
   restartService,
   getRollbackVersions,
   rollback as rollbackAPI,
-  type RollbackVersionInfo
+  type RollbackVersionInfo,
+  type UpdateRolloutState
 } from '@/api/admin/system'
 import { useClipboard } from '@/composables/useClipboard'
 import Icon from '@/components/icons/Icon.vue'
@@ -716,9 +748,12 @@ const restarting = ref(false)
 const needRestart = ref(false)
 const updateError = ref('')
 const updateSuccess = ref(false)
+const updatePending = ref(false)
 const restartCountdown = ref(0)
 // Distinguishes the success + restart panel between update and rollback flows
 const successKind = ref<'update' | 'rollback'>('update')
+const ROLLOUT_VERIFY_INTERVAL_MS = 2000
+let componentDisposed = false
 
 // Rollback states
 const rollbackPanelOpen = ref(false)
@@ -778,6 +813,7 @@ async function refreshVersion(force = true) {
   // Reset update states when refreshing
   updateError.value = ''
   updateSuccess.value = false
+  updatePending.value = false
   needRestart.value = false
   resetRollbackState()
 
@@ -790,26 +826,60 @@ async function handleUpdate() {
   updating.value = true
   updateError.value = ''
   updateSuccess.value = false
+  updatePending.value = false
 
   try {
     const result = await performUpdate()
     successKind.value = 'update'
-    updateSuccess.value = true
     needRestart.value = result.need_restart
-    // Clear version cache to reflect update completed
+    // Clear stale version data before confirming the running target.
     appStore.clearVersionCache()
+    if (result.pending) {
+      updatePending.value = true
+      await waitForRollout(result.operation_id)
+      updatePending.value = false
+      updateSuccess.value = true
+      // Rollout status is authoritative. A transient version refresh failure
+      // after container replacement must not turn a completed update into an error.
+      await appStore.fetchVersion(true).catch(() => undefined)
+      return
+    }
+    updateSuccess.value = true
     // A binary/systemd update is complete only after the new process is
     // started. Trigger that final step from the same button click; the
-    // orchestrated Docker strategy reports need_restart=false because its
-    // host-side rollout already performed health checks and rollback handling.
+    // Orchestrated rollouts are handled above because the detached helper owns
+    // restart, readiness verification, and rollback.
     if (result.need_restart) {
       await handleRestart()
     }
   } catch (error: unknown) {
+    updatePending.value = false
     const err = error as { response?: { data?: { message?: string } }; message?: string }
     updateError.value = err.response?.data?.message || err.message || t('version.updateFailed')
   } finally {
     updating.value = false
+  }
+}
+
+async function waitForRollout(operationId: string): Promise<void> {
+  if (!operationId) {
+    throw new Error(t('version.rolloutOperationMissing'))
+  }
+
+  while (!componentDisposed) {
+    let rolloutStatus: UpdateRolloutState
+    try {
+      const rollout = await getUpdateStatus(operationId)
+      rolloutStatus = rollout.status
+    } catch {
+      // A short connection failure is expected while the container is replaced.
+      await new Promise((resolve) => setTimeout(resolve, ROLLOUT_VERIFY_INTERVAL_MS))
+      continue
+    }
+    if (rolloutStatus === 'succeeded') return
+    if (rolloutStatus === 'rolled_back') throw new Error(t('version.rolloutRolledBack'))
+    if (rolloutStatus === 'failed') throw new Error(t('version.rolloutFailed'))
+    await new Promise((resolve) => setTimeout(resolve, ROLLOUT_VERIFY_INTERVAL_MS))
   }
 }
 
@@ -871,16 +941,25 @@ async function handleRollback() {
 
   rollingBack.value = true
   rollbackError.value = ''
+  updatePending.value = false
 
   try {
     const result = await rollbackAPI(selectedRollbackVersion.value)
     successKind.value = 'rollback'
-    updateSuccess.value = true
     needRestart.value = result.need_restart
-    rollbackPanelOpen.value = false
     // Clear version cache so the next check reflects the rolled-back version
     appStore.clearVersionCache()
+    if (result.pending) {
+      updatePending.value = true
+      await waitForRollout(result.operation_id)
+      updatePending.value = false
+      // The detached rollout already supplied the terminal result.
+      await appStore.fetchVersion(true).catch(() => undefined)
+    }
+    updateSuccess.value = true
+    rollbackPanelOpen.value = false
   } catch (error: unknown) {
+    updatePending.value = false
     const err = error as { response?: { data?: { message?: string } }; message?: string }
     rollbackError.value = err.response?.data?.message || err.message || t('version.rollbackFailed')
   } finally {
@@ -958,6 +1037,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  componentDisposed = true
   document.removeEventListener('click', handleClickOutside)
 })
 </script>

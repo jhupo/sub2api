@@ -43,6 +43,19 @@ export async function checkUpdates(force = false): Promise<VersionInfo> {
 export interface UpdateResult {
   message: string
   need_restart: boolean
+  pending: boolean
+  target_version: string
+  operation_id: string
+}
+
+export type UpdateRolloutState = 'pending' | 'succeeded' | 'rolled_back' | 'failed'
+
+export interface UpdateRolloutStatus {
+  operation_id: string
+  status: UpdateRolloutState
+  current_version: string
+  target_version: string
+  reason?: string
 }
 
 export interface RollbackVersionInfo {
@@ -62,10 +75,19 @@ export async function getRollbackVersions(): Promise<{ versions: RollbackVersion
 }
 
 /**
- * In-place update/rollback downloads a full release binary from GitHub, which
- * can take several minutes on slow links. The global 30s axios timeout would
- * abort the request mid-download (#4504), so these calls wait as long as the
- * backend allows (15 minutes server-side).
+ * Get the authoritative result written by the detached rollout helper.
+ */
+export async function getUpdateStatus(operationId: string): Promise<UpdateRolloutStatus> {
+  const { data } = await apiClient.get<UpdateRolloutStatus>(
+    `/admin/system/update-status/${encodeURIComponent(operationId)}`
+  )
+  return data
+}
+
+/**
+ * Binary update/rollback downloads a full release from GitHub and can take
+ * several minutes. Orchestrated mode returns as soon as its background runner
+ * is started, so the operation ID is available before rolling work begins.
  */
 const UPDATE_REQUEST_TIMEOUT_MS = 15 * 60 * 1000
 
@@ -105,6 +127,7 @@ export const systemAPI = {
   getVersion,
   checkUpdates,
   performUpdate,
+  getUpdateStatus,
   getRollbackVersions,
   rollback,
   restartService

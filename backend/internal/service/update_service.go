@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -27,6 +28,8 @@ var (
 	ErrNoUpdateAvailable         = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
 	ErrRollbackVersionNotAllowed = infraerrors.BadRequest("ROLLBACK_VERSION_NOT_ALLOWED", "version is not in the allowed rollback list")
 	ErrUpdateOrchestratorMissing = infraerrors.InternalServer("UPDATE_ORCHESTRATOR_MISSING", "update orchestrator is not configured")
+	ErrUpdateOperationIDInvalid  = infraerrors.BadRequest("UPDATE_OPERATION_ID_INVALID", "invalid update operation id")
+	ErrUpdateStatusNotFound      = infraerrors.NotFound("UPDATE_STATUS_NOT_FOUND", "update status not found")
 )
 
 const (
@@ -49,6 +52,15 @@ const (
 	updateStrategyBinary       = "binary"
 	updateStrategyRuntime      = "runtime"
 	updateStrategyOrchestrated = "orchestrated"
+
+	defaultUpdateStatusDir = "/app/data/update-status"
+	maxUpdateStatusSize    = 16 * 1024
+	activeRolloutMaxAge    = time.Hour
+
+	UpdateStatusPending    = "pending"
+	UpdateStatusSucceeded  = "succeeded"
+	UpdateStatusRolledBack = "rolled_back"
+	UpdateStatusFailed     = "failed"
 )
 
 // UpdateCache defines cache operations for update service
@@ -83,6 +95,7 @@ type updateRuntimeConfig struct {
 	strategy         string
 	orchestratorPath string
 	runtimePath      string
+	statusDir        string
 }
 
 // NewUpdateService creates a new UpdateService
@@ -136,6 +149,22 @@ type GitHubRelease struct {
 	Assets      []GitHubAsset `json:"assets"`
 }
 
+// UpdateExecution describes how an accepted update will finish.
+type UpdateExecution struct {
+	TargetVersion string
+	Pending       bool
+}
+
+// UpdateRolloutStatus is initialized before the orchestrator starts and then
+// updated by the rollout process as readiness or rollback completes.
+type UpdateRolloutStatus struct {
+	OperationID    string `json:"operation_id"`
+	Status         string `json:"status"`
+	CurrentVersion string `json:"current_version"`
+	TargetVersion  string `json:"target_version"`
+	Reason         string `json:"reason,omitempty"`
+}
+
 // RollbackVersion describes a release version the system can roll back to
 type RollbackVersion struct {
 	Version     string `json:"version"` // without "v" prefix, e.g. "0.1.146"
@@ -157,10 +186,15 @@ func loadUpdateRuntimeConfig() updateRuntimeConfig {
 	if strategy != updateStrategyBinary && strategy != updateStrategyRuntime && strategy != updateStrategyOrchestrated {
 		strategy = updateStrategyBinary
 	}
+	statusDir := strings.TrimSpace(os.Getenv("SUB2API_UPDATE_STATUS_DIR"))
+	if statusDir == "" {
+		statusDir = defaultUpdateStatusDir
+	}
 	return updateRuntimeConfig{
 		strategy:         strategy,
 		orchestratorPath: strings.TrimSpace(os.Getenv("UPDATE_ORCHESTRATOR")),
 		runtimePath:      strings.TrimSpace(os.Getenv("UPDATE_RUNTIME_BINARY_PATH")),
+		statusDir:        statusDir,
 	}
 }
 
@@ -198,21 +232,27 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 
 // PerformUpdate downloads and applies the update
 // Uses atomic file replacement pattern for safe in-place updates
-func (s *UpdateService) PerformUpdate(ctx context.Context) error {
+func (s *UpdateService) PerformUpdate(ctx context.Context, operationID string) (*UpdateExecution, error) {
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
-		return normalizeUpdateError(err)
+		return nil, normalizeUpdateError(err)
 	}
 
 	if !info.HasUpdate {
-		return ErrNoUpdateAvailable
+		return nil, ErrNoUpdateAvailable
 	}
 
 	if s.updateRuntime.strategy == updateStrategyOrchestrated {
-		return normalizeUpdateError(s.performOrchestratedUpdate(ctx, info))
+		if err := normalizeUpdateError(s.performOrchestratedUpdate(ctx, info, operationID)); err != nil {
+			return nil, err
+		}
+		return &UpdateExecution{TargetVersion: info.LatestVersion, Pending: true}, nil
 	}
 
-	return normalizeUpdateError(s.applyReleaseAssets(ctx, info.ReleaseInfo.Assets))
+	if err := normalizeUpdateError(s.applyReleaseAssets(ctx, info.ReleaseInfo.Assets)); err != nil {
+		return nil, err
+	}
+	return &UpdateExecution{TargetVersion: info.LatestVersion}, nil
 }
 
 // normalizeUpdateError keeps update failures actionable for administrators.
@@ -226,19 +266,20 @@ func normalizeUpdateError(err error) error {
 }
 
 // NeedsRestart reports whether the caller must restart the current process.
-// The orchestrated strategy already restarts each Compose service and performs
-// a health check before returning, so sending a second restart request would
-// only create another avoidable interruption.
+// The orchestrated strategy hands restart and readiness verification to its
+// rollout helper, so sending a second restart request would race that helper.
 func (s *UpdateService) NeedsRestart() bool {
 	return s.updateRuntime.strategy != updateStrategyOrchestrated
 }
 
-// performOrchestratedUpdate delegates the state-changing portion of an update
-// to a host-side executable. Keeping Docker access outside the application
-// process means the app does not need a Docker socket by default, while still
-// allowing the admin button to run a complete pull -> health -> rolling
-// restart -> rollback transaction when explicitly configured.
-func (s *UpdateService) performOrchestratedUpdate(ctx context.Context, info *UpdateInfo) error {
+// performOrchestratedUpdate records the lease before starting the host-side
+// runner, then returns immediately so the client can follow the operation ID.
+// Docker access remains outside the application process unless this strategy
+// is explicitly configured.
+func (s *UpdateService) performOrchestratedUpdate(_ context.Context, info *UpdateInfo, operationID string) error {
+	if !validUpdateOperationID(operationID) {
+		return ErrUpdateOperationIDInvalid
+	}
 	path := s.updateRuntime.orchestratorPath
 	if path == "" {
 		return ErrUpdateOrchestratorMissing
@@ -258,23 +299,237 @@ func (s *UpdateService) performOrchestratedUpdate(ctx context.Context, info *Upd
 	if info.ReleaseInfo != nil {
 		releaseURL = info.ReleaseInfo.HTMLURL
 	}
-	cmd := exec.CommandContext(ctx, path,
+	status := UpdateRolloutStatus{
+		OperationID:    operationID,
+		Status:         UpdateStatusPending,
+		CurrentVersion: info.CurrentVersion,
+		TargetVersion:  info.LatestVersion,
+	}
+	if err := s.writeUpdateStatus(status); err != nil {
+		return err
+	}
+
+	cmd := exec.Command(path,
 		"--current-version", info.CurrentVersion,
 		"--target-version", info.LatestVersion,
 		"--release-url", releaseURL,
+		"--operation-id", operationID,
 	)
-	output, err := cmd.CombinedOutput()
-	trimmed := strings.TrimSpace(string(output))
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		status.Status = UpdateStatusFailed
+		status.Reason = "orchestrator_start_failed"
+		_ = s.writeUpdateStatus(status)
+		return fmt.Errorf("orchestrated update failed to start: %w", err)
+	}
+	go s.waitForOrchestrator(cmd, status)
+	return nil
+}
+
+func (s *UpdateService) waitForOrchestrator(cmd *exec.Cmd, status UpdateRolloutStatus) {
+	if err := cmd.Wait(); err == nil {
+		return
+	}
+	current, err := s.GetUpdateStatus(context.Background(), status.OperationID)
+	if err == nil && current.Status != UpdateStatusPending {
+		return
+	}
+	status.Status = UpdateStatusFailed
+	status.Reason = "orchestrator_failed"
+	_ = s.writeUpdateStatus(status)
+}
+
+func (s *UpdateService) updateStatusPath(operationID string) (string, error) {
+	dir := strings.TrimSpace(s.updateRuntime.statusDir)
+	cleanDir := filepath.Clean(dir)
+	if dir == "" || !filepath.IsAbs(dir) || cleanDir != dir {
+		return "", infraerrors.InternalServer("UPDATE_STATUS_INVALID", "update status directory is invalid")
+	}
+	if info, err := os.Lstat(cleanDir); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return "", infraerrors.InternalServer("UPDATE_STATUS_INVALID", "update status directory is invalid")
+		}
+	} else if !os.IsNotExist(err) {
+		return "", infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
+	}
+	return filepath.Join(cleanDir, operationID+".json"), nil
+}
+
+func (s *UpdateService) writeUpdateStatus(status UpdateRolloutStatus) error {
+	if !validUpdateOperationID(status.OperationID) || !validUpdateStatus(status.Status) {
+		return infraerrors.InternalServer("UPDATE_STATUS_INVALID", "update status is invalid")
+	}
+	path, err := s.updateStatusPath(status.OperationID)
 	if err != nil {
-		if trimmed == "" {
-			return fmt.Errorf("orchestrated update failed: %w", err)
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
+	}
+	if info, err := os.Lstat(filepath.Dir(path)); err != nil {
+		return infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
+	} else if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return infraerrors.InternalServer("UPDATE_STATUS_INVALID", "update status directory is invalid")
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), "."+status.OperationID+".tmp-*")
+	if err != nil {
+		return infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
+	}
+	tempPath := file.Name()
+	removeTemp := true
+	defer func() {
+		_ = file.Close()
+		if removeTemp {
+			_ = os.Remove(tempPath)
 		}
-		if len(trimmed) > 4096 {
-			trimmed = trimmed[len(trimmed)-4096:]
+	}()
+	if err := file.Chmod(0o644); err != nil {
+		return infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
+	}
+	if err := json.NewEncoder(file).Encode(status); err != nil {
+		return infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
+	}
+	if err := file.Sync(); err != nil {
+		return infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
+	}
+	if err := file.Close(); err != nil {
+		return infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
+	}
+	removeTemp = false
+	return nil
+}
+
+// GetUpdateStatus reads the final state written to the shared data volume by
+// the detached orchestrator helper. Operation IDs are validated before they
+// are used as filenames.
+func (s *UpdateService) GetUpdateStatus(_ context.Context, operationID string) (*UpdateRolloutStatus, error) {
+	if !validUpdateOperationID(operationID) {
+		return nil, ErrUpdateOperationIDInvalid
+	}
+
+	path, err := s.updateStatusPath(operationID)
+	if err != nil {
+		return nil, err
+	}
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrUpdateStatusNotFound
 		}
-		return fmt.Errorf("orchestrated update failed: %w: %s", err, trimmed)
+		return nil, infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
+	}
+	if pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() {
+		return nil, infraerrors.InternalServer("UPDATE_STATUS_INVALID", "update status is invalid")
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrUpdateStatusNotFound
+		}
+		return nil, infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() {
+		return nil, infraerrors.InternalServer("UPDATE_STATUS_INVALID", "update status is invalid").WithCause(err)
+	}
+	currentInfo, err := os.Lstat(path)
+	if err != nil || currentInfo.Mode()&os.ModeSymlink != 0 || !currentInfo.Mode().IsRegular() || !os.SameFile(openedInfo, currentInfo) {
+		return nil, infraerrors.InternalServer("UPDATE_STATUS_INVALID", "update status is invalid").WithCause(err)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(file, maxUpdateStatusSize+1))
+	if err != nil {
+		return nil, infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
+	}
+	if len(data) > maxUpdateStatusSize {
+		return nil, infraerrors.InternalServer("UPDATE_STATUS_INVALID", "update status is invalid")
+	}
+
+	var status UpdateRolloutStatus
+	if err := json.Unmarshal(data, &status); err != nil || status.OperationID != operationID || !validUpdateStatus(status.Status) {
+		return nil, infraerrors.InternalServer("UPDATE_STATUS_INVALID", "update status is invalid").WithCause(err)
+	}
+	if status.Status == UpdateStatusPending && time.Since(currentInfo.ModTime()) > activeRolloutMaxAge {
+		status.Status = UpdateStatusFailed
+		status.Reason = "lease_expired"
+	}
+	return &status, nil
+}
+
+// EnsureNoActiveRollout extends the existing system-operation lock across a
+// detached container replacement. Pending files live on the shared data volume
+// and remain visible after the request-serving process is recreated.
+func (s *UpdateService) EnsureNoActiveRollout(ctx context.Context, operationID string) error {
+	if !validUpdateOperationID(operationID) {
+		return ErrUpdateOperationIDInvalid
+	}
+
+	statusPath, err := s.updateStatusPath(operationID)
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(filepath.Dir(statusPath))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(err)
+	}
+
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		candidateID := strings.TrimSuffix(entry.Name(), ".json")
+		if !validUpdateOperationID(candidateID) {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return infraerrors.InternalServer("UPDATE_STATUS_UNAVAILABLE", "update status is unavailable").WithCause(infoErr)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return infraerrors.InternalServer("UPDATE_STATUS_INVALID", "update status is invalid")
+		}
+		status, statusErr := s.GetUpdateStatus(ctx, candidateID)
+		if statusErr != nil {
+			if errors.Is(statusErr, ErrUpdateStatusNotFound) {
+				continue
+			}
+			return statusErr
+		}
+		if status.Status == UpdateStatusPending {
+			return ErrSystemOperationBusy.WithMetadata(map[string]string{"operation_id": candidateID})
+		}
 	}
 	return nil
+}
+
+func validUpdateOperationID(operationID string) bool {
+	if len(operationID) < len("sysop-x") || len(operationID) > 128 || !strings.HasPrefix(operationID, "sysop-") {
+		return false
+	}
+	for _, char := range operationID {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func validUpdateStatus(status string) bool {
+	switch status {
+	case UpdateStatusPending, UpdateStatusSucceeded, UpdateStatusRolledBack, UpdateStatusFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 // applyReleaseAssets downloads the platform archive from the given release assets,
@@ -444,15 +699,15 @@ func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVer
 // RollbackToVersion downloads and installs a specific older version.
 // The target must be one of the versions returned by ListRollbackVersions;
 // anything else (including the current version) is rejected.
-func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) error {
+func (s *UpdateService) RollbackToVersion(ctx context.Context, version, operationID string) (*UpdateExecution, error) {
 	target := strings.TrimPrefix(strings.TrimSpace(version), "v")
 	if target == "" {
-		return ErrRollbackVersionNotAllowed
+		return nil, ErrRollbackVersionNotAllowed
 	}
 
 	releases, err := s.fetchRollbackCandidates(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var match *GitHubRelease
@@ -463,10 +718,10 @@ func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) e
 		}
 	}
 	if match == nil {
-		return ErrRollbackVersionNotAllowed
+		return nil, ErrRollbackVersionNotAllowed
 	}
 	if s.updateRuntime.strategy == updateStrategyOrchestrated {
-		return s.performOrchestratedUpdate(ctx, &UpdateInfo{
+		if err := s.performOrchestratedUpdate(ctx, &UpdateInfo{
 			CurrentVersion: s.currentVersion,
 			LatestVersion:  strings.TrimPrefix(match.TagName, "v"),
 			ReleaseInfo: &ReleaseInfo{
@@ -477,7 +732,10 @@ func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) e
 			},
 			BuildType:      s.buildType,
 			UpdateStrategy: s.updateRuntime.strategy,
-		})
+		}, operationID); err != nil {
+			return nil, err
+		}
+		return &UpdateExecution{TargetVersion: target, Pending: true}, nil
 	}
 
 	assets := make([]Asset, len(match.Assets))
@@ -489,7 +747,10 @@ func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) e
 		}
 	}
 
-	return s.applyReleaseAssets(ctx, assets)
+	if err := s.applyReleaseAssets(ctx, assets); err != nil {
+		return nil, err
+	}
+	return &UpdateExecution{TargetVersion: target}, nil
 }
 
 // fetchRollbackCandidates fetches recent releases and keeps the newest

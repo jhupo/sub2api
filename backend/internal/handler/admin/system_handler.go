@@ -22,34 +22,31 @@ type SystemHandler struct {
 	lockSvc   *service.SystemOperationLockService
 }
 
-// systemUpdateTimeout bounds a full in-place update or rollback: the release
-// manifest fetch plus a large binary download over slow links. It must stay
-// above the GitHub download client timeout (10 minutes) so the download owns
-// its own deadline.
-const systemUpdateTimeout = 15 * time.Minute
-
 // systemUpdateContext detaches a long-running update/rollback from the HTTP
 // request lifetime. Browsers and reverse proxies commonly abort idle requests
 // after 30-60s (axios default, nginx proxy_read_timeout), which canceled
 // c.Request.Context() mid-download and killed the update with
-// "download failed: context canceled" (#4504). The swap keeps running after a
-// client disconnect; a later retry then hits the system operation lock or
-// reports "Already up to date".
+// "download failed: context canceled" (#4504). Network clients and the
+// orchestrator own their per-step deadlines; an aggregate deadline is unsafe
+// because rollout time scales with the number of services and forced process
+// termination bypasses the orchestrator's rollback and terminal status trap.
 func systemUpdateContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	base := context.Background()
 	if ctx != nil {
 		base = context.WithoutCancel(ctx)
 	}
-	return context.WithTimeout(base, systemUpdateTimeout)
+	return context.WithCancel(base)
 }
 
 type systemUpdateService interface {
 	CheckUpdate(ctx context.Context, force bool) (*service.UpdateInfo, error)
-	PerformUpdate(ctx context.Context) error
+	PerformUpdate(ctx context.Context, operationID string) (*service.UpdateExecution, error)
+	GetUpdateStatus(ctx context.Context, operationID string) (*service.UpdateRolloutStatus, error)
+	EnsureNoActiveRollout(ctx context.Context, operationID string) error
 	NeedsRestart() bool
 	Rollback() error
 	ListRollbackVersions(ctx context.Context) ([]service.RollbackVersion, error)
-	RollbackToVersion(ctx context.Context, version string) error
+	RollbackToVersion(ctx context.Context, version, operationID string) (*service.UpdateExecution, error)
 }
 
 // NewSystemHandler creates a new SystemHandler
@@ -100,7 +97,8 @@ func (h *SystemHandler) PerformUpdate(c *gin.Context) {
 		updateCtx, cancel := systemUpdateContext(ctx)
 		defer cancel()
 
-		if err := h.updateSvc.PerformUpdate(updateCtx); err != nil {
+		execution, err := h.updateSvc.PerformUpdate(updateCtx, lock.OperationID())
+		if err != nil {
 			if errors.Is(err, service.ErrNoUpdateAvailable) {
 				info, checkErr := h.updateSvc.CheckUpdate(updateCtx, false)
 				if checkErr != nil {
@@ -113,6 +111,9 @@ func (h *SystemHandler) PerformUpdate(c *gin.Context) {
 					"already_up_to_date": true,
 					"current_version":    info.CurrentVersion,
 					"latest_version":     info.LatestVersion,
+					"need_restart":       false,
+					"pending":            false,
+					"target_version":     info.CurrentVersion,
 					"operation_id":       lock.OperationID(),
 				}, nil
 			}
@@ -120,18 +121,38 @@ func (h *SystemHandler) PerformUpdate(c *gin.Context) {
 			return nil, err
 		}
 		succeeded = true
-		needsRestart := h.updateSvc.NeedsRestart()
+		pending := execution != nil && execution.Pending
+		needsRestart := !pending && h.updateSvc.NeedsRestart()
 		message := "Update completed. Please restart the service."
-		if !needsRestart {
+		if pending {
+			message = "Update rollout scheduled. Waiting for the new service to become ready."
+		} else if !needsRestart {
 			message = "Update completed and health checks passed."
+		}
+		targetVersion := ""
+		if execution != nil {
+			targetVersion = execution.TargetVersion
 		}
 
 		return gin.H{
-			"message":      message,
-			"need_restart": needsRestart,
-			"operation_id": lock.OperationID(),
+			"message":        message,
+			"need_restart":   needsRestart,
+			"pending":        pending,
+			"target_version": targetVersion,
+			"operation_id":   lock.OperationID(),
 		}, nil
 	})
+}
+
+// GetUpdateStatus returns the authoritative state written by the detached
+// rollout helper after readiness verification or rollback.
+// GET /api/v1/admin/system/update-status/:operation_id
+func (h *SystemHandler) GetUpdateStatus(c *gin.Context) {
+	status, err := h.updateSvc.GetUpdateStatus(c.Request.Context(), c.Param("operation_id"))
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, status)
 }
 
 // GetRollbackVersions lists versions available for rollback
@@ -181,11 +202,12 @@ func (h *SystemHandler) Rollback(c *gin.Context) {
 			release(releaseReason, succeeded)
 		}()
 
+		var execution *service.UpdateExecution
 		if targetVersion != "" {
 			// 指定版本回退同样要下载完整二进制，与更新一样和请求生命周期解耦。
 			rollbackCtx, cancel := systemUpdateContext(ctx)
 			defer cancel()
-			err = h.updateSvc.RollbackToVersion(rollbackCtx, targetVersion)
+			execution, err = h.updateSvc.RollbackToVersion(rollbackCtx, targetVersion, lock.OperationID())
 		} else {
 			err = h.updateSvc.Rollback()
 		}
@@ -194,12 +216,23 @@ func (h *SystemHandler) Rollback(c *gin.Context) {
 			return nil, err
 		}
 		succeeded = true
+		pending := execution != nil && execution.Pending
+		needsRestart := !pending
+		message := "Rollback completed. Please restart the service."
+		if pending {
+			message = "Rollback rollout scheduled. Waiting for the target service to become ready."
+		}
+		if execution != nil && execution.TargetVersion != "" {
+			targetVersion = execution.TargetVersion
+		}
 
 		return gin.H{
-			"message":      "Rollback completed. Please restart the service.",
-			"need_restart": true,
-			"version":      targetVersion,
-			"operation_id": lock.OperationID(),
+			"message":        message,
+			"need_restart":   needsRestart,
+			"pending":        pending,
+			"target_version": targetVersion,
+			"version":        targetVersion,
+			"operation_id":   lock.OperationID(),
 		}, nil
 	})
 }
@@ -245,6 +278,12 @@ func (h *SystemHandler) acquireSystemLock(
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := h.updateSvc.EnsureNoActiveRollout(ctx, operationID); err != nil {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = h.lockSvc.Release(releaseCtx, lock, false, "SYSTEM_ROLLOUT_ACTIVE")
+		return nil, nil, err
+	}
 	release := func(reason string, succeeded bool) {
 		releaseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -256,7 +295,12 @@ func (h *SystemHandler) acquireSystemLock(
 func buildSystemOperationID(c *gin.Context, operation string) string {
 	key := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
 	if key == "" {
-		return "sysop-" + operation + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+		seed := operation + "|" + strconv.FormatInt(time.Now().UnixNano(), 36)
+		hash := service.HashIdempotencyKey(seed)
+		if len(hash) > 24 {
+			hash = hash[:24]
+		}
+		return "sysop-" + hash
 	}
 	actorScope := "admin:0"
 	if subject, ok := middleware2.GetAuthSubjectFromContext(c); ok {

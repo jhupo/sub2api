@@ -35,6 +35,8 @@ jobs:
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.26.6'
+      - name: Test update orchestrator
+        run: /bin/bash deploy/tests/update-orchestrator-test.sh
       - name: Unit tests
         working-directory: backend
         run: make test-unit

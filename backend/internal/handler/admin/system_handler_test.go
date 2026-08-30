@@ -18,23 +18,32 @@ import (
 )
 
 type systemHandlerUpdateServiceStub struct {
-	performErr            error
-	updateInfo            *service.UpdateInfo
-	checkErr              error
-	checkForces           []bool
-	performCall           int
-	performCtxErr         error
-	performHasDeadline    bool
-	needsRestart          bool
-	rollbackCall          int
-	rollbackToCall        int
-	rollbackToCtxErr      error
-	rollbackToHasDeadline bool
-	rollbackToVersions    []string
-	rollbackToErr         error
-	rollbackVersions      []service.RollbackVersion
-	rollbackVersionsErr   error
-	rollbackVersionsCall  int
+	performErr              error
+	updateInfo              *service.UpdateInfo
+	checkErr                error
+	checkForces             []bool
+	performCall             int
+	performOperationIDs     []string
+	performCtxErr           error
+	performHasDeadline      bool
+	updateExecution         *service.UpdateExecution
+	needsRestart            bool
+	rollbackCall            int
+	rollbackToCall          int
+	rollbackToCtxErr        error
+	rollbackToHasDeadline   bool
+	rollbackToVersions      []string
+	rollbackOperationIDs    []string
+	rollbackToErr           error
+	rollbackExecution       *service.UpdateExecution
+	rollbackVersions        []service.RollbackVersion
+	rollbackVersionsErr     error
+	rollbackVersionsCall    int
+	updateStatus            *service.UpdateRolloutStatus
+	updateStatusErr         error
+	updateStatusOperations  []string
+	activeRolloutErr        error
+	activeRolloutOperations []string
 }
 
 func (s *systemHandlerUpdateServiceStub) CheckUpdate(_ context.Context, force bool) (*service.UpdateInfo, error) {
@@ -42,11 +51,22 @@ func (s *systemHandlerUpdateServiceStub) CheckUpdate(_ context.Context, force bo
 	return s.updateInfo, s.checkErr
 }
 
-func (s *systemHandlerUpdateServiceStub) PerformUpdate(ctx context.Context) error {
+func (s *systemHandlerUpdateServiceStub) PerformUpdate(ctx context.Context, operationID string) (*service.UpdateExecution, error) {
 	s.performCall++
+	s.performOperationIDs = append(s.performOperationIDs, operationID)
 	s.performCtxErr = ctx.Err()
 	_, s.performHasDeadline = ctx.Deadline()
-	return s.performErr
+	return s.updateExecution, s.performErr
+}
+
+func (s *systemHandlerUpdateServiceStub) GetUpdateStatus(_ context.Context, operationID string) (*service.UpdateRolloutStatus, error) {
+	s.updateStatusOperations = append(s.updateStatusOperations, operationID)
+	return s.updateStatus, s.updateStatusErr
+}
+
+func (s *systemHandlerUpdateServiceStub) EnsureNoActiveRollout(_ context.Context, operationID string) error {
+	s.activeRolloutOperations = append(s.activeRolloutOperations, operationID)
+	return s.activeRolloutErr
 }
 
 func (s *systemHandlerUpdateServiceStub) NeedsRestart() bool {
@@ -63,12 +83,13 @@ func (s *systemHandlerUpdateServiceStub) ListRollbackVersions(context.Context) (
 	return s.rollbackVersions, s.rollbackVersionsErr
 }
 
-func (s *systemHandlerUpdateServiceStub) RollbackToVersion(ctx context.Context, version string) error {
+func (s *systemHandlerUpdateServiceStub) RollbackToVersion(ctx context.Context, version, operationID string) (*service.UpdateExecution, error) {
 	s.rollbackToCall++
 	s.rollbackToCtxErr = ctx.Err()
 	_, s.rollbackToHasDeadline = ctx.Deadline()
 	s.rollbackToVersions = append(s.rollbackToVersions, version)
-	return s.rollbackToErr
+	s.rollbackOperationIDs = append(s.rollbackOperationIDs, operationID)
+	return s.rollbackExecution, s.rollbackToErr
 }
 
 type systemUpdateResponseEnvelope struct {
@@ -80,6 +101,9 @@ type systemUpdateResponseEnvelope struct {
 		CurrentVersion  string `json:"current_version"`
 		LatestVersion   string `json:"latest_version"`
 		OperationID     string `json:"operation_id"`
+		NeedRestart     bool   `json:"need_restart"`
+		Pending         bool   `json:"pending"`
+		TargetVersion   string `json:"target_version"`
 	} `json:"data"`
 }
 
@@ -104,8 +128,10 @@ func newSystemHandlerTestRouter(t *testing.T, updateSvc *systemHandlerUpdateServ
 
 	router := gin.New()
 	router.POST("/api/v1/admin/system/update", handler.PerformUpdate)
+	router.GET("/api/v1/admin/system/update-status/:operation_id", handler.GetUpdateStatus)
 	router.POST("/api/v1/admin/system/rollback", handler.Rollback)
 	router.GET("/api/v1/admin/system/rollback-versions", handler.GetRollbackVersions)
+	router.POST("/api/v1/admin/system/restart", handler.RestartService)
 	return router
 }
 
@@ -152,7 +178,69 @@ func TestSystemHandlerPerformUpdateAlreadyUpToDateReturnsOK(t *testing.T) {
 	require.True(t, body.Data.AlreadyUpToDate)
 	require.Equal(t, "0.1.132", body.Data.CurrentVersion)
 	require.Equal(t, "0.1.132", body.Data.LatestVersion)
+	require.False(t, body.Data.Pending)
+	require.False(t, body.Data.NeedRestart)
+	require.Equal(t, "0.1.132", body.Data.TargetVersion)
 	require.NotEmpty(t, body.Data.OperationID)
+}
+
+func TestSystemHandlerPerformUpdateReportsPendingRollout(t *testing.T) {
+	updateSvc := &systemHandlerUpdateServiceStub{
+		updateExecution: &service.UpdateExecution{
+			TargetVersion: "0.1.242",
+			Pending:       true,
+		},
+	}
+	repo := newMemoryIdempotencyRepoStub()
+	router := newSystemHandlerTestRouter(t, updateSvc, repo)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/update", nil)
+	req.Header.Set("Idempotency-Key", "pending-update")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body systemUpdateResponseEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.True(t, body.Data.Pending)
+	require.False(t, body.Data.NeedRestart)
+	require.Equal(t, "0.1.242", body.Data.TargetVersion)
+	require.Equal(t, []string{body.Data.OperationID}, updateSvc.performOperationIDs)
+	require.Contains(t, body.Data.Message, "scheduled")
+}
+
+func TestSystemHandlerGetUpdateStatus(t *testing.T) {
+	updateSvc := &systemHandlerUpdateServiceStub{updateStatus: &service.UpdateRolloutStatus{
+		OperationID:    "sysop-status123",
+		Status:         service.UpdateStatusSucceeded,
+		CurrentVersion: "0.1.241",
+		TargetVersion:  "0.1.242",
+	}}
+	router := newSystemHandlerTestRouter(t, updateSvc, newMemoryIdempotencyRepoStub())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/system/update-status/sysop-status123", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []string{"sysop-status123"}, updateSvc.updateStatusOperations)
+	var body struct {
+		Data service.UpdateRolloutStatus `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, service.UpdateStatusSucceeded, body.Data.Status)
+	require.Equal(t, "0.1.242", body.Data.TargetVersion)
+}
+
+func TestSystemHandlerGetUpdateStatusRejectsInvalidOperationID(t *testing.T) {
+	updateSvc := &systemHandlerUpdateServiceStub{updateStatusErr: service.ErrUpdateOperationIDInvalid}
+	router := newSystemHandlerTestRouter(t, updateSvc, newMemoryIdempotencyRepoStub())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/system/update-status/not-a-system-operation", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestSystemHandlerPerformUpdateFailureStillReturnsInternalError(t *testing.T) {
@@ -178,10 +266,46 @@ func TestSystemHandlerPerformUpdateFailureStillReturnsInternalError(t *testing.T
 	require.Equal(t, "internal error", body.Message)
 }
 
+func TestSystemHandlerActiveRolloutBlocksSystemMutations(t *testing.T) {
+	tests := []struct {
+		name        string
+		path        string
+		body        string
+		contentType string
+	}{
+		{name: "update", path: "/api/v1/admin/system/update"},
+		{name: "rollback", path: "/api/v1/admin/system/rollback", body: `{"version":"0.1.240"}`, contentType: "application/json"},
+		{name: "restart", path: "/api/v1/admin/system/restart"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			updateSvc := &systemHandlerUpdateServiceStub{activeRolloutErr: service.ErrSystemOperationBusy}
+			repo := newMemoryIdempotencyRepoStub()
+			router := newSystemHandlerTestRouter(t, updateSvc, repo)
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
+			if tt.contentType != "" {
+				req.Header.Set("Content-Type", tt.contentType)
+			}
+			req.Header.Set("Idempotency-Key", "blocked-"+tt.name)
+			router.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusConflict, rec.Code)
+			require.Len(t, updateSvc.activeRolloutOperations, 1)
+			require.Equal(t, 0, updateSvc.performCall)
+			require.Equal(t, 0, updateSvc.rollbackCall)
+			require.Equal(t, 0, updateSvc.rollbackToCall)
+			requireSystemLockStatus(t, repo, service.IdempotencyStatusFailedRetryable)
+		})
+	}
+}
+
 // TestSystemHandlerPerformUpdateSurvivesClientDisconnect reproduces #4504:
 // the browser or a reverse proxy (axios 30s default, nginx proxy_read_timeout
 // 60s) aborts the long-running update request and cancels the request
-// context. The download must keep running on a detached, bounded context
+// context. The download must keep running on a detached context
 // instead of dying with "download failed: context canceled".
 func TestSystemHandlerPerformUpdateSurvivesClientDisconnect(t *testing.T) {
 	updateSvc := &systemHandlerUpdateServiceStub{}
@@ -199,8 +323,8 @@ func TestSystemHandlerPerformUpdateSurvivesClientDisconnect(t *testing.T) {
 	require.Equal(t, 1, updateSvc.performCall)
 	require.NoError(t, updateSvc.performCtxErr,
 		"update must not observe the canceled request context")
-	require.True(t, updateSvc.performHasDeadline,
-		"detached update context must still be bounded by a deadline")
+	require.False(t, updateSvc.performHasDeadline,
+		"aggregate update deadlines can bypass orchestrator rollback")
 	requireSystemLockStatus(t, repo, service.IdempotencyStatusSucceeded)
 }
 
@@ -222,9 +346,35 @@ func TestSystemHandlerRollbackToVersionSurvivesClientDisconnect(t *testing.T) {
 	require.Equal(t, 1, updateSvc.rollbackToCall)
 	require.NoError(t, updateSvc.rollbackToCtxErr,
 		"versioned rollback must not observe the canceled request context")
-	require.True(t, updateSvc.rollbackToHasDeadline,
-		"detached rollback context must still be bounded by a deadline")
+	require.False(t, updateSvc.rollbackToHasDeadline,
+		"aggregate rollback deadlines can bypass orchestrator rollback")
 	requireSystemLockStatus(t, repo, service.IdempotencyStatusSucceeded)
+}
+
+func TestSystemHandlerRollbackToVersionReportsPendingRollout(t *testing.T) {
+	updateSvc := &systemHandlerUpdateServiceStub{
+		rollbackExecution: &service.UpdateExecution{
+			TargetVersion: "0.1.240",
+			Pending:       true,
+		},
+	}
+	repo := newMemoryIdempotencyRepoStub()
+	router := newSystemHandlerTestRouter(t, updateSvc, repo)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/rollback",
+		strings.NewReader(`{"version":"0.1.240"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "pending-rollback")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body systemUpdateResponseEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.True(t, body.Data.Pending)
+	require.False(t, body.Data.NeedRestart)
+	require.Equal(t, "0.1.240", body.Data.TargetVersion)
+	require.Contains(t, body.Data.Message, "scheduled")
 }
 
 func TestSystemHandlerRollbackWithoutBodyUsesLegacyBackup(t *testing.T) {
@@ -259,6 +409,8 @@ func TestSystemHandlerRollbackWithVersionCallsRollbackToVersion(t *testing.T) {
 	require.Equal(t, 0, updateSvc.rollbackCall)
 	require.Equal(t, 1, updateSvc.rollbackToCall)
 	require.Equal(t, []string{"0.1.146"}, updateSvc.rollbackToVersions)
+	require.Len(t, updateSvc.rollbackOperationIDs, 1)
+	require.True(t, strings.HasPrefix(updateSvc.rollbackOperationIDs[0], "sysop-"))
 	requireSystemLockStatus(t, repo, service.IdempotencyStatusSucceeded)
 
 	var body systemUpdateResponseEnvelope
