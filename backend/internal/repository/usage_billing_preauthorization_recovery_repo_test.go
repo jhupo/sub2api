@@ -20,7 +20,7 @@ func TestListRecoverableBalancePreauthorizationsReturnsFinalizationData(t *testi
 	finalizationCutoff := authorizationCutoff.Add(-30 * time.Second)
 	expiresAt := authorizationCutoff.Add(-time.Minute)
 	updatedAt := finalizationCutoff.Add(-time.Second)
-	mock.ExpectQuery(`(?s)WITH candidates AS .*FROM billing_balance_settlements.*expires_at <= \$1.*updated_at <= NOW\(\) - \(\$7 \* INTERVAL '1 second'\).*updated_at <= \$2.*ORDER BY CASE.*FOR UPDATE SKIP LOCKED.*UPDATE billing_balance_settlements AS settlement.*SET updated_at = NOW\(\).*async_task_id.*FROM leased`).
+	mock.ExpectQuery(`(?s)WITH candidates AS .*FROM billing_balance_settlements.*expires_at <= \$1.*updated_at <= NOW\(\) - \(\$7 \* INTERVAL '1 second'\).*updated_at <= \$2.*ORDER BY CASE.*FOR UPDATE SKIP LOCKED.*UPDATE billing_balance_settlements AS settlement.*SET updated_at = NOW\(\).*COALESCE\(settlement\.async_task_id, ''\) AS async_task_id.*FROM leased`).
 		WithArgs(authorizationCutoff, finalizationCutoff, 500, int16(0), int16(1), int16(2), int64(60)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"request_id", "api_key_id", "user_id", "request_fingerprint", "authorization_fingerprint",

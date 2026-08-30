@@ -65,7 +65,7 @@ func (r *usageBillingRepository) ListRecoverableBalancePreauthorizations(
 				settlement.amount_usd,
 				settlement.status,
 				settlement.expires_at,
-				COALESCE(settlement.async_task_id, ''),
+				COALESCE(settlement.async_task_id, '') AS async_task_id,
 				settlement.updated_at
 		)
 		SELECT request_id,
