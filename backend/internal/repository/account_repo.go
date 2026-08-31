@@ -937,6 +937,10 @@ func (r *accountRepository) accountListFilteredQuery(platform, accountType, stat
 					))
 				}),
 			)
+		case "inactive", service.StatusDisabled:
+			// Account APIs historically exposed "inactive", while persisted and
+			// system-generated disabled accounts use the shared "disabled" status.
+			q = q.Where(dbaccount.StatusIn("inactive", service.StatusDisabled))
 		case "rate_limited":
 			q = q.Where(
 				dbaccount.StatusEQ(service.StatusActive),

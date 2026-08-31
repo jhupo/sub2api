@@ -443,15 +443,17 @@ func (s *AccountRepoSuite) TestListWithFilters() {
 			},
 		},
 		{
-			name: "filter_by_status",
+			name: "filter_by_inactive_status_aliases",
 			setup: func(client *dbent.Client) {
 				mustCreateAccount(s.T(), client, &service.Account{Name: "s1", Status: service.StatusActive})
-				mustCreateAccount(s.T(), client, &service.Account{Name: "s2", Status: service.StatusDisabled})
+				mustCreateAccount(s.T(), client, &service.Account{Name: "s2-disabled", Status: service.StatusDisabled})
+				mustCreateAccount(s.T(), client, &service.Account{Name: "s3-inactive", Status: "inactive"})
 			},
 			status:    service.StatusDisabled,
-			wantCount: 1,
+			wantCount: 2,
 			validate: func(accounts []service.Account) {
-				s.Require().Equal(service.StatusDisabled, accounts[0].Status)
+				statuses := []string{accounts[0].Status, accounts[1].Status}
+				s.ElementsMatch([]string{service.StatusDisabled, "inactive"}, statuses)
 			},
 		},
 		{

@@ -152,6 +152,7 @@ func TestAccountHandlerUpdateMapsUpstreamBillingRateSyncSettings(t *testing.T) {
 	router := setupAccountMixedChannelRouter(adminSvc)
 	body, _ := json.Marshal(map[string]any{
 		"name":                               "gemini-key",
+		"status":                             "inactive",
 		"upstream_billing_probe_enabled":     true,
 		"upstream_billing_rate_sync_enabled": true,
 	})
@@ -167,6 +168,7 @@ func TestAccountHandlerUpdateMapsUpstreamBillingRateSyncSettings(t *testing.T) {
 	require.True(t, *adminSvc.lastUpdateAccountInput.ProbeEnabled)
 	require.NotNil(t, adminSvc.lastUpdateAccountInput.RateSyncEnabled)
 	require.True(t, *adminSvc.lastUpdateAccountInput.RateSyncEnabled)
+	require.Equal(t, service.StatusDisabled, adminSvc.lastUpdateAccountInput.Status)
 }
 
 func TestAccountHandlerBulkUpdateMixedChannelConflict(t *testing.T) {
@@ -227,11 +229,12 @@ func TestBulkUpdateAcceptsFilterTargetRequest(t *testing.T) {
 		"filters": map[string]any{
 			"platform":     "openai",
 			"type":         "oauth",
-			"status":       "active",
+			"status":       "inactive",
 			"group":        "12",
 			"privacy_mode": "blocked",
 			"search":       "bulk-target",
 		},
+		"status":      "inactive",
 		"schedulable": true,
 	})
 	rec := httptest.NewRecorder()
@@ -243,6 +246,10 @@ func TestBulkUpdateAcceptsFilterTargetRequest(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.Equal(t, float64(0), resp["code"])
+	require.NotNil(t, adminSvc.lastBulkUpdateAccountInput)
+	require.Equal(t, service.StatusDisabled, adminSvc.lastBulkUpdateAccountInput.Status)
+	require.NotNil(t, adminSvc.lastBulkUpdateAccountInput.Filters)
+	require.Equal(t, service.StatusDisabled, adminSvc.lastBulkUpdateAccountInput.Filters.Status)
 }
 
 func TestBulkUpdateAcceptsDedicatedUpstreamBillingProbeSetting(t *testing.T) {

@@ -100,3 +100,13 @@ func TestAccountFromServiceShallow_NilCredentialsOmitsStatus(t *testing.T) {
 	require.Nil(t, got.Credentials)
 	require.Nil(t, got.CredentialsStatus)
 }
+
+func TestAccountFromServiceShallow_MapsDisabledStatusToInactive(t *testing.T) {
+	src := &service.Account{ID: 1, Status: service.StatusDisabled}
+
+	got := AccountFromServiceShallow(src)
+
+	require.NotNil(t, got)
+	require.Equal(t, "inactive", got.Status)
+	require.Equal(t, service.StatusDisabled, src.Status)
+}

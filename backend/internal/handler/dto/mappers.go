@@ -229,6 +229,10 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 	if a == nil {
 		return nil
 	}
+	status := a.Status
+	if status == service.StatusDisabled {
+		status = "inactive"
+	}
 	redactedCreds, credsStatus := RedactCredentials(a.Credentials)
 	extra := redactAccountManagedExtra(a.Extra)
 	var ollamaCloudUsage *service.OllamaCloudUsageState
@@ -252,7 +256,7 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		LoadFactor:              a.LoadFactor,
 		Priority:                a.Priority,
 		RateMultiplier:          a.BillingRateMultiplier(),
-		Status:                  a.Status,
+		Status:                  status,
 		ErrorMessage:            a.ErrorMessage,
 		LastUsedAt:              a.LastUsedAt,
 		ExpiresAt:               timeToUnixSeconds(a.ExpiresAt),

@@ -215,6 +215,13 @@ type AccountSchedulerGroupScore struct {
 
 const accountListGroupUngroupedQueryValue = "ungrouped"
 
+func accountStatusToService(status string) string {
+	if status == "inactive" {
+		return service.StatusDisabled
+	}
+	return status
+}
+
 func (h *AccountHandler) accountResponseFromService(account *service.Account) *dto.Account {
 	out := dto.AccountFromService(account)
 	if h != nil && h.ollamaCloudUsage != nil && out != nil {
@@ -501,7 +508,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 	platform := c.Query("platform")
 	accountType := c.Query("type")
-	status := c.Query("status")
+	status := accountStatusToService(c.Query("status"))
 	search := c.Query("search")
 	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
 	sortBy := c.DefaultQuery("sort_by", "name")
@@ -985,7 +992,7 @@ func (h *AccountHandler) Update(c *gin.Context) {
 		Priority:              req.Priority,    // 指针类型，nil 表示未提供
 		RateMultiplier:        req.RateMultiplier,
 		LoadFactor:            req.LoadFactor,
-		Status:                req.Status,
+		Status:                accountStatusToService(req.Status),
 		GroupIDs:              req.GroupIDs,
 		ExpiresAt:             req.ExpiresAt,
 		AutoPauseOnExpired:    req.AutoPauseOnExpired,
@@ -2129,7 +2136,7 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		Priority:              req.Priority,
 		RateMultiplier:        req.RateMultiplier,
 		LoadFactor:            req.LoadFactor,
-		Status:                req.Status,
+		Status:                accountStatusToService(req.Status),
 		Schedulable:           req.Schedulable,
 		GroupIDs:              req.GroupIDs,
 		Credentials:           req.Credentials,
@@ -2166,7 +2173,7 @@ func toServiceBulkUpdateAccountFilters(filters *BulkUpdateAccountFilters) *servi
 	return &service.BulkUpdateAccountFilters{
 		Platform:    filters.Platform,
 		Type:        filters.Type,
-		Status:      filters.Status,
+		Status:      accountStatusToService(filters.Status),
 		Group:       filters.Group,
 		Search:      filters.Search,
 		PrivacyMode: filters.PrivacyMode,

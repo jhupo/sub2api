@@ -52,6 +52,33 @@ func TestAccountHandlerListIncludesCreatedAt(t *testing.T) {
 	require.Equal(t, 0, offset)
 }
 
+func TestAccountHandlerListNormalizesInactiveStatus(t *testing.T) {
+	router, adminSvc := setupAccountListRouter()
+	adminSvc.accounts = []service.Account{{
+		ID:     9,
+		Name:   "disabled-account",
+		Status: service.StatusDisabled,
+	}}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?status=inactive", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, service.StatusDisabled, adminSvc.lastListAccounts.status)
+
+	var payload struct {
+		Data struct {
+			Items []struct {
+				Status string `json:"status"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, "inactive", payload.Data.Items[0].Status)
+}
+
 func TestAccountHandlerListReturnsSchedulerScoresPerGroup(t *testing.T) {
 	router, adminSvc := setupAccountListRouter()
 	now := time.Now().UTC()
