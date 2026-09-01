@@ -5,7 +5,10 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/ent"
@@ -17,6 +20,70 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	"github.com/lib/pq"
 )
+
+const (
+	// The first initialization attempt is followed by at most this many retries.
+	maxDatabaseInitializationRetries = 8
+	databaseInitializationRetryBase  = time.Second
+	databaseInitializationRetryMax   = 30 * time.Second
+)
+
+// initializeDatabaseWithRetry retries only PostgreSQL errors that indicate the
+// server is temporarily unavailable during process startup. Migration and
+// configuration errors are returned immediately so operators can act on them.
+func initializeDatabaseWithRetry(ctx context.Context, initialize func(context.Context) error) error {
+	return initializeDatabaseWithRetryWithWait(ctx, initialize, waitForDatabaseInitializationRetry)
+}
+
+func initializeDatabaseWithRetryWithWait(
+	ctx context.Context,
+	initialize func(context.Context) error,
+	wait func(context.Context, time.Duration) error,
+) error {
+	for attempt := 1; ; attempt++ {
+		err := initialize(ctx)
+		if err == nil {
+			return nil
+		}
+		if !isTransientDatabaseInitializationError(err) || attempt > maxDatabaseInitializationRetries {
+			return err
+		}
+
+		delay := databaseInitializationRetryBase * time.Duration(1<<(attempt-1))
+		if delay > databaseInitializationRetryMax {
+			delay = databaseInitializationRetryMax
+		}
+		slog.Warn("database initialization temporarily unavailable; retrying",
+			"retry", attempt,
+			"max_retries", maxDatabaseInitializationRetries,
+			"retry_in", delay,
+			"error", err,
+		)
+		if err := wait(ctx, delay); err != nil {
+			return err
+		}
+	}
+}
+
+func waitForDatabaseInitializationRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isTransientDatabaseInitializationError(err error) bool {
+	var pqErr *pq.Error
+	if !errors.As(err, &pqErr) {
+		return false
+	}
+	code := string(pqErr.Code)
+	return code == "57P03" || strings.HasPrefix(code, "08")
+}
 
 // InitEnt 初始化 Ent ORM 客户端并返回客户端实例和底层的 *sql.DB。
 //
@@ -69,13 +136,14 @@ func InitEnt(cfg *config.Config) (*ent.Client, *sql.DB, error) {
 	// closed without writing schema state during startup.
 	migrationCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	var migrationErr error
-	switch cfg.Database.MigrationMode {
-	case config.DatabaseMigrationModeValidate:
-		migrationErr = checkMigrationsFS(migrationCtx, drv.DB(), migrations.FS)
-	default:
-		migrationErr = applyMigrationsFS(migrationCtx, drv.DB(), migrations.FS)
-	}
+	migrationErr := initializeDatabaseWithRetry(migrationCtx, func(ctx context.Context) error {
+		switch cfg.Database.MigrationMode {
+		case config.DatabaseMigrationModeValidate:
+			return checkMigrationsFS(ctx, drv.DB(), migrations.FS)
+		default:
+			return applyMigrationsFS(ctx, drv.DB(), migrations.FS)
+		}
+	})
 	if migrationErr != nil {
 		_ = drv.Close() // 迁移失败时关闭驱动，避免资源泄露
 		return nil, nil, migrationErr
