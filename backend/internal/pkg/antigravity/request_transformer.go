@@ -711,6 +711,10 @@ func isWebSearchTool(tool ClaudeTool) bool {
 	}
 }
 
+func isCodeExecutionTool(tool ClaudeTool) bool {
+	return strings.TrimSpace(tool.Type) == "code_execution"
+}
+
 // hasMixedToolInvocations 判断构建后的工具声明是否同时包含函数声明与内置工具
 // （googleSearch）。仅在两者并存时需要开启 includeServerSideToolInvocations。
 func hasMixedToolInvocations(declarations []GeminiToolDeclaration) bool {
@@ -719,7 +723,7 @@ func hasMixedToolInvocations(declarations []GeminiToolDeclaration) bool {
 		if len(d.FunctionDeclarations) > 0 {
 			hasFunc = true
 		}
-		if d.GoogleSearch != nil {
+		if d.GoogleSearch != nil || d.CodeExecution != nil {
 			hasBuiltin = true
 		}
 	}
@@ -733,11 +737,18 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
 	}
 
 	hasWebSearch := hasWebSearchTool(tools)
+	hasCodeExecution := false
+	for _, tool := range tools {
+		if isCodeExecutionTool(tool) {
+			hasCodeExecution = true
+			break
+		}
+	}
 
 	// 普通工具
 	var funcDecls []GeminiFunctionDecl
 	for _, tool := range tools {
-		if isWebSearchTool(tool) {
+		if isWebSearchTool(tool) || isCodeExecutionTool(tool) {
 			continue
 		}
 		// 跳过无效工具名称
@@ -799,6 +810,11 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
 					},
 				},
 			},
+		})
+	}
+	if hasCodeExecution {
+		declarations = append(declarations, GeminiToolDeclaration{
+			CodeExecution: &GeminiCodeExecution{},
 		})
 	}
 	if len(declarations) == 0 {

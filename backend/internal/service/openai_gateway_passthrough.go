@@ -627,6 +627,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		}
 	case AccountTypeAPIKey:
 		baseURL := account.GetOpenAIBaseURL()
+		if account.UsesNativeCNResponses() && account.IsAdaptiveAPIProtocol() {
+			baseURL = account.GetCNProtocolBaseURL(APIProtocolResponses)
+		}
 		if baseURL != "" {
 			validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 			if err != nil {
@@ -637,7 +640,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	}
 	targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, openAIResponsesRequestPathSuffix(c))
 
-	// DeepSeek 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
+	// DeepSeek / Kimi 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
@@ -1627,6 +1630,7 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 	payload []byte,
 	message string,
 	headers http.Header,
+	canonicalModel ...string,
 ) (int, bool) {
 	statusCode := openAIStreamFailureStatus(payload, message)
 	switch statusCode {
@@ -1640,14 +1644,17 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 		if c != nil && c.Request != nil {
 			ctx = c.Request.Context()
 		}
+		model := firstNonEmpty(canonicalModel...)
+		if model == "" {
+			model = firstNonEmpty(gjson.GetBytes(payload, "model").String(), gjson.GetBytes(payload, "response.model").String())
+		}
 		accountHeaders := headers
-		if statusCode == http.StatusTooManyRequests {
-			// The enclosing HTTP response succeeded. Its quota snapshot describes
-			// normal account state and must not become the reset for a semantic 429
-			// carried by a stream terminal event.
+		if statusCode == http.StatusTooManyRequests && !(isCodexSparkModel(model) && isOpenAIOAuthAccount(account)) {
+			// 普通模型的流式 429 不能继承外层 HTTP 200 的全局 quota 快照；
+			// 只有 OAuth/SetupToken 的 Spark 配额 429 才需要保留 headers 读取明确的 5h/7d reset。
 			accountHeaders = nil
 		}
-		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, accountHeaders, payload)
+		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, accountHeaders, payload, model)
 	default:
 		return statusCode, false
 	}
@@ -1931,7 +1938,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			return
 		}
 		if bareErrorAccountSideEffectsPending {
-			s.handleOpenAIStreamTerminalAccountSideEffects(c, account, bareErrorPayload, failedMessage, resp.Header)
+			s.handleOpenAIStreamTerminalAccountSideEffects(c, account, bareErrorPayload, failedMessage, resp.Header, mappedModel)
 			bareErrorAccountSideEffectsPending = false
 		}
 		if clientDisconnected || !writePendingLines() {
@@ -2076,7 +2083,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						// account health; EOF synthesis applies the pending effect.
 						bareErrorAccountSideEffectsPending = true
 					} else {
-						s.handleOpenAIStreamTerminalAccountSideEffects(c, account, dataBytes, failedMessage, resp.Header)
+						s.handleOpenAIStreamTerminalAccountSideEffects(c, account, dataBytes, failedMessage, resp.Header, mappedModel)
 						bareErrorAccountSideEffectsPending = false
 					}
 				}
