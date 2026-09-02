@@ -371,6 +371,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		serviceTier := extractOpenAIServiceTierFromBody(body)
 		forwardResult := &OpenAIForwardResult{
 			RequestID:                     resp.Header.Get("x-request-id"),
+			UpstreamHeaders:               resp.Header,
 			ResponseID:                    responseID,
 			Usage:                         *usage,
 			Model:                         reqModel,

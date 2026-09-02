@@ -118,7 +118,8 @@ func (s *OpenAIGatewayService) ForwardGrokVoice(ctx context.Context, c *gin.Cont
 	upstreamID := firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id"))
 	result := &OpenAIForwardResult{
 		// Forced durable money-event id so usage_billing_dedup cannot collapse under a reused client id.
-		RequestID:     StableGrokAudioBillingRequestID(upstreamID),
+		RequestID:       StableGrokAudioBillingRequestID(upstreamID),
+		UpstreamHeaders: resp.Header,
 		Model:         baseEndpoint,
 		UpstreamModel: baseEndpoint,
 		Duration:      time.Since(started),

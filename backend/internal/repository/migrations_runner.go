@@ -64,6 +64,8 @@ const usageLogsEffectiveRequestedModelIndex = "idx_usage_logs_effective_requeste
 const usageLogsEffectiveUpstreamModelIndex = "idx_usage_logs_effective_upstream_model_created"
 const grokVideoBalancePreauthorizationIndexMigration = "237_grok_video_balance_preauthorization_index_notx.sql"
 const grokVideoBalancePreauthorizationIndex = "idx_billing_balance_settlements_async_task_api_key"
+const usageLogsUpstreamRequestIDIndexMigration = "233_add_usage_log_upstream_request_id_index_notx.sql"
+const usageLogsUpstreamRequestIDIndex = "idx_usage_logs_upstream_request_id"
 
 type migrationChecksumCompatibilityRule struct {
 	fileChecksum       string
@@ -377,6 +379,8 @@ func prepareNonTransactionalMigration(ctx context.Context, db migrationConnectio
 		return nil
 	case grokVideoBalancePreauthorizationIndexMigration:
 		return dropInvalidIndexIfPresent(ctx, db, grokVideoBalancePreauthorizationIndex)
+	case usageLogsUpstreamRequestIDIndexMigration:
+		return dropInvalidIndexIfPresent(ctx, db, usageLogsUpstreamRequestIDIndex)
 	default:
 		return nil
 	}

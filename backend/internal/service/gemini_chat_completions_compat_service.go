@@ -344,6 +344,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsOpenAI(
 
 	return &ForwardResult{
 		RequestID:        requestID,
+		UpstreamHeaders:  resp.Header,
 		Usage:            *usage,
 		Model:            originalModel,
 		UpstreamModel:    upstreamModel,
