@@ -44,24 +44,28 @@ func TestIsOpenAINonBillableRequestError(t *testing.T) {
 	}
 }
 
-func TestRecordUsage_NonBillableUpstreamRequestErrorDoesNotDeduct(t *testing.T) {
+func TestRecordUsage_NonBillableUpstreamRequestErrorOverridesFreeFastPricing(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
 	userRepo := &openAIRecordUsageUserRepoStub{}
 	subRepo := &openAIRecordUsageSubRepoStub{}
 	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, userRepo, subRepo, nil)
+	serviceTier := "priority"
 
 	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
 		Result: &OpenAIForwardResult{
 			RequestID:                "resp_context_rejected",
+			ServiceTier:              &serviceTier,
 			Usage:                    OpenAIUsage{InputTokens: 100000},
 			Model:                    "gpt-5.1",
 			Duration:                 time.Second,
 			NonBillableUpstreamError: true,
 		},
-		APIKey:  &APIKey{ID: 1000, Group: &Group{RateMultiplier: 1}},
+		APIKey: &APIKey{ID: 1000, Group: &Group{
+			Platform: PlatformOpenAI, RateMultiplier: 1, FreeOpenAIFast: true,
+		}},
 		User:    &User{ID: 2000},
-		Account: &Account{ID: 3000, Type: AccountTypeAPIKey},
+		Account: &Account{ID: 3000, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
 	})
 
 	require.NoError(t, err)
