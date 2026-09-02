@@ -25,6 +25,7 @@ describe("ReasoningEffortPolicyFields", () => {
         idPrefix: "create-group-reasoning",
         platform: "openai",
         maxEffort: "",
+        overLimit: "downgrade",
         mappings: [mapping],
       },
       global: {
@@ -60,6 +61,7 @@ describe("ReasoningEffortPolicyFields", () => {
         idPrefix: "edit-group-reasoning",
         platform: "openai",
         maxEffort: "",
+        overLimit: "downgrade",
         mappings: [],
       },
       global: {
@@ -86,5 +88,32 @@ describe("ReasoningEffortPolicyFields", () => {
         ],
       }),
     ]);
+  });
+
+  it("emits the selected over-limit action", async () => {
+    const wrapper = mount(ReasoningEffortPolicyFields, {
+      props: {
+        idPrefix: "edit-group-reasoning",
+        platform: "openai",
+        maxEffort: "medium",
+        overLimit: "downgrade",
+        mappings: [],
+      },
+      global: {
+        stubs: {
+          Icon: { template: "<i />" },
+          Select: {
+            props: ["id", "modelValue"],
+            emits: ["update:modelValue"],
+            template:
+              '<button :id="id" type="button" @click="$emit(\'update:modelValue\', \'deny\')">{{ modelValue }}</button>',
+          },
+        },
+      },
+    });
+
+    await wrapper.get("#edit-group-reasoning-over-limit").trigger("click");
+
+    expect(wrapper.emitted("update:overLimit")).toEqual([["deny"]]);
   });
 });
