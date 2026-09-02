@@ -40,6 +40,7 @@ func (s *preauthorizerStub) RequiresPreauthorization(context.Context, int8) bool
 type pricingProviderStub struct {
 	lastModel     string
 	lastPricingAt time.Time
+	lastTier      string
 	webSearchCost float64
 	webSearchErr  error
 	lastRateKind  service.BalancePreauthorizationRateKind
@@ -65,11 +66,12 @@ func (s *pricingProviderStub) BalancePreauthorizationWebSearchCost(_ context.Con
 	return s.webSearchCost, s.webSearchErr
 }
 
-func (s *pricingProviderStub) BalancePreauthorizationCostInput(_ context.Context, _ *service.APIKey, model string, pricingAt time.Time, _ string, rateKind service.BalancePreauthorizationRateKind) service.CostInput {
+func (s *pricingProviderStub) BalancePreauthorizationCostInput(_ context.Context, _ *service.APIKey, model string, pricingAt time.Time, tier string, rateKind service.BalancePreauthorizationRateKind) service.CostInput {
 	s.lastModel = model
 	s.lastPricingAt = pricingAt
+	s.lastTier = tier
 	s.lastRateKind = rateKind
-	return service.CostInput{Model: model, RateMultiplier: 1, PricingAt: pricingAt}
+	return service.CostInput{Model: model, RateMultiplier: 1, PricingAt: pricingAt, ServiceTier: tier}
 }
 
 func TestPreauthorizeGrokVideoUsesUniqueServerHoldIDs(t *testing.T) {
@@ -115,6 +117,49 @@ func TestPreauthorizeTextPassesRequestLocalTokenEstimate(t *testing.T) {
 	require.Equal(t, len(body), preauthorizer.captured.BillableInputBytes)
 	require.GreaterOrEqual(t, preauthorizer.captured.EstimatedInputTokens, service.DefaultBalancePreauthorizationInputTokens)
 	require.Equal(t, 1536, preauthorizer.captured.InitialOutputWindowTokens)
+}
+
+func TestPreauthorizeTextUsesGroupFastCustomerTier(t *testing.T) {
+	tests := []struct {
+		name      string
+		platform  string
+		target    string
+		forceFast bool
+		freeFast  bool
+		requested string
+		want      string
+	}{
+		{name: "forced Fast reserves priority", platform: service.PlatformOpenAI, forceFast: true, want: service.OpenAIFastTierPriority},
+		{name: "free forced Fast reserves Standard", platform: service.PlatformOpenAI, forceFast: true, freeFast: true, want: ""},
+		{name: "free Composite OpenAI Fast reserves Standard", platform: service.PlatformComposite, target: service.PlatformOpenAI, freeFast: true, requested: "fast", want: ""},
+		{name: "Composite non-OpenAI route ignores Fast policy", platform: service.PlatformComposite, target: service.PlatformAnthropic, forceFast: true, freeFast: true, requested: "fast", want: "fast"},
+		{name: "unresolved Composite route reserves conservatively", platform: service.PlatformComposite, forceFast: true, freeFast: true, want: service.OpenAIFastTierPriority},
+		{name: "paid client priority stays priority", platform: service.PlatformOpenAI, requested: "priority", want: "priority"},
+		{name: "unsupported platform ignores policy", platform: service.PlatformAnthropic, forceFast: true, requested: "flex", want: "flex"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			preauthorizer := &preauthorizerStub{requires: true}
+			pricing := &pricingProviderStub{}
+			apiKey := perRequestTestAPIKey()
+			apiKey.Group = &service.Group{
+				Platform: tt.platform, ForceOpenAIFast: tt.forceFast, FreeOpenAIFast: tt.freeFast,
+			}
+
+			ctx := context.Background()
+			if tt.target != "" {
+				ctx = service.WithResolvedTargetPlatform(ctx, tt.target)
+			}
+			_, err := preauthorizeTextGatewayRequest(
+				ctx, preauthorizer, pricing, apiKey, nil,
+				[]byte(`{"model":"gpt-5","input":"hello"}`), "gpt-5", time.Unix(1000, 0), tt.requested,
+			)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.want, pricing.lastTier)
+			require.Equal(t, tt.want, preauthorizer.captured.CostInput.ServiceTier)
+		})
+	}
 }
 
 func TestPreauthorizeInputOnlyDisablesOutputReservation(t *testing.T) {

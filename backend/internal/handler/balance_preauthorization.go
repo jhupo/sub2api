@@ -113,7 +113,9 @@ func preauthorizeTokenGatewayRequest(
 		DisableOutputReservation:  disableOutputReservation,
 		PerRequestEstimate:        service.PerRequestPreauthorizationEstimate{RequestCount: 1},
 		CostInput: pricing.BalancePreauthorizationCostInput(
-			ctx, apiKey, billingModel, pricingAt, serviceTier, service.BalancePreauthorizationRateText,
+			ctx, apiKey, billingModel, pricingAt,
+			service.BalancePreauthorizationServiceTier(ctx, apiKey, serviceTier),
+			service.BalancePreauthorizationRateText,
 		),
 	})
 }

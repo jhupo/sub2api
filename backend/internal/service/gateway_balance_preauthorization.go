@@ -55,6 +55,35 @@ func BalancePreauthorizationBillingModel(requestedModel string, mapping ChannelM
 	return requestedModel
 }
 
+// BalancePreauthorizationServiceTier resolves the customer-facing tier before
+// account selection. A known OpenAI route follows the group's Force/Free Fast
+// settlement policy. Non-OpenAI routes retain the client tier, while an
+// unresolved composite route reserves conservatively at the higher tier.
+func BalancePreauthorizationServiceTier(ctx context.Context, apiKey *APIKey, requestedTier string) string {
+	tier := strings.TrimSpace(requestedTier)
+	group := balancePreauthorizationAPIKeyGroup(apiKey)
+	if group == nil || !groupSupportsOpenAIFast(group.Platform) {
+		return tier
+	}
+	targetPlatform := QuotaPlatform(ctx, apiKey)
+	if targetPlatform != "" && targetPlatform != PlatformOpenAI {
+		return tier
+	}
+	if group.ForceOpenAIFast {
+		tier = OpenAIFastTierPriority
+	}
+	// A composite route without a resolved target may still select a non-OpenAI
+	// account. Keep the higher reservation until OpenAI is known, because Free
+	// Fast is deliberately settled only for OpenAI credentials.
+	if targetPlatform == PlatformOpenAI && group.FreeOpenAIFast {
+		switch normalizeBillingServiceTier(tier) {
+		case OpenAIFastTierPriority, "fast":
+			return ""
+		}
+	}
+	return tier
+}
+
 // BalancePreauthorizationCostInput returns the same pricing resolver,
 // user/group multiplier, peak multiplier, and frozen price instant used by
 // GatewayService.RecordUsage.
