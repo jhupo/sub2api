@@ -143,6 +143,21 @@ FROM subscription_plans sp
 WHERE sp.group_id IS NOT NULL
 ON CONFLICT DO NOTHING;
 
+-- Older payment rows also carried the group and term directly. Include that
+-- shape before creating catalog shells so an order can be recovered even when
+-- its plan_id was not populated by the older writer.
+INSERT INTO subscription_legacy_pairs (group_id, validity_days)
+SELECT
+    po.subscription_group_id,
+    CASE
+        WHEN COALESCE(po.subscription_days, 0) <= 0 THEN 30
+        ELSE LEAST(36500, GREATEST(po.subscription_days, 1))
+    END
+FROM payment_orders po
+WHERE po.order_type = 'subscription'
+  AND po.subscription_group_id IS NOT NULL
+ON CONFLICT DO NOTHING;
+
 -- Settings are TEXT, so malformed operator-edited JSON must not abort the
 -- release. Invalid entries were ignored by the old application and remain so.
 DO $$
@@ -177,7 +192,11 @@ BEGIN
             END IF;
             BEGIN
                 legacy_group_id := (item ->> 'group_id')::BIGINT;
-                legacy_validity_days := LEAST(36500, GREATEST((item ->> 'validity_days')::INT, 1));
+                legacy_validity_days := (item ->> 'validity_days')::INT;
+                IF legacy_validity_days <= 0 THEN
+                    CONTINUE;
+                END IF;
+                legacy_validity_days := LEAST(36500, legacy_validity_days);
             EXCEPTION WHEN OTHERS THEN
                 CONTINUE;
             END;
@@ -588,7 +607,11 @@ BEGIN
                   AND jsonb_typeof(item -> 'validity_days') = 'number' THEN
                 BEGIN
                     legacy_group_id := (item ->> 'group_id')::BIGINT;
-                    legacy_validity_days := LEAST(36500, GREATEST((item ->> 'validity_days')::INT, 1));
+                    legacy_validity_days := (item ->> 'validity_days')::INT;
+                    IF legacy_validity_days <= 0 THEN
+                        CONTINUE;
+                    END IF;
+                    legacy_validity_days := LEAST(36500, legacy_validity_days);
                     SELECT sp.id INTO mapped_plan_id
                     FROM subscription_plans sp
                     WHERE sp.group_id = legacy_group_id
@@ -600,8 +623,17 @@ BEGIN
             END IF;
 
             IF mapped_plan_id IS NOT NULL AND NOT (mapped_plan_id = ANY(seen_plan_ids)) THEN
-                mapped_items := mapped_items || jsonb_build_array(jsonb_build_object('plan_id', mapped_plan_id));
+                -- Keep the legacy keys alongside plan_id. The current runtime
+                -- reads plan_id; an older binary can still inspect the original
+                -- group/term values if the deployment is rolled back.
+                mapped_items := mapped_items || jsonb_build_array(
+                    item || jsonb_build_object('plan_id', mapped_plan_id)
+                );
                 seen_plan_ids := array_append(seen_plan_ids, mapped_plan_id);
+            ELSIF mapped_plan_id IS NULL THEN
+                -- Preserve malformed/unmapped entries for audit and rollback;
+                -- the current parser ignores them because plan_id is absent.
+                mapped_items := mapped_items || jsonb_build_array(item);
             END IF;
         END LOOP;
 
@@ -670,7 +702,9 @@ BEGIN
                             END IF;
                         END LOOP;
                     END LOOP;
-                    condition := (condition - 'group_ids') || jsonb_build_object('plan_ids', mapped_plan_ids);
+                    -- Keep group_ids for an older binary while the current
+                    -- matcher consumes plan_ids.
+                    condition := condition || jsonb_build_object('plan_ids', mapped_plan_ids);
                 END IF;
                 rewritten_all_of := rewritten_all_of || jsonb_build_array(condition);
             END LOOP;
@@ -689,6 +723,26 @@ ALTER TABLE payment_orders
     ADD COLUMN IF NOT EXISTS plan_version_id BIGINT,
     ADD COLUMN IF NOT EXISTS fulfilled_subscription_id BIGINT,
     ADD COLUMN IF NOT EXISTS entitlement_snapshot JSONB NOT NULL DEFAULT '{}'::JSONB;
+
+-- Recover orders written by the pre-versioned payment flow. A non-existent
+-- legacy plan_id is treated like a missing one only when the old group/term
+-- pair is present; otherwise the migration fails closed below rather than
+-- guessing which commercial terms were purchased.
+UPDATE payment_orders po
+SET plan_id = legacy_plan.id
+FROM subscription_plans legacy_plan
+WHERE po.order_type = 'subscription'
+  AND (po.plan_id IS NULL OR NOT EXISTS (
+      SELECT 1 FROM subscription_plans existing WHERE existing.id = po.plan_id
+  ))
+  AND po.subscription_group_id IS NOT NULL
+  AND legacy_plan.group_id = po.subscription_group_id
+  AND legacy_plan.product_name =
+      '__sub2api_legacy_group_' || po.subscription_group_id || '_days_' ||
+      CASE
+          WHEN COALESCE(po.subscription_days, 0) <= 0 THEN 30
+          ELSE LEAST(36500, GREATEST(po.subscription_days, 1))
+      END;
 
 UPDATE payment_orders po
 SET plan_version_id = sp.published_version_id
@@ -819,6 +873,7 @@ BEGIN
         SELECT 1
         FROM redeem_codes
         WHERE type = 'subscription'
+          AND status = 'unused'
           AND validity_days >= 0
           AND plan_version_id IS NULL
     ) THEN
@@ -830,6 +885,7 @@ BEGIN
         FROM redeem_codes rc
         LEFT JOIN subscription_plan_versions spv ON spv.id = rc.plan_version_id
         WHERE rc.type = 'subscription'
+          AND rc.status = 'unused'
           AND rc.validity_days >= 0
           AND spv.id IS NULL
     ) THEN
