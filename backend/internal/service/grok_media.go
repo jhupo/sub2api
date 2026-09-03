@@ -375,6 +375,8 @@ type GrokVideoPendingBilling struct {
 	PreauthorizationRequestID  string  `json:"preauthorization_request_id,omitempty"`
 	AuthorizationFingerprint   string  `json:"authorization_fingerprint,omitempty"`
 	PreauthorizationHoldAmount float64 `json:"preauthorization_hold_amount,omitempty"`
+	FundingSource              string  `json:"funding_source,omitempty"`
+	SubscriptionID             *int64  `json:"subscription_id,omitempty"`
 }
 
 // This deliberately nests under the existing durable Grok-video request-id
@@ -479,6 +481,9 @@ func (s *OpenAIGatewayService) StoreGrokVideoPendingBilling(
 	if pending.PreauthorizationRequestID != "" || pending.AuthorizationFingerprint != "" || pending.PreauthorizationHoldAmount != 0 {
 		if !IsGrokVideoHoldRequestID(pending.PreauthorizationRequestID) || pending.AuthorizationFingerprint == "" || invalidNonnegativeMoney(pending.PreauthorizationHoldAmount) {
 			return ErrInvalidBillingPreauthorizationEstimate
+		}
+		if err := validateFundingSource(pending.FundingSource, pending.SubscriptionID); err != nil {
+			return err
 		}
 		pending.PreauthorizationHoldAmount = QuantizeUsageBillingAmount(pending.PreauthorizationHoldAmount)
 	}

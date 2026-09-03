@@ -661,8 +661,7 @@ export default {
       revokeSubscription: '撤销订阅',
       restoreSubscription: '恢复订阅',
       allStatus: '全部状态',
-      allGroups: '全部分组',
-      allPlatforms: '全部平台',
+      allPlans: '全部套餐',
       daily: '每日',
       weekly: '每周',
       monthly: '每月',
@@ -689,7 +688,7 @@ export default {
       },
       columns: {
         user: '用户',
-        group: '分组',
+        plan: '套餐',
         usage: '用量',
         expires: '到期时间',
         status: '状态',
@@ -697,14 +696,12 @@ export default {
       },
       form: {
         user: '用户',
-        group: '订阅分组',
-        validityDays: '有效期（天）',
+        plan: '套餐',
         adjustDays: '调整天数'
       },
       selectUser: '选择用户',
-      selectGroup: '选择订阅分组',
-      groupHint: '仅显示订阅计费类型的分组',
-      validityHint: '订阅的有效天数',
+      selectPlan: '选择套餐',
+      planHint: '有效期和额度按套餐当前发布版本冻结到用户订阅',
       adjustingFor: '为以下用户调整订阅',
       currentExpiration: '当前到期时间',
       adjustDaysPlaceholder: '正数延长，负数缩短',
@@ -734,26 +731,25 @@ export default {
       adjustWouldExpire: '调整后剩余天数必须大于0',
       adjustOutOfRange: '调整天数必须在 -36500 到 36500 之间',
       pleaseSelectUser: '请选择用户',
-      pleaseSelectGroup: '请选择分组',
-      validityDaysRequired: '请输入有效的天数（至少1天）',
+      pleaseSelectPlan: '请选择套餐',
       revokeConfirm: "确定要撤销 '{user}' 的订阅吗？可稍后在已撤销列表中恢复。",
       restoreConfirm: "确定要恢复 '{user}' 的订阅吗？如果原订阅已过期，恢复后将显示为已过期。",
       guide: {
         title: '订阅管理教程',
-        subtitle: '订阅模式允许你按时间周期为用户分配使用额度，支持日/周/月配额限制。按照以下步骤即可完成配置。',
+        subtitle: '套餐按时间周期为用户提供使用额度，支持日/周/月配额限制。按照以下步骤即可完成配置。',
         showGuide: '使用指南',
         step1: {
-          title: '创建订阅分组',
-          line1: '前往「分组管理」页面，点击「创建分组」',
-          line2: '将计费类型设为「订阅」，配置日/周/月额度限制',
-          line3: '保存分组，确保状态为「正常」',
-          link: '前往分组管理'
+          title: '创建套餐',
+          line1: '前往「套餐管理」页面，点击「新增套餐」',
+          line2: '配置有效期以及日/周/月额度限制',
+          line3: '发布套餐；后续修改额度会生成新版本，不影响已持有订阅',
+          link: '前往套餐管理'
         },
         step2: {
           title: '分配订阅给用户',
           line1: '点击本页右上角「分配订阅」按钮',
           line2: '在弹窗中搜索用户邮箱并选择目标用户',
-          line3: '选择订阅分组、设置有效期天数，点击「分配」'
+          line3: '选择套餐并点击「分配」'
         },
         step3: {
           title: '管理已有订阅'

@@ -137,7 +137,7 @@ func (s *SubscriptionExpiryService) sendExpiryReminders(ctx context.Context) {
 	}
 	defer release()
 	for page := 1; ; page++ {
-		subs, pag, err := s.userSubRepo.List(ctx, pagination.PaginationParams{Page: page, PageSize: 200}, nil, nil, SubscriptionStatusActive, "", "expires_at", "asc")
+		subs, pag, err := s.userSubRepo.List(ctx, pagination.PaginationParams{Page: page, PageSize: 200}, nil, nil, SubscriptionStatusActive, "expires_at", "asc")
 		if err != nil {
 			log.Printf("[SubscriptionExpiry] List active subscriptions for reminder failed: %v", err)
 			return
@@ -189,7 +189,7 @@ func (s *SubscriptionExpiryService) smtpConfigured(ctx context.Context) bool {
 }
 
 func (s *SubscriptionExpiryService) sendExpiryReminderIfDue(ctx context.Context, sub *UserSubscription) {
-	if sub == nil || sub.User == nil || sub.Group == nil || sub.User.Email == "" {
+	if sub == nil || sub.User == nil || sub.Plan == nil || sub.User.Email == "" {
 		return
 	}
 	daysRemaining := sub.DaysRemaining()
@@ -205,7 +205,7 @@ func (s *SubscriptionExpiryService) sendExpiryReminderIfDue(ctx context.Context,
 		SourceID:       strconv.FormatInt(sub.ID, 10),
 		ReminderKey:    fmt.Sprintf("%dd", daysRemaining),
 		Variables: map[string]string{
-			"subscription_group": sub.Group.Name,
+			"subscription_group": sub.Plan.Name,
 			"expiry_time":        sub.ExpiresAt.Format("2006-01-02 15:04"),
 			"days_remaining":     strconv.Itoa(daysRemaining),
 		},

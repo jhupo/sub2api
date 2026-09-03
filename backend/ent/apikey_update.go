@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 )
 
 // APIKeyUpdate is the builder for updating APIKey entities.
@@ -117,6 +118,40 @@ func (_u *APIKeyUpdate) SetNillableGroupID(v *int64) *APIKeyUpdate {
 // ClearGroupID clears the value of the "group_id" field.
 func (_u *APIKeyUpdate) ClearGroupID() *APIKeyUpdate {
 	_u.mutation.ClearGroupID()
+	return _u
+}
+
+// SetFundingSource sets the "funding_source" field.
+func (_u *APIKeyUpdate) SetFundingSource(v string) *APIKeyUpdate {
+	_u.mutation.SetFundingSource(v)
+	return _u
+}
+
+// SetNillableFundingSource sets the "funding_source" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableFundingSource(v *string) *APIKeyUpdate {
+	if v != nil {
+		_u.SetFundingSource(*v)
+	}
+	return _u
+}
+
+// SetSubscriptionID sets the "subscription_id" field.
+func (_u *APIKeyUpdate) SetSubscriptionID(v int64) *APIKeyUpdate {
+	_u.mutation.SetSubscriptionID(v)
+	return _u
+}
+
+// SetNillableSubscriptionID sets the "subscription_id" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableSubscriptionID(v *int64) *APIKeyUpdate {
+	if v != nil {
+		_u.SetSubscriptionID(*v)
+	}
+	return _u
+}
+
+// ClearSubscriptionID clears the value of the "subscription_id" field.
+func (_u *APIKeyUpdate) ClearSubscriptionID() *APIKeyUpdate {
+	_u.mutation.ClearSubscriptionID()
 	return _u
 }
 
@@ -448,6 +483,11 @@ func (_u *APIKeyUpdate) SetGroup(v *Group) *APIKeyUpdate {
 	return _u.SetGroupID(v.ID)
 }
 
+// SetSubscription sets the "subscription" edge to the UserSubscription entity.
+func (_u *APIKeyUpdate) SetSubscription(v *UserSubscription) *APIKeyUpdate {
+	return _u.SetSubscriptionID(v.ID)
+}
+
 // AddUsageLogIDs adds the "usage_logs" edge to the UsageLog entity by IDs.
 func (_u *APIKeyUpdate) AddUsageLogIDs(ids ...int64) *APIKeyUpdate {
 	_u.mutation.AddUsageLogIDs(ids...)
@@ -477,6 +517,12 @@ func (_u *APIKeyUpdate) ClearUser() *APIKeyUpdate {
 // ClearGroup clears the "group" edge to the Group entity.
 func (_u *APIKeyUpdate) ClearGroup() *APIKeyUpdate {
 	_u.mutation.ClearGroup()
+	return _u
+}
+
+// ClearSubscription clears the "subscription" edge to the UserSubscription entity.
+func (_u *APIKeyUpdate) ClearSubscription() *APIKeyUpdate {
+	_u.mutation.ClearSubscription()
 	return _u
 }
 
@@ -555,6 +601,11 @@ func (_u *APIKeyUpdate) check() error {
 			return &ValidationError{Name: "name", err: fmt.Errorf(`ent: validator failed for field "APIKey.name": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.FundingSource(); ok {
+		if err := apikey.FundingSourceValidator(v); err != nil {
+			return &ValidationError{Name: "funding_source", err: fmt.Errorf(`ent: validator failed for field "APIKey.funding_source": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Status(); ok {
 		if err := apikey.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
@@ -592,6 +643,9 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(apikey.FieldName, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.FundingSource(); ok {
+		_spec.SetField(apikey.FieldFundingSource, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(apikey.FieldStatus, field.TypeString, value)
@@ -754,6 +808,35 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 		}
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
+	if _u.mutation.SubscriptionCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   apikey.SubscriptionTable,
+			Columns: []string{apikey.SubscriptionColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usersubscription.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.SubscriptionIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   apikey.SubscriptionTable,
+			Columns: []string{apikey.SubscriptionColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usersubscription.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
 	if _u.mutation.UsageLogsCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2M,
@@ -904,6 +987,40 @@ func (_u *APIKeyUpdateOne) SetNillableGroupID(v *int64) *APIKeyUpdateOne {
 // ClearGroupID clears the value of the "group_id" field.
 func (_u *APIKeyUpdateOne) ClearGroupID() *APIKeyUpdateOne {
 	_u.mutation.ClearGroupID()
+	return _u
+}
+
+// SetFundingSource sets the "funding_source" field.
+func (_u *APIKeyUpdateOne) SetFundingSource(v string) *APIKeyUpdateOne {
+	_u.mutation.SetFundingSource(v)
+	return _u
+}
+
+// SetNillableFundingSource sets the "funding_source" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableFundingSource(v *string) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetFundingSource(*v)
+	}
+	return _u
+}
+
+// SetSubscriptionID sets the "subscription_id" field.
+func (_u *APIKeyUpdateOne) SetSubscriptionID(v int64) *APIKeyUpdateOne {
+	_u.mutation.SetSubscriptionID(v)
+	return _u
+}
+
+// SetNillableSubscriptionID sets the "subscription_id" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableSubscriptionID(v *int64) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetSubscriptionID(*v)
+	}
+	return _u
+}
+
+// ClearSubscriptionID clears the value of the "subscription_id" field.
+func (_u *APIKeyUpdateOne) ClearSubscriptionID() *APIKeyUpdateOne {
+	_u.mutation.ClearSubscriptionID()
 	return _u
 }
 
@@ -1235,6 +1352,11 @@ func (_u *APIKeyUpdateOne) SetGroup(v *Group) *APIKeyUpdateOne {
 	return _u.SetGroupID(v.ID)
 }
 
+// SetSubscription sets the "subscription" edge to the UserSubscription entity.
+func (_u *APIKeyUpdateOne) SetSubscription(v *UserSubscription) *APIKeyUpdateOne {
+	return _u.SetSubscriptionID(v.ID)
+}
+
 // AddUsageLogIDs adds the "usage_logs" edge to the UsageLog entity by IDs.
 func (_u *APIKeyUpdateOne) AddUsageLogIDs(ids ...int64) *APIKeyUpdateOne {
 	_u.mutation.AddUsageLogIDs(ids...)
@@ -1264,6 +1386,12 @@ func (_u *APIKeyUpdateOne) ClearUser() *APIKeyUpdateOne {
 // ClearGroup clears the "group" edge to the Group entity.
 func (_u *APIKeyUpdateOne) ClearGroup() *APIKeyUpdateOne {
 	_u.mutation.ClearGroup()
+	return _u
+}
+
+// ClearSubscription clears the "subscription" edge to the UserSubscription entity.
+func (_u *APIKeyUpdateOne) ClearSubscription() *APIKeyUpdateOne {
+	_u.mutation.ClearSubscription()
 	return _u
 }
 
@@ -1355,6 +1483,11 @@ func (_u *APIKeyUpdateOne) check() error {
 			return &ValidationError{Name: "name", err: fmt.Errorf(`ent: validator failed for field "APIKey.name": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.FundingSource(); ok {
+		if err := apikey.FundingSourceValidator(v); err != nil {
+			return &ValidationError{Name: "funding_source", err: fmt.Errorf(`ent: validator failed for field "APIKey.funding_source": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Status(); ok {
 		if err := apikey.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
@@ -1409,6 +1542,9 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(apikey.FieldName, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.FundingSource(); ok {
+		_spec.SetField(apikey.FieldFundingSource, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(apikey.FieldStatus, field.TypeString, value)
@@ -1564,6 +1700,35 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(group.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.SubscriptionCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   apikey.SubscriptionTable,
+			Columns: []string{apikey.SubscriptionColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usersubscription.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.SubscriptionIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   apikey.SubscriptionTable,
+			Columns: []string{apikey.SubscriptionColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usersubscription.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {

@@ -91,6 +91,22 @@ func (r stubOpenAIAccountRepo) GetByIDs(ctx context.Context, ids []int64) ([]*Ac
 	return out, nil
 }
 
+func (r stubOpenAIAccountRepo) ReadSchedulerFreshness(_ context.Context, ids []int64) (map[int64]SchedulerFreshness, error) {
+	requested := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		requested[id] = struct{}{}
+	}
+
+	result := make(map[int64]SchedulerFreshness, len(ids))
+	for i := range r.accounts {
+		account := &r.accounts[i]
+		if _, ok := requested[account.ID]; ok {
+			result[account.ID] = schedulerFreshnessFromAccount(account)
+		}
+	}
+	return result, nil
+}
+
 func (r stubOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
 	var result []Account
 	for _, acc := range r.accounts {

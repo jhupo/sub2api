@@ -309,6 +309,25 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 	return accounts, true, nil
 }
 
+func (c *schedulerCache) GetSnapshotVersion(ctx context.Context, bucket service.SchedulerBucket) (string, error) {
+	values, err := c.rdb.MGet(
+		ctx,
+		schedulerBucketKey(schedulerReadyPrefix, bucket),
+		schedulerBucketKey(schedulerActivePrefix, bucket),
+	).Result()
+	if err != nil {
+		return "", err
+	}
+	if len(values) != 2 || values[0] != "1" || values[1] == nil {
+		return "", nil
+	}
+	version, ok := values[1].(string)
+	if !ok || version == "" {
+		return "", nil
+	}
+	return version, nil
+}
+
 func (c *schedulerCache) CaptureBucketWriteToken(ctx context.Context, bucket service.SchedulerBucket) (service.SchedulerBucketWriteToken, error) {
 	result, err := captureBucketWriteTokenScript.Run(ctx, c.rdb, []string{
 		schedulerBucketKey(schedulerEpochPrefix, bucket),

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"entgo.io/ent/dialect/sql"
+	"entgo.io/ent/dialect/sql/sqlgraph"
 )
 
 const (
@@ -13,22 +14,12 @@ const (
 	Label = "subscription_plan"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
-	// FieldGroupID holds the string denoting the group_id field in the database.
-	FieldGroupID = "group_id"
 	// FieldName holds the string denoting the name field in the database.
 	FieldName = "name"
 	// FieldDescription holds the string denoting the description field in the database.
 	FieldDescription = "description"
-	// FieldPrice holds the string denoting the price field in the database.
-	FieldPrice = "price"
-	// FieldOriginalPrice holds the string denoting the original_price field in the database.
-	FieldOriginalPrice = "original_price"
-	// FieldCurrency holds the string denoting the currency field in the database.
-	FieldCurrency = "currency"
-	// FieldValidityDays holds the string denoting the validity_days field in the database.
-	FieldValidityDays = "validity_days"
-	// FieldValidityUnit holds the string denoting the validity_unit field in the database.
-	FieldValidityUnit = "validity_unit"
+	// FieldPublishedVersionID holds the string denoting the published_version_id field in the database.
+	FieldPublishedVersionID = "published_version_id"
 	// FieldFeatures holds the string denoting the features field in the database.
 	FieldFeatures = "features"
 	// FieldProductName holds the string denoting the product_name field in the database.
@@ -41,21 +32,34 @@ const (
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
 	FieldUpdatedAt = "updated_at"
+	// EdgeVersions holds the string denoting the versions edge name in mutations.
+	EdgeVersions = "versions"
+	// EdgeSubscriptions holds the string denoting the subscriptions edge name in mutations.
+	EdgeSubscriptions = "subscriptions"
 	// Table holds the table name of the subscriptionplan in the database.
 	Table = "subscription_plans"
+	// VersionsTable is the table that holds the versions relation/edge.
+	VersionsTable = "subscription_plan_versions"
+	// VersionsInverseTable is the table name for the SubscriptionPlanVersion entity.
+	// It exists in this package in order to avoid circular dependency with the "subscriptionplanversion" package.
+	VersionsInverseTable = "subscription_plan_versions"
+	// VersionsColumn is the table column denoting the versions relation/edge.
+	VersionsColumn = "plan_id"
+	// SubscriptionsTable is the table that holds the subscriptions relation/edge.
+	SubscriptionsTable = "user_subscriptions"
+	// SubscriptionsInverseTable is the table name for the UserSubscription entity.
+	// It exists in this package in order to avoid circular dependency with the "usersubscription" package.
+	SubscriptionsInverseTable = "user_subscriptions"
+	// SubscriptionsColumn is the table column denoting the subscriptions relation/edge.
+	SubscriptionsColumn = "plan_id"
 )
 
 // Columns holds all SQL columns for subscriptionplan fields.
 var Columns = []string{
 	FieldID,
-	FieldGroupID,
 	FieldName,
 	FieldDescription,
-	FieldPrice,
-	FieldOriginalPrice,
-	FieldCurrency,
-	FieldValidityDays,
-	FieldValidityUnit,
+	FieldPublishedVersionID,
 	FieldFeatures,
 	FieldProductName,
 	FieldForSale,
@@ -79,16 +83,6 @@ var (
 	NameValidator func(string) error
 	// DefaultDescription holds the default value on creation for the "description" field.
 	DefaultDescription string
-	// DefaultCurrency holds the default value on creation for the "currency" field.
-	DefaultCurrency string
-	// CurrencyValidator is a validator for the "currency" field. It is called by the builders before save.
-	CurrencyValidator func(string) error
-	// DefaultValidityDays holds the default value on creation for the "validity_days" field.
-	DefaultValidityDays int
-	// DefaultValidityUnit holds the default value on creation for the "validity_unit" field.
-	DefaultValidityUnit string
-	// ValidityUnitValidator is a validator for the "validity_unit" field. It is called by the builders before save.
-	ValidityUnitValidator func(string) error
 	// DefaultFeatures holds the default value on creation for the "features" field.
 	DefaultFeatures string
 	// DefaultProductName holds the default value on creation for the "product_name" field.
@@ -115,11 +109,6 @@ func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
 }
 
-// ByGroupID orders the results by the group_id field.
-func ByGroupID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldGroupID, opts...).ToFunc()
-}
-
 // ByName orders the results by the name field.
 func ByName(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldName, opts...).ToFunc()
@@ -130,29 +119,9 @@ func ByDescription(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldDescription, opts...).ToFunc()
 }
 
-// ByPrice orders the results by the price field.
-func ByPrice(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldPrice, opts...).ToFunc()
-}
-
-// ByOriginalPrice orders the results by the original_price field.
-func ByOriginalPrice(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldOriginalPrice, opts...).ToFunc()
-}
-
-// ByCurrency orders the results by the currency field.
-func ByCurrency(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldCurrency, opts...).ToFunc()
-}
-
-// ByValidityDays orders the results by the validity_days field.
-func ByValidityDays(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldValidityDays, opts...).ToFunc()
-}
-
-// ByValidityUnit orders the results by the validity_unit field.
-func ByValidityUnit(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldValidityUnit, opts...).ToFunc()
+// ByPublishedVersionID orders the results by the published_version_id field.
+func ByPublishedVersionID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPublishedVersionID, opts...).ToFunc()
 }
 
 // ByFeatures orders the results by the features field.
@@ -183,4 +152,46 @@ func ByCreatedAt(opts ...sql.OrderTermOption) OrderOption {
 // ByUpdatedAt orders the results by the updated_at field.
 func ByUpdatedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUpdatedAt, opts...).ToFunc()
+}
+
+// ByVersionsCount orders the results by versions count.
+func ByVersionsCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newVersionsStep(), opts...)
+	}
+}
+
+// ByVersions orders the results by versions terms.
+func ByVersions(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newVersionsStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
+// BySubscriptionsCount orders the results by subscriptions count.
+func BySubscriptionsCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newSubscriptionsStep(), opts...)
+	}
+}
+
+// BySubscriptions orders the results by subscriptions terms.
+func BySubscriptions(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newSubscriptionsStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+func newVersionsStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(VersionsInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, VersionsTable, VersionsColumn),
+	)
+}
+func newSubscriptionsStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(SubscriptionsInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, SubscriptionsTable, SubscriptionsColumn),
+	)
 }

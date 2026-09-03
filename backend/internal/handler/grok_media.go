@@ -56,6 +56,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	defer h.recoverResponsesPanic(c, &streamStarted)
 
 	requestStart := time.Now()
+	c.Request = c.Request.WithContext(h.gatewayService.PrepareSchedulerRequestContext(c.Request.Context()))
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
@@ -498,6 +499,8 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 					pending.PreauthorizationRequestID = balanceGuard.RequestID()
 					pending.AuthorizationFingerprint = service.HashUsageRequestPayload(body)
 					pending.PreauthorizationHoldAmount = balanceGuard.HoldAmount()
+					pending.FundingSource = balanceGuard.FundingSource()
+					pending.SubscriptionID = balanceGuard.SubscriptionID()
 				}
 				if err := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, taskID, subject.UserID, apiKey.ID, pending); err != nil {
 					reqLog.Warn("grok_media.store_video_pending_billing_failed_retrying",
@@ -683,6 +686,7 @@ func prepareGrokVideoCompletionBillingWithGuard(
 		}
 		resumedGuard, err = resumer.Resume(ctx, service.BalancePreauthorizationResumeRequest{
 			RequestID: pending.PreauthorizationRequestID, APIKeyID: apiKey.ID, UserID: subject.UserID,
+			BillingType: preauthorizationBillingType(pending.FundingSource), SubscriptionID: optionalIDValue(pending.SubscriptionID),
 			AuthorizationFingerprint: pending.AuthorizationFingerprint, HoldAmount: pending.PreauthorizationHoldAmount,
 		})
 		if errors.Is(err, service.ErrBalancePreauthorizationAlreadyFinalized) {
@@ -777,6 +781,7 @@ func handleGrokVideoTerminalRefund(ctx context.Context, h *OpenAIGatewayHandler,
 	}
 	guard, err := resumer.Resume(ctx, service.BalancePreauthorizationResumeRequest{
 		RequestID: pending.PreauthorizationRequestID, APIKeyID: apiKey.ID, UserID: subject.UserID,
+		BillingType: preauthorizationBillingType(pending.FundingSource), SubscriptionID: optionalIDValue(pending.SubscriptionID),
 		AuthorizationFingerprint: pending.AuthorizationFingerprint, HoldAmount: pending.PreauthorizationHoldAmount,
 	})
 	if err == nil && guard != nil {
@@ -785,6 +790,20 @@ func handleGrokVideoTerminalRefund(ctx context.Context, h *OpenAIGatewayHandler,
 	if err != nil && reqLog != nil {
 		reqLog.Warn("grok_media.video_preauthorization_terminal_refund_failed", zap.String("request_id", taskRequestID), zap.Error(err))
 	}
+}
+
+func preauthorizationBillingType(fundingSource string) int8 {
+	if fundingSource == service.FundingSourceSubscription {
+		return service.BillingTypeSubscription
+	}
+	return service.BillingTypeBalance
+}
+
+func optionalIDValue(id *int64) int64 {
+	if id == nil {
+		return 0
+	}
+	return *id
 }
 
 func firstNonEmptyString(values ...string) string {

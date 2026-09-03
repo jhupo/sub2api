@@ -44,16 +44,6 @@ const (
 	FieldDuplicateOperationID = "duplicate_operation_id"
 	// FieldPlatform holds the string denoting the platform field in the database.
 	FieldPlatform = "platform"
-	// FieldSubscriptionType holds the string denoting the subscription_type field in the database.
-	FieldSubscriptionType = "subscription_type"
-	// FieldDailyLimitUsd holds the string denoting the daily_limit_usd field in the database.
-	FieldDailyLimitUsd = "daily_limit_usd"
-	// FieldWeeklyLimitUsd holds the string denoting the weekly_limit_usd field in the database.
-	FieldWeeklyLimitUsd = "weekly_limit_usd"
-	// FieldMonthlyLimitUsd holds the string denoting the monthly_limit_usd field in the database.
-	FieldMonthlyLimitUsd = "monthly_limit_usd"
-	// FieldDefaultValidityDays holds the string denoting the default_validity_days field in the database.
-	FieldDefaultValidityDays = "default_validity_days"
 	// FieldAllowImageGeneration holds the string denoting the allow_image_generation field in the database.
 	FieldAllowImageGeneration = "allow_image_generation"
 	// FieldAllowBatchImageGeneration holds the string denoting the allow_batch_image_generation field in the database.
@@ -148,10 +138,6 @@ const (
 	FieldProfitSafetyBuffer = "profit_safety_buffer"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
 	EdgeAPIKeys = "api_keys"
-	// EdgeRedeemCodes holds the string denoting the redeem_codes edge name in mutations.
-	EdgeRedeemCodes = "redeem_codes"
-	// EdgeSubscriptions holds the string denoting the subscriptions edge name in mutations.
-	EdgeSubscriptions = "subscriptions"
 	// EdgeUsageLogs holds the string denoting the usage_logs edge name in mutations.
 	EdgeUsageLogs = "usage_logs"
 	// EdgeAccounts holds the string denoting the accounts edge name in mutations.
@@ -171,20 +157,6 @@ const (
 	APIKeysInverseTable = "api_keys"
 	// APIKeysColumn is the table column denoting the api_keys relation/edge.
 	APIKeysColumn = "group_id"
-	// RedeemCodesTable is the table that holds the redeem_codes relation/edge.
-	RedeemCodesTable = "redeem_codes"
-	// RedeemCodesInverseTable is the table name for the RedeemCode entity.
-	// It exists in this package in order to avoid circular dependency with the "redeemcode" package.
-	RedeemCodesInverseTable = "redeem_codes"
-	// RedeemCodesColumn is the table column denoting the redeem_codes relation/edge.
-	RedeemCodesColumn = "group_id"
-	// SubscriptionsTable is the table that holds the subscriptions relation/edge.
-	SubscriptionsTable = "user_subscriptions"
-	// SubscriptionsInverseTable is the table name for the UserSubscription entity.
-	// It exists in this package in order to avoid circular dependency with the "usersubscription" package.
-	SubscriptionsInverseTable = "user_subscriptions"
-	// SubscriptionsColumn is the table column denoting the subscriptions relation/edge.
-	SubscriptionsColumn = "group_id"
 	// UsageLogsTable is the table that holds the usage_logs relation/edge.
 	UsageLogsTable = "usage_logs"
 	// UsageLogsInverseTable is the table name for the UsageLog entity.
@@ -235,11 +207,6 @@ var Columns = []string{
 	FieldStatus,
 	FieldDuplicateOperationID,
 	FieldPlatform,
-	FieldSubscriptionType,
-	FieldDailyLimitUsd,
-	FieldWeeklyLimitUsd,
-	FieldMonthlyLimitUsd,
-	FieldDefaultValidityDays,
 	FieldAllowImageGeneration,
 	FieldAllowBatchImageGeneration,
 	FieldImageRateIndependent,
@@ -349,12 +316,6 @@ var (
 	DefaultPlatform string
 	// PlatformValidator is a validator for the "platform" field. It is called by the builders before save.
 	PlatformValidator func(string) error
-	// DefaultSubscriptionType holds the default value on creation for the "subscription_type" field.
-	DefaultSubscriptionType string
-	// SubscriptionTypeValidator is a validator for the "subscription_type" field. It is called by the builders before save.
-	SubscriptionTypeValidator func(string) error
-	// DefaultDefaultValidityDays holds the default value on creation for the "default_validity_days" field.
-	DefaultDefaultValidityDays int
 	// DefaultAllowImageGeneration holds the default value on creation for the "allow_image_generation" field.
 	DefaultAllowImageGeneration bool
 	// DefaultAllowBatchImageGeneration holds the default value on creation for the "allow_batch_image_generation" field.
@@ -507,31 +468,6 @@ func ByDuplicateOperationID(opts ...sql.OrderTermOption) OrderOption {
 // ByPlatform orders the results by the platform field.
 func ByPlatform(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPlatform, opts...).ToFunc()
-}
-
-// BySubscriptionType orders the results by the subscription_type field.
-func BySubscriptionType(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldSubscriptionType, opts...).ToFunc()
-}
-
-// ByDailyLimitUsd orders the results by the daily_limit_usd field.
-func ByDailyLimitUsd(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldDailyLimitUsd, opts...).ToFunc()
-}
-
-// ByWeeklyLimitUsd orders the results by the weekly_limit_usd field.
-func ByWeeklyLimitUsd(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldWeeklyLimitUsd, opts...).ToFunc()
-}
-
-// ByMonthlyLimitUsd orders the results by the monthly_limit_usd field.
-func ByMonthlyLimitUsd(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldMonthlyLimitUsd, opts...).ToFunc()
-}
-
-// ByDefaultValidityDays orders the results by the default_validity_days field.
-func ByDefaultValidityDays(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldDefaultValidityDays, opts...).ToFunc()
 }
 
 // ByAllowImageGeneration orders the results by the allow_image_generation field.
@@ -743,34 +679,6 @@ func ByAPIKeys(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 	}
 }
 
-// ByRedeemCodesCount orders the results by redeem_codes count.
-func ByRedeemCodesCount(opts ...sql.OrderTermOption) OrderOption {
-	return func(s *sql.Selector) {
-		sqlgraph.OrderByNeighborsCount(s, newRedeemCodesStep(), opts...)
-	}
-}
-
-// ByRedeemCodes orders the results by redeem_codes terms.
-func ByRedeemCodes(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
-	return func(s *sql.Selector) {
-		sqlgraph.OrderByNeighborTerms(s, newRedeemCodesStep(), append([]sql.OrderTerm{term}, terms...)...)
-	}
-}
-
-// BySubscriptionsCount orders the results by subscriptions count.
-func BySubscriptionsCount(opts ...sql.OrderTermOption) OrderOption {
-	return func(s *sql.Selector) {
-		sqlgraph.OrderByNeighborsCount(s, newSubscriptionsStep(), opts...)
-	}
-}
-
-// BySubscriptions orders the results by subscriptions terms.
-func BySubscriptions(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
-	return func(s *sql.Selector) {
-		sqlgraph.OrderByNeighborTerms(s, newSubscriptionsStep(), append([]sql.OrderTerm{term}, terms...)...)
-	}
-}
-
 // ByUsageLogsCount orders the results by usage_logs count.
 func ByUsageLogsCount(opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
@@ -845,20 +753,6 @@ func newAPIKeysStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(APIKeysInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.O2M, false, APIKeysTable, APIKeysColumn),
-	)
-}
-func newRedeemCodesStep() *sqlgraph.Step {
-	return sqlgraph.NewStep(
-		sqlgraph.From(Table, FieldID),
-		sqlgraph.To(RedeemCodesInverseTable, FieldID),
-		sqlgraph.Edge(sqlgraph.O2M, false, RedeemCodesTable, RedeemCodesColumn),
-	)
-}
-func newSubscriptionsStep() *sqlgraph.Step {
-	return sqlgraph.NewStep(
-		sqlgraph.From(Table, FieldID),
-		sqlgraph.To(SubscriptionsInverseTable, FieldID),
-		sqlgraph.Edge(sqlgraph.O2M, false, SubscriptionsTable, SubscriptionsColumn),
 	)
 }
 func newUsageLogsStep() *sqlgraph.Step {

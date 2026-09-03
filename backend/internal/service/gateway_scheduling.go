@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	mathrand "math/rand"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,9 +21,23 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 )
 
+const (
+	windowCostQueryTimeout = 30 * time.Second
+	windowCostQuerySlotsN  = 4
+)
+
+var windowCostQuerySlots = make(chan struct{}, windowCostQuerySlotsN)
+
 // SelectAccount 选择账号（粘性会话+优先级）
 func (s *GatewayService) SelectAccount(ctx context.Context, groupID *int64, sessionHash string) (*Account, error) {
 	return s.SelectAccountForModel(ctx, groupID, sessionHash, "")
+}
+
+func (s *GatewayService) PrepareSchedulerRequestContext(ctx context.Context) context.Context {
+	if s == nil || ctx == nil {
+		return ctx
+	}
+	return withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 }
 
 // SelectAccountForModel 选择支持指定模型的账号（粘性会话+优先级+模型映射）
@@ -32,6 +47,7 @@ func (s *GatewayService) SelectAccountForModel(ctx context.Context, groupID *int
 
 // SelectAccountForModelWithExclusions selects an account supporting the requested model while excluding specified accounts.
 func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 	// 优先检查 context 中的强制平台（/antigravity 路由）
 	var platform string
 	forcePlatform, hasForcePlatform := ctx.Value(ctxkey.ForcePlatform).(string)
@@ -98,6 +114,7 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 // metadataUserID: 用于客户端亲和调度，从中提取客户端 ID
 // sub2apiUserID: 系统用户 ID，用于二维亲和调度
 func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, sub2apiUserID int64) (*AccountSelectionResult, error) {
+	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 	// 调试日志：记录调度入口参数
 	excludedIDsList := make([]int64, 0, len(excludedIDs))
 	for id := range excludedIDs {
@@ -224,6 +241,11 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	if err != nil {
 		return nil, err
 	}
+	if len(accounts) == 0 {
+		return nil, ErrNoAvailableAccounts
+	}
+	ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
+	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
 	if len(accounts) == 0 {
 		return nil, ErrNoAvailableAccounts
 	}
@@ -1131,24 +1153,121 @@ func (s *GatewayService) tryAcquireAccountSlot(ctx context.Context, accountID in
 	return s.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
 }
 
-type usageLogWindowStatsBatchProvider interface {
-	GetAccountWindowStatsBatch(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]*usagestats.AccountStats, error)
-}
-
 type windowCostPrefetchContextKeyType struct{}
 
 var windowCostPrefetchContextKey = windowCostPrefetchContextKeyType{}
+
+type windowCostPrefetchState struct {
+	costs    map[int64]float64
+	failOpen map[int64]struct{}
+}
+
+func windowCostBatchKey(accountIDs []int64, startTime time.Time) string {
+	ids := append([]int64(nil), accountIDs...)
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	var key strings.Builder
+	_, _ = key.WriteString(startTime.UTC().Format(time.RFC3339Nano))
+	for _, id := range ids {
+		_ = key.WriteByte(':')
+		_, _ = key.WriteString(strconv.FormatInt(id, 10))
+	}
+	return key.String()
+}
+
+func acquireWindowCostQuerySlot(ctx context.Context) error {
+	select {
+	case windowCostQuerySlots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func releaseWindowCostQuerySlot() {
+	<-windowCostQuerySlots
+}
+
+func (s *GatewayService) loadWindowCostBatchCoalesced(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]float64, error) {
+	key := windowCostBatchKey(accountIDs, startTime)
+	resultCh := s.windowCostPrefetchSF.DoChan(key, func() (any, error) {
+		queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), windowCostQueryTimeout)
+		defer cancel()
+		if err := acquireWindowCostQuerySlot(queryCtx); err != nil {
+			return nil, err
+		}
+		defer releaseWindowCostQuerySlot()
+		return s.usageLogRepo.GetAccountWindowCostsBatch(queryCtx, accountIDs, startTime)
+	})
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		costs, ok := result.Val.(map[int64]float64)
+		if !ok {
+			return nil, fmt.Errorf("invalid window cost batch result")
+		}
+		return costs, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (s *GatewayService) loadWindowCostStatCoalesced(ctx context.Context, accountID int64, startTime time.Time) (*usagestats.AccountStats, error) {
+	key := fmt.Sprintf("single:%d:%s", accountID, startTime.UTC().Format(time.RFC3339Nano))
+	resultCh := s.windowCostPrefetchSF.DoChan(key, func() (any, error) {
+		queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), windowCostQueryTimeout)
+		defer cancel()
+		if err := acquireWindowCostQuerySlot(queryCtx); err != nil {
+			return nil, err
+		}
+		defer releaseWindowCostQuerySlot()
+		return s.usageLogRepo.GetAccountWindowStats(queryCtx, accountID, startTime)
+	})
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		stats, ok := result.Val.(*usagestats.AccountStats)
+		if !ok || stats == nil {
+			return nil, fmt.Errorf("invalid window cost stat result")
+		}
+		return stats, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
 
 func windowCostFromPrefetchContext(ctx context.Context, accountID int64) (float64, bool) {
 	if ctx == nil || accountID <= 0 {
 		return 0, false
 	}
-	m, ok := ctx.Value(windowCostPrefetchContextKey).(map[int64]float64)
-	if !ok || len(m) == 0 {
+	state, ok := ctx.Value(windowCostPrefetchContextKey).(*windowCostPrefetchState)
+	if !ok || state == nil {
 		return 0, false
 	}
-	v, exists := m[accountID]
+	v, exists := state.costs[accountID]
 	return v, exists
+}
+
+func windowCostPrefetchFailedOpen(ctx context.Context, accountID int64) bool {
+	if ctx == nil || accountID <= 0 {
+		return false
+	}
+	state, ok := ctx.Value(windowCostPrefetchContextKey).(*windowCostPrefetchState)
+	if !ok || state == nil {
+		return false
+	}
+	_, exists := state.failOpen[accountID]
+	return exists
+}
+
+func withWindowCostPrefetchState(ctx context.Context, costs map[int64]float64, failOpen map[int64]struct{}) context.Context {
+	return context.WithValue(ctx, windowCostPrefetchContextKey, &windowCostPrefetchState{
+		costs:    costs,
+		failOpen: failOpen,
+	})
 }
 
 func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []Account) context.Context {
@@ -1174,6 +1293,8 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 	}
 
 	costs := make(map[int64]float64, len(accountIDs))
+	failOpen := make(map[int64]struct{})
+	cacheWrites := make(map[int64]float64, len(accountIDs))
 	cacheValues, err := s.sessionLimitCache.GetWindowCostBatch(ctx, accountIDs)
 	if err == nil {
 		for accountID, cost := range cacheValues {
@@ -1206,52 +1327,68 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 		startTimes[startKey] = startTime
 	}
 	if len(missingByStart) == 0 {
-		return context.WithValue(ctx, windowCostPrefetchContextKey, costs)
+		return withWindowCostPrefetchState(ctx, costs, failOpen)
 	}
 
-	batchReader, hasBatch := s.usageLogRepo.(usageLogWindowStatsBatchProvider)
-	for startKey, ids := range missingByStart {
+	const maxWindowCostFallbackAccounts = 8
+	remainingFallbackBudget := maxWindowCostFallbackAccounts
+	startKeys := make([]int64, 0, len(missingByStart))
+	for startKey := range missingByStart {
+		startKeys = append(startKeys, startKey)
+	}
+	sort.Slice(startKeys, func(i, j int) bool { return startKeys[i] > startKeys[j] })
+	for _, startKey := range startKeys {
+		ids := missingByStart[startKey]
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 		startTime := startTimes[startKey]
 
-		if hasBatch {
-			windowCostPrefetchBatchSQLTotal.Add(1)
-			queryStart := time.Now()
-			statsByAccount, err := batchReader.GetAccountWindowStatsBatch(ctx, ids, startTime)
-			if err == nil {
-				slog.Debug("window_cost_batch_query_ok",
-					"accounts", len(ids),
-					"window_start", startTime.Format(time.RFC3339),
-					"duration_ms", time.Since(queryStart).Milliseconds())
-				for _, accountID := range ids {
-					stats := statsByAccount[accountID]
-					cost := 0.0
-					if stats != nil {
-						cost = stats.StandardCost
-					}
-					costs[accountID] = cost
-					_ = s.sessionLimitCache.SetWindowCost(ctx, accountID, cost)
-				}
+		windowCostPrefetchBatchSQLTotal.Add(1)
+		queryStart := time.Now()
+		costsByAccount, err := s.loadWindowCostBatchCoalesced(ctx, ids, startTime)
+		if err == nil {
+			slog.Debug("window_cost_batch_query_ok",
+				"accounts", len(ids),
+				"window_start", startTime.Format(time.RFC3339),
+				"duration_ms", time.Since(queryStart).Milliseconds(),
+				"projection", "standard_cost")
+			for _, accountID := range ids {
+				cost := costsByAccount[accountID]
+				costs[accountID] = cost
+				cacheWrites[accountID] = cost
+			}
+			continue
+		}
+		windowCostPrefetchErrorTotal.Add(1)
+		logger.LegacyPrintf("service.gateway", "window_cost batch db query failed: start=%s err=%v", startTime.Format(time.RFC3339), err)
+
+		fallbackCount := len(ids)
+		if fallbackCount > remainingFallbackBudget {
+			fallbackCount = remainingFallbackBudget
+		}
+		remainingFallbackBudget -= fallbackCount
+		windowCostPrefetchFallbackTotal.Add(int64(fallbackCount))
+		for i, accountID := range ids {
+			if i >= fallbackCount {
+				failOpen[accountID] = struct{}{}
 				continue
 			}
-			windowCostPrefetchErrorTotal.Add(1)
-			logger.LegacyPrintf("service.gateway", "window_cost batch db query failed: start=%s err=%v", startTime.Format(time.RFC3339), err)
-		}
-
-		// 回退路径：缺少批量仓储能力或批量查询失败时，按账号单查（失败开放）。
-		windowCostPrefetchFallbackTotal.Add(int64(len(ids)))
-		for _, accountID := range ids {
-			stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, accountID, startTime)
+			stats, err := s.loadWindowCostStatCoalesced(ctx, accountID, startTime)
 			if err != nil {
 				windowCostPrefetchErrorTotal.Add(1)
+				failOpen[accountID] = struct{}{}
 				continue
 			}
-			cost := stats.StandardCost
+			cost := 0.0
+			if stats != nil {
+				cost = stats.StandardCost
+			}
 			costs[accountID] = cost
-			_ = s.sessionLimitCache.SetWindowCost(ctx, accountID, cost)
+			cacheWrites[accountID] = cost
 		}
 	}
 
-	return context.WithValue(ctx, windowCostPrefetchContextKey, costs)
+	_ = s.sessionLimitCache.SetWindowCostBatch(ctx, cacheWrites)
+	return withWindowCostPrefetchState(ctx, costs, failOpen)
 }
 
 // isAccountSchedulableForQuota 检查账号是否在配额限制内
@@ -1283,6 +1420,9 @@ func (s *GatewayService) isAccountSchedulableForWindowCost(ctx context.Context, 
 		currentCost = cost
 		goto checkSchedulability
 	}
+	if windowCostPrefetchFailedOpen(ctx, account.ID) {
+		return true
+	}
 	if s.sessionLimitCache != nil {
 		if cost, hit, err := s.sessionLimitCache.GetWindowCost(ctx, account.ID); err == nil && hit {
 			currentCost = cost
@@ -1295,7 +1435,7 @@ func (s *GatewayService) isAccountSchedulableForWindowCost(ctx context.Context, 
 		// 使用统一的窗口开始时间计算逻辑（考虑窗口过期情况）
 		startTime := account.GetCurrentWindowStartTime()
 
-		stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, account.ID, startTime)
+		stats, err := s.loadWindowCostStatCoalesced(ctx, account.ID, startTime)
 		if err != nil {
 			// 失败开放：查询失败时允许调度
 			return true
@@ -1439,6 +1579,15 @@ func (s *GatewayService) checkAndRegisterSession(ctx context.Context, account *A
 }
 
 func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {
+	if account, ok := schedulerHydratedAccount(ctx, accountID); ok {
+		if s.isAccountBlockedBySchedulingThreshold(ctx, account) {
+			return nil, nil
+		}
+		if account.IsGrok() && len(s.filterGrokFreeQuotaAccountsForGateway(ctx, []Account{*account})) == 0 {
+			return nil, nil
+		}
+		return account, nil
+	}
 	var (
 		account *Account
 		err     error
@@ -1451,6 +1600,13 @@ func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID in
 	if err != nil || account == nil {
 		return account, err
 	}
+	if state := schedulerFreshnessFromContext(ctx); state != nil && state.enabled() {
+		fresh, ok := state.apply(ctx, account)
+		if !ok {
+			return nil, nil
+		}
+		account = fresh
+	}
 	if s.isAccountBlockedBySchedulingThreshold(ctx, account) {
 		return nil, nil
 	}
@@ -1460,6 +1616,7 @@ func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID in
 			return nil, nil
 		}
 	}
+	rememberSchedulerHydratedAccount(ctx, account)
 	return account, nil
 }
 
@@ -1489,6 +1646,9 @@ func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Ac
 	if account == nil || s.schedulerSnapshot == nil {
 		return account, nil
 	}
+	if hydrated, ok := schedulerHydratedAccount(ctx, account.ID); ok {
+		return hydrated, nil
+	}
 	hydrated, err := s.schedulerSnapshot.GetAccount(ctx, account.ID)
 	if err != nil {
 		return nil, err
@@ -1496,6 +1656,14 @@ func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Ac
 	if hydrated == nil {
 		return nil, fmt.Errorf("selected gateway account %d not found during hydration", account.ID)
 	}
+	if state := schedulerFreshnessFromContext(ctx); state != nil && state.enabled() {
+		fresh, ok := state.apply(ctx, hydrated)
+		if !ok {
+			return nil, fmt.Errorf("selected gateway account %d failed freshness validation", account.ID)
+		}
+		hydrated = fresh
+	}
+	rememberSchedulerHydratedAccount(ctx, hydrated)
 	return hydrated, nil
 }
 
@@ -1870,6 +2038,8 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 		if err != nil {
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
+		ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
+		accounts = applySchedulerFreshnessAccounts(ctx, accounts)
 		accountsLoaded = true
 
 		// 提前预取窗口费用+RPM 计数，确保 routing 段内的调度检查调用能命中缓存
@@ -1990,6 +2160,8 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 		if err != nil {
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
+		ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
+		accounts = applySchedulerFreshnessAccounts(ctx, accounts)
 	}
 
 	// 批量预取窗口费用+RPM 计数，避免逐个账号查询（N+1）
@@ -2132,6 +2304,8 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 		if err != nil {
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
+		ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
+		accounts = applySchedulerFreshnessAccounts(ctx, accounts)
 		accountsLoaded = true
 
 		// 提前预取窗口费用+RPM 计数，确保 routing 段内的调度检查调用能命中缓存
@@ -2254,6 +2428,8 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 		if err != nil {
 			return nil, fmt.Errorf("query accounts failed: %w", err)
 		}
+		ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
+		accounts = applySchedulerFreshnessAccounts(ctx, accounts)
 	}
 
 	// 批量预取窗口费用+RPM 计数，避免逐个账号查询（N+1）

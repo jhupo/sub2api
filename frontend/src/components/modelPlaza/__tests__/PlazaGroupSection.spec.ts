@@ -59,7 +59,6 @@ function group(overrides: Partial<ModelPlazaGroup> = {}): ModelPlazaGroup {
     name: 'g',
     description: '',
     platform: 'openai',
-    subscription_type: 'standard',
     rate_multiplier: 1,
     peak_rate_enabled: false,
     peak_start: '',
@@ -119,7 +118,6 @@ describe('PlazaGroupSection 高峰配置传递', () => {
   it('分组启用高峰时把窗口描述与倍率传给价格表', () => {
     const wrapper = mountSection(
       group({
-        subscription_type: 'subscription',
         peak_rate_enabled: true,
         peak_start: '14:00',
         peak_end: '18:00',

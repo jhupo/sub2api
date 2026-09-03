@@ -60,8 +60,6 @@ export interface ModelPlazaGroup {
   name: string
   description: string
   platform: string
-  /** 'standard' | 'subscription' */
-  subscription_type: string
   rate_multiplier: number
   /** 登录且管理员为该用户配了专属倍率时返回；生效倍率 = user_rate ?? rate_multiplier。 */
   user_rate_multiplier?: number

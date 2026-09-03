@@ -337,7 +337,7 @@ export type AnnouncementOperator = 'in' | 'gt' | 'gte' | 'lt' | 'lte' | 'eq'
 export interface AnnouncementCondition {
   type: AnnouncementConditionType
   operator: AnnouncementOperator
-  group_ids?: number[]
+  plan_ids?: number[]
   value?: number
 }
 
@@ -535,8 +535,6 @@ export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 
 
 export type VideoModelPrices = Record<string, Record<string, number>>
 
-export type SubscriptionType = 'standard' | 'subscription'
-
 export interface OpenAIMessagesDispatchModelConfig {
   opus_mapped_model?: string
   sonnet_mapped_model?: string
@@ -565,10 +563,6 @@ export interface Group {
   reasoning_effort_mappings?: ReasoningEffortMapping[]
   is_exclusive: boolean
   status: 'active' | 'inactive'
-  subscription_type: SubscriptionType
-  daily_limit_usd: number | null
-  weekly_limit_usd: number | null
-  monthly_limit_usd: number | null
   long_context_pricing_enabled: boolean
   // 图片生成计费配置
   allow_image_generation: boolean
@@ -717,6 +711,8 @@ export interface ApiKey {
   key: string
   name: string
   group_id: number | null
+  funding_source: 'wallet' | 'subscription'
+  subscription_id: number | null
   status: 'active' | 'inactive' | 'quota_exhausted' | 'expired'
   ip_whitelist: string[]
   ip_blacklist: string[]
@@ -746,6 +742,8 @@ export interface ApiKey {
 export interface CreateApiKeyRequest {
   name: string
   group_id?: number | null
+  funding_source: 'wallet' | 'subscription'
+  subscription_id?: number | null
   custom_key?: string // Optional custom API Key
   ip_whitelist?: string[]
   ip_blacklist?: string[]
@@ -759,6 +757,8 @@ export interface CreateApiKeyRequest {
 export interface UpdateApiKeyRequest {
   name?: string
   group_id?: number | null
+  funding_source?: 'wallet' | 'subscription'
+  subscription_id?: number | null
   status?: 'active' | 'inactive'
   ip_whitelist?: string[]
   ip_blacklist?: string[]
@@ -777,10 +777,6 @@ export interface CreateGroupRequest {
   platform?: GroupPlatform
   rate_multiplier?: number
   is_exclusive?: boolean
-  subscription_type?: SubscriptionType
-  daily_limit_usd?: number | null
-  weekly_limit_usd?: number | null
-  monthly_limit_usd?: number | null
   long_context_pricing_enabled?: boolean
   force_openai_fast?: boolean
   free_openai_fast?: boolean
@@ -842,10 +838,6 @@ export interface UpdateGroupRequest {
   rate_multiplier?: number
   is_exclusive?: boolean
   status?: 'active' | 'inactive'
-  subscription_type?: SubscriptionType
-  daily_limit_usd?: number | null
-  weekly_limit_usd?: number | null
-  monthly_limit_usd?: number | null
   long_context_pricing_enabled?: boolean
   force_openai_fast?: boolean
   free_openai_fast?: boolean
@@ -1780,18 +1772,16 @@ export interface RedeemCode {
   expires_at?: string | null
   updated_at?: string
   notes?: string
-  group_id?: number | null // 订阅类型专用
-  validity_days?: number // 订阅类型专用
+  plan_version_id?: number | null
+  plan?: import('./payment').SubscriptionPlan
   user?: User
-  group?: Group // 关联的分组
 }
 
 export interface GenerateRedeemCodesRequest {
   count: number
   type: RedeemCodeType
   value: number
-  group_id?: number | null // 订阅类型专用
-  validity_days?: number // 订阅类型专用
+  plan_version_id?: number | null
   expires_at?: string | null
   expires_in_days?: number
 }
@@ -1800,7 +1790,7 @@ export interface BatchUpdateRedeemCodeFields {
   status?: 'unused' | 'disabled'
   expires_at?: string | null
   notes?: string
-  group_id?: number | null
+  plan_version_id?: number | null
 }
 
 export interface BatchUpdateRedeemCodesRequest {
@@ -2007,57 +1997,63 @@ export interface ChangePasswordRequest {
 export interface UserSubscription {
   id: number
   user_id: number
-  group_id: number
+  plan_id: number
+  plan_version_id: number
   status: 'active' | 'expired' | 'revoked' | 'suspended'
   starts_at: string
+  expires_at: string
   daily_usage_usd: number
   weekly_usage_usd: number
   monthly_usage_usd: number
+  daily_reserved_usd: number
+  weekly_reserved_usd: number
+  monthly_reserved_usd: number
   daily_window_start: string | null
   weekly_window_start: string | null
   monthly_window_start: string | null
   created_at: string
   updated_at: string
   revoked_at?: string | null
-  expires_at: string | null
   user?: User
-  group?: Group
+  plan?: import('./payment').SubscriptionPlan
+}
+
+export interface SubscriptionUsageWindowProgress {
+  limit_usd: number
+  used_usd: number
+  reserved_usd: number
+  remaining_usd: number
+  percentage: number
+  window_start: string
+  resets_at: string
+  resets_in_seconds: number
 }
 
 export interface SubscriptionProgress {
-  subscription_id: number
-  daily: {
-    used: number
-    limit: number | null
-    percentage: number
-    reset_in_seconds: number | null
-  } | null
-  weekly: {
-    used: number
-    limit: number | null
-    percentage: number
-    reset_in_seconds: number | null
-  } | null
-  monthly: {
-    used: number
-    limit: number | null
-    percentage: number
-    reset_in_seconds: number | null
-  } | null
-  expires_at: string | null
-  days_remaining: number | null
+  id: number
+  plan_name: string
+  expires_at: string
+  expires_in_days: number
+  daily?: SubscriptionUsageWindowProgress
+  weekly?: SubscriptionUsageWindowProgress
+  monthly?: SubscriptionUsageWindowProgress
+}
+
+export interface SubscriptionProgressInfo {
+  subscription: UserSubscription
+  progress: SubscriptionProgress
 }
 
 export interface AssignSubscriptionRequest {
   user_id: number
-  group_id: number
-  validity_days?: number
+  plan_id: number
+  notes?: string
 }
 
 export interface BulkAssignSubscriptionRequest {
   user_ids: number[]
-  group_id: number
-  validity_days?: number
+  plan_id: number
+  notes?: string
 }
 
 export interface ExtendSubscriptionRequest {

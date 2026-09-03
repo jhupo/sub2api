@@ -99,11 +99,11 @@ const appStore = useAppStore()
 const selectedGroupId = ref<number | null>(null)
 const submitting = ref(false)
 
-// 可选的专属标准分组（排除当前 oldGroup）
+// 可选的活跃专属分组（排除当前 oldGroup）
 const availableGroups = computed(() => {
   if (!props.oldGroup) return []
   return props.allGroups.filter(
-    g => g.status === 'active' && g.is_exclusive && g.subscription_type === 'standard' && g.id !== props.oldGroup!.id
+    g => g.status === 'active' && g.is_exclusive && g.id !== props.oldGroup!.id
   )
 })
 

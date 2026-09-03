@@ -11,8 +11,8 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/subscriptionplanversion"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 )
 
@@ -142,30 +142,16 @@ func (_c *RedeemCodeCreate) SetNillableExpiresAt(v *time.Time) *RedeemCodeCreate
 	return _c
 }
 
-// SetGroupID sets the "group_id" field.
-func (_c *RedeemCodeCreate) SetGroupID(v int64) *RedeemCodeCreate {
-	_c.mutation.SetGroupID(v)
+// SetPlanVersionID sets the "plan_version_id" field.
+func (_c *RedeemCodeCreate) SetPlanVersionID(v int64) *RedeemCodeCreate {
+	_c.mutation.SetPlanVersionID(v)
 	return _c
 }
 
-// SetNillableGroupID sets the "group_id" field if the given value is not nil.
-func (_c *RedeemCodeCreate) SetNillableGroupID(v *int64) *RedeemCodeCreate {
+// SetNillablePlanVersionID sets the "plan_version_id" field if the given value is not nil.
+func (_c *RedeemCodeCreate) SetNillablePlanVersionID(v *int64) *RedeemCodeCreate {
 	if v != nil {
-		_c.SetGroupID(*v)
-	}
-	return _c
-}
-
-// SetValidityDays sets the "validity_days" field.
-func (_c *RedeemCodeCreate) SetValidityDays(v int) *RedeemCodeCreate {
-	_c.mutation.SetValidityDays(v)
-	return _c
-}
-
-// SetNillableValidityDays sets the "validity_days" field if the given value is not nil.
-func (_c *RedeemCodeCreate) SetNillableValidityDays(v *int) *RedeemCodeCreate {
-	if v != nil {
-		_c.SetValidityDays(*v)
+		_c.SetPlanVersionID(*v)
 	}
 	return _c
 }
@@ -189,9 +175,9 @@ func (_c *RedeemCodeCreate) SetUser(v *User) *RedeemCodeCreate {
 	return _c.SetUserID(v.ID)
 }
 
-// SetGroup sets the "group" edge to the Group entity.
-func (_c *RedeemCodeCreate) SetGroup(v *Group) *RedeemCodeCreate {
-	return _c.SetGroupID(v.ID)
+// SetPlanVersion sets the "plan_version" edge to the SubscriptionPlanVersion entity.
+func (_c *RedeemCodeCreate) SetPlanVersion(v *SubscriptionPlanVersion) *RedeemCodeCreate {
+	return _c.SetPlanVersionID(v.ID)
 }
 
 // Mutation returns the RedeemCodeMutation object of the builder.
@@ -245,10 +231,6 @@ func (_c *RedeemCodeCreate) defaults() {
 		v := redeemcode.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
 	}
-	if _, ok := _c.mutation.ValidityDays(); !ok {
-		v := redeemcode.DefaultValidityDays
-		_c.mutation.SetValidityDays(v)
-	}
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -282,9 +264,6 @@ func (_c *RedeemCodeCreate) check() error {
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "RedeemCode.created_at"`)}
-	}
-	if _, ok := _c.mutation.ValidityDays(); !ok {
-		return &ValidationError{Name: "validity_days", err: errors.New(`ent: missing required field "RedeemCode.validity_days"`)}
 	}
 	return nil
 }
@@ -345,10 +324,6 @@ func (_c *RedeemCodeCreate) createSpec() (*RedeemCode, *sqlgraph.CreateSpec) {
 		_spec.SetField(redeemcode.FieldExpiresAt, field.TypeTime, value)
 		_node.ExpiresAt = &value
 	}
-	if value, ok := _c.mutation.ValidityDays(); ok {
-		_spec.SetField(redeemcode.FieldValidityDays, field.TypeInt, value)
-		_node.ValidityDays = value
-	}
 	if nodes := _c.mutation.UserIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
@@ -366,21 +341,21 @@ func (_c *RedeemCodeCreate) createSpec() (*RedeemCode, *sqlgraph.CreateSpec) {
 		_node.UsedBy = &nodes[0]
 		_spec.Edges = append(_spec.Edges, edge)
 	}
-	if nodes := _c.mutation.GroupIDs(); len(nodes) > 0 {
+	if nodes := _c.mutation.PlanVersionIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
 			Inverse: true,
-			Table:   redeemcode.GroupTable,
-			Columns: []string{redeemcode.GroupColumn},
+			Table:   redeemcode.PlanVersionTable,
+			Columns: []string{redeemcode.PlanVersionColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(group.FieldID, field.TypeInt64),
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionplanversion.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
-		_node.GroupID = &nodes[0]
+		_node.PlanVersionID = &nodes[0]
 		_spec.Edges = append(_spec.Edges, edge)
 	}
 	return _node, _spec
@@ -561,39 +536,21 @@ func (u *RedeemCodeUpsert) ClearExpiresAt() *RedeemCodeUpsert {
 	return u
 }
 
-// SetGroupID sets the "group_id" field.
-func (u *RedeemCodeUpsert) SetGroupID(v int64) *RedeemCodeUpsert {
-	u.Set(redeemcode.FieldGroupID, v)
+// SetPlanVersionID sets the "plan_version_id" field.
+func (u *RedeemCodeUpsert) SetPlanVersionID(v int64) *RedeemCodeUpsert {
+	u.Set(redeemcode.FieldPlanVersionID, v)
 	return u
 }
 
-// UpdateGroupID sets the "group_id" field to the value that was provided on create.
-func (u *RedeemCodeUpsert) UpdateGroupID() *RedeemCodeUpsert {
-	u.SetExcluded(redeemcode.FieldGroupID)
+// UpdatePlanVersionID sets the "plan_version_id" field to the value that was provided on create.
+func (u *RedeemCodeUpsert) UpdatePlanVersionID() *RedeemCodeUpsert {
+	u.SetExcluded(redeemcode.FieldPlanVersionID)
 	return u
 }
 
-// ClearGroupID clears the value of the "group_id" field.
-func (u *RedeemCodeUpsert) ClearGroupID() *RedeemCodeUpsert {
-	u.SetNull(redeemcode.FieldGroupID)
-	return u
-}
-
-// SetValidityDays sets the "validity_days" field.
-func (u *RedeemCodeUpsert) SetValidityDays(v int) *RedeemCodeUpsert {
-	u.Set(redeemcode.FieldValidityDays, v)
-	return u
-}
-
-// UpdateValidityDays sets the "validity_days" field to the value that was provided on create.
-func (u *RedeemCodeUpsert) UpdateValidityDays() *RedeemCodeUpsert {
-	u.SetExcluded(redeemcode.FieldValidityDays)
-	return u
-}
-
-// AddValidityDays adds v to the "validity_days" field.
-func (u *RedeemCodeUpsert) AddValidityDays(v int) *RedeemCodeUpsert {
-	u.Add(redeemcode.FieldValidityDays, v)
+// ClearPlanVersionID clears the value of the "plan_version_id" field.
+func (u *RedeemCodeUpsert) ClearPlanVersionID() *RedeemCodeUpsert {
+	u.SetNull(redeemcode.FieldPlanVersionID)
 	return u
 }
 
@@ -789,45 +746,24 @@ func (u *RedeemCodeUpsertOne) ClearExpiresAt() *RedeemCodeUpsertOne {
 	})
 }
 
-// SetGroupID sets the "group_id" field.
-func (u *RedeemCodeUpsertOne) SetGroupID(v int64) *RedeemCodeUpsertOne {
+// SetPlanVersionID sets the "plan_version_id" field.
+func (u *RedeemCodeUpsertOne) SetPlanVersionID(v int64) *RedeemCodeUpsertOne {
 	return u.Update(func(s *RedeemCodeUpsert) {
-		s.SetGroupID(v)
+		s.SetPlanVersionID(v)
 	})
 }
 
-// UpdateGroupID sets the "group_id" field to the value that was provided on create.
-func (u *RedeemCodeUpsertOne) UpdateGroupID() *RedeemCodeUpsertOne {
+// UpdatePlanVersionID sets the "plan_version_id" field to the value that was provided on create.
+func (u *RedeemCodeUpsertOne) UpdatePlanVersionID() *RedeemCodeUpsertOne {
 	return u.Update(func(s *RedeemCodeUpsert) {
-		s.UpdateGroupID()
+		s.UpdatePlanVersionID()
 	})
 }
 
-// ClearGroupID clears the value of the "group_id" field.
-func (u *RedeemCodeUpsertOne) ClearGroupID() *RedeemCodeUpsertOne {
+// ClearPlanVersionID clears the value of the "plan_version_id" field.
+func (u *RedeemCodeUpsertOne) ClearPlanVersionID() *RedeemCodeUpsertOne {
 	return u.Update(func(s *RedeemCodeUpsert) {
-		s.ClearGroupID()
-	})
-}
-
-// SetValidityDays sets the "validity_days" field.
-func (u *RedeemCodeUpsertOne) SetValidityDays(v int) *RedeemCodeUpsertOne {
-	return u.Update(func(s *RedeemCodeUpsert) {
-		s.SetValidityDays(v)
-	})
-}
-
-// AddValidityDays adds v to the "validity_days" field.
-func (u *RedeemCodeUpsertOne) AddValidityDays(v int) *RedeemCodeUpsertOne {
-	return u.Update(func(s *RedeemCodeUpsert) {
-		s.AddValidityDays(v)
-	})
-}
-
-// UpdateValidityDays sets the "validity_days" field to the value that was provided on create.
-func (u *RedeemCodeUpsertOne) UpdateValidityDays() *RedeemCodeUpsertOne {
-	return u.Update(func(s *RedeemCodeUpsert) {
-		s.UpdateValidityDays()
+		s.ClearPlanVersionID()
 	})
 }
 
@@ -1189,45 +1125,24 @@ func (u *RedeemCodeUpsertBulk) ClearExpiresAt() *RedeemCodeUpsertBulk {
 	})
 }
 
-// SetGroupID sets the "group_id" field.
-func (u *RedeemCodeUpsertBulk) SetGroupID(v int64) *RedeemCodeUpsertBulk {
+// SetPlanVersionID sets the "plan_version_id" field.
+func (u *RedeemCodeUpsertBulk) SetPlanVersionID(v int64) *RedeemCodeUpsertBulk {
 	return u.Update(func(s *RedeemCodeUpsert) {
-		s.SetGroupID(v)
+		s.SetPlanVersionID(v)
 	})
 }
 
-// UpdateGroupID sets the "group_id" field to the value that was provided on create.
-func (u *RedeemCodeUpsertBulk) UpdateGroupID() *RedeemCodeUpsertBulk {
+// UpdatePlanVersionID sets the "plan_version_id" field to the value that was provided on create.
+func (u *RedeemCodeUpsertBulk) UpdatePlanVersionID() *RedeemCodeUpsertBulk {
 	return u.Update(func(s *RedeemCodeUpsert) {
-		s.UpdateGroupID()
+		s.UpdatePlanVersionID()
 	})
 }
 
-// ClearGroupID clears the value of the "group_id" field.
-func (u *RedeemCodeUpsertBulk) ClearGroupID() *RedeemCodeUpsertBulk {
+// ClearPlanVersionID clears the value of the "plan_version_id" field.
+func (u *RedeemCodeUpsertBulk) ClearPlanVersionID() *RedeemCodeUpsertBulk {
 	return u.Update(func(s *RedeemCodeUpsert) {
-		s.ClearGroupID()
-	})
-}
-
-// SetValidityDays sets the "validity_days" field.
-func (u *RedeemCodeUpsertBulk) SetValidityDays(v int) *RedeemCodeUpsertBulk {
-	return u.Update(func(s *RedeemCodeUpsert) {
-		s.SetValidityDays(v)
-	})
-}
-
-// AddValidityDays adds v to the "validity_days" field.
-func (u *RedeemCodeUpsertBulk) AddValidityDays(v int) *RedeemCodeUpsertBulk {
-	return u.Update(func(s *RedeemCodeUpsert) {
-		s.AddValidityDays(v)
-	})
-}
-
-// UpdateValidityDays sets the "validity_days" field to the value that was provided on create.
-func (u *RedeemCodeUpsertBulk) UpdateValidityDays() *RedeemCodeUpsertBulk {
-	return u.Update(func(s *RedeemCodeUpsert) {
-		s.UpdateValidityDays()
+		s.ClearPlanVersionID()
 	})
 }
 

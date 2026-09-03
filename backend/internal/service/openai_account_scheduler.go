@@ -1521,6 +1521,8 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	if len(accounts) == 0 {
 		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, openAISelectionFilterStats{}.summary(""))
 	}
+	ctx = withSchedulerFreshnessAccounts(ctx, s.service.accountRepo, s.service.schedulerSnapshot, accounts)
+	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
 	// Local free-tier soft gate on the Grok scheduling path only (not admin probe).
 	accounts = s.filterGrokFreeQuotaAccounts(ctx, accounts)
 	if len(accounts) == 0 {
@@ -1876,6 +1878,9 @@ func (s *defaultOpenAIAccountScheduler) isAccountTransportCompatible(account *Ac
 func (s *defaultOpenAIAccountScheduler) lookupShadowParentAccount(ctx context.Context, id int64) *Account {
 	if s == nil || s.service == nil {
 		return nil
+	}
+	if account, known := schedulerFreshnessLookupResult(ctx, id); known {
+		return account
 	}
 	if s.service.schedulerSnapshot != nil {
 		if account, err := s.service.schedulerSnapshot.GetAccount(ctx, id); err == nil && account != nil {
@@ -2236,6 +2241,55 @@ func (s *OpenAIGatewayService) SelectAccountWithScheduler(
 	return s.selectAccountWithScheduler(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, "", "", requireCompact, PlatformOpenAI, false, true)
 }
 
+func (s *OpenAIGatewayService) PrepareSchedulerRequestContext(ctx context.Context) context.Context {
+	if s == nil || ctx == nil {
+		return ctx
+	}
+	return withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+}
+
+func (s *OpenAIGatewayService) RefreshSchedulerRequestContext(ctx context.Context) context.Context {
+	if s == nil || ctx == nil {
+		return ctx
+	}
+	return refreshSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
+}
+
+func (s *OpenAIGatewayService) RefreshSchedulerAccountFreshness(ctx context.Context, account *Account, groupID *int64, requestedModel string) (*Account, bool) {
+	if s == nil || account == nil {
+		return nil, false
+	}
+	expectedPlatform := account.Platform
+	expectedType := account.Type
+	fresh := account
+	state := schedulerFreshnessFromContext(ctx)
+	if state != nil && state.enabled() {
+		var ok bool
+		fresh, ok = state.apply(ctx, account)
+		if !ok {
+			return nil, false
+		}
+	}
+	if fresh.Platform != expectedPlatform || fresh.Type != expectedType ||
+		!fresh.IsSchedulable() || !s.openAIAccountMatchesSchedulingGroup(fresh, groupID) {
+		return nil, false
+	}
+	if s.openAIGroupRequiresPrivacySet(ctx, groupID) && !fresh.IsPrivacySet() {
+		return nil, false
+	}
+	if requestedModel != "" && !fresh.IsSchedulableForModelWithContext(ctx, requestedModel) {
+		return nil, false
+	}
+	if !parentHealthyForShadow(fresh, s.parentAccountLookup(ctx)) ||
+		s.isOpenAIAccountRequestRuntimeBlocked(fresh, requestedModel) ||
+		s.isOpenAIProxyStreamQuarantined(ctx, fresh) ||
+		s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, fresh) {
+		return nil, false
+	}
+	rememberSchedulerHydratedAccount(ctx, fresh)
+	return fresh, true
+}
+
 // SelectAccountWithSchedulerForCapability 按能力要求调度账号。
 // previousResponseCanMove 表示首包 input 可自行重建工具续链，previous_response_id 允许跨账号迁移
 // （粘性加权模式下改为加权偏好而非硬粘连）。
@@ -2369,6 +2423,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)
+	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 	// 分组利润控制：唯一文本调度入口的防御性装门。handler 文本
 	// 入口已在请求开始经 WithOpenAIRequestPricingContext 装门并固定 pricingAt，
 	// 此处对同分组门直接复用（failover 重入阈值稳定），仅为不经 handler 装配的

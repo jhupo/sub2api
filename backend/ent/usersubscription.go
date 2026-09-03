@@ -9,7 +9,8 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-	"github.com/Wei-Shaw/sub2api/ent/group"
+	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
+	"github.com/Wei-Shaw/sub2api/ent/subscriptionplanversion"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 )
@@ -27,8 +28,10 @@ type UserSubscription struct {
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 	// UserID holds the value of the "user_id" field.
 	UserID int64 `json:"user_id,omitempty"`
-	// GroupID holds the value of the "group_id" field.
-	GroupID int64 `json:"group_id,omitempty"`
+	// PlanID holds the value of the "plan_id" field.
+	PlanID int64 `json:"plan_id,omitempty"`
+	// PlanVersionID holds the value of the "plan_version_id" field.
+	PlanVersionID int64 `json:"plan_version_id,omitempty"`
 	// StartsAt holds the value of the "starts_at" field.
 	StartsAt time.Time `json:"starts_at,omitempty"`
 	// ExpiresAt holds the value of the "expires_at" field.
@@ -47,6 +50,12 @@ type UserSubscription struct {
 	WeeklyUsageUsd float64 `json:"weekly_usage_usd,omitempty"`
 	// MonthlyUsageUsd holds the value of the "monthly_usage_usd" field.
 	MonthlyUsageUsd float64 `json:"monthly_usage_usd,omitempty"`
+	// DailyReservedUsd holds the value of the "daily_reserved_usd" field.
+	DailyReservedUsd float64 `json:"daily_reserved_usd,omitempty"`
+	// WeeklyReservedUsd holds the value of the "weekly_reserved_usd" field.
+	WeeklyReservedUsd float64 `json:"weekly_reserved_usd,omitempty"`
+	// MonthlyReservedUsd holds the value of the "monthly_reserved_usd" field.
+	MonthlyReservedUsd float64 `json:"monthly_reserved_usd,omitempty"`
 	// AssignedBy holds the value of the "assigned_by" field.
 	AssignedBy *int64 `json:"assigned_by,omitempty"`
 	// AssignedAt holds the value of the "assigned_at" field.
@@ -63,15 +72,19 @@ type UserSubscription struct {
 type UserSubscriptionEdges struct {
 	// User holds the value of the user edge.
 	User *User `json:"user,omitempty"`
-	// Group holds the value of the group edge.
-	Group *Group `json:"group,omitempty"`
+	// Plan holds the value of the plan edge.
+	Plan *SubscriptionPlan `json:"plan,omitempty"`
+	// PlanVersion holds the value of the plan_version edge.
+	PlanVersion *SubscriptionPlanVersion `json:"plan_version,omitempty"`
 	// AssignedByUser holds the value of the assigned_by_user edge.
 	AssignedByUser *User `json:"assigned_by_user,omitempty"`
 	// UsageLogs holds the value of the usage_logs edge.
 	UsageLogs []*UsageLog `json:"usage_logs,omitempty"`
+	// APIKeys holds the value of the api_keys edge.
+	APIKeys []*APIKey `json:"api_keys,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [4]bool
+	loadedTypes [6]bool
 }
 
 // UserOrErr returns the User value or an error if the edge
@@ -85,15 +98,26 @@ func (e UserSubscriptionEdges) UserOrErr() (*User, error) {
 	return nil, &NotLoadedError{edge: "user"}
 }
 
-// GroupOrErr returns the Group value or an error if the edge
+// PlanOrErr returns the Plan value or an error if the edge
 // was not loaded in eager-loading, or loaded but was not found.
-func (e UserSubscriptionEdges) GroupOrErr() (*Group, error) {
-	if e.Group != nil {
-		return e.Group, nil
+func (e UserSubscriptionEdges) PlanOrErr() (*SubscriptionPlan, error) {
+	if e.Plan != nil {
+		return e.Plan, nil
 	} else if e.loadedTypes[1] {
-		return nil, &NotFoundError{label: group.Label}
+		return nil, &NotFoundError{label: subscriptionplan.Label}
 	}
-	return nil, &NotLoadedError{edge: "group"}
+	return nil, &NotLoadedError{edge: "plan"}
+}
+
+// PlanVersionOrErr returns the PlanVersion value or an error if the edge
+// was not loaded in eager-loading, or loaded but was not found.
+func (e UserSubscriptionEdges) PlanVersionOrErr() (*SubscriptionPlanVersion, error) {
+	if e.PlanVersion != nil {
+		return e.PlanVersion, nil
+	} else if e.loadedTypes[2] {
+		return nil, &NotFoundError{label: subscriptionplanversion.Label}
+	}
+	return nil, &NotLoadedError{edge: "plan_version"}
 }
 
 // AssignedByUserOrErr returns the AssignedByUser value or an error if the edge
@@ -101,7 +125,7 @@ func (e UserSubscriptionEdges) GroupOrErr() (*Group, error) {
 func (e UserSubscriptionEdges) AssignedByUserOrErr() (*User, error) {
 	if e.AssignedByUser != nil {
 		return e.AssignedByUser, nil
-	} else if e.loadedTypes[2] {
+	} else if e.loadedTypes[3] {
 		return nil, &NotFoundError{label: user.Label}
 	}
 	return nil, &NotLoadedError{edge: "assigned_by_user"}
@@ -110,10 +134,19 @@ func (e UserSubscriptionEdges) AssignedByUserOrErr() (*User, error) {
 // UsageLogsOrErr returns the UsageLogs value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserSubscriptionEdges) UsageLogsOrErr() ([]*UsageLog, error) {
-	if e.loadedTypes[3] {
+	if e.loadedTypes[4] {
 		return e.UsageLogs, nil
 	}
 	return nil, &NotLoadedError{edge: "usage_logs"}
+}
+
+// APIKeysOrErr returns the APIKeys value or an error if the edge
+// was not loaded in eager-loading.
+func (e UserSubscriptionEdges) APIKeysOrErr() ([]*APIKey, error) {
+	if e.loadedTypes[5] {
+		return e.APIKeys, nil
+	}
+	return nil, &NotLoadedError{edge: "api_keys"}
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -121,9 +154,9 @@ func (*UserSubscription) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd:
+		case usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd, usersubscription.FieldDailyReservedUsd, usersubscription.FieldWeeklyReservedUsd, usersubscription.FieldMonthlyReservedUsd:
 			values[i] = new(sql.NullFloat64)
-		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldGroupID, usersubscription.FieldAssignedBy:
+		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldPlanID, usersubscription.FieldPlanVersionID, usersubscription.FieldAssignedBy:
 			values[i] = new(sql.NullInt64)
 		case usersubscription.FieldStatus, usersubscription.FieldNotes:
 			values[i] = new(sql.NullString)
@@ -175,11 +208,17 @@ func (_m *UserSubscription) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.UserID = value.Int64
 			}
-		case usersubscription.FieldGroupID:
+		case usersubscription.FieldPlanID:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field group_id", values[i])
+				return fmt.Errorf("unexpected type %T for field plan_id", values[i])
 			} else if value.Valid {
-				_m.GroupID = value.Int64
+				_m.PlanID = value.Int64
+			}
+		case usersubscription.FieldPlanVersionID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field plan_version_id", values[i])
+			} else if value.Valid {
+				_m.PlanVersionID = value.Int64
 			}
 		case usersubscription.FieldStartsAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -238,6 +277,24 @@ func (_m *UserSubscription) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.MonthlyUsageUsd = value.Float64
 			}
+		case usersubscription.FieldDailyReservedUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field daily_reserved_usd", values[i])
+			} else if value.Valid {
+				_m.DailyReservedUsd = value.Float64
+			}
+		case usersubscription.FieldWeeklyReservedUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field weekly_reserved_usd", values[i])
+			} else if value.Valid {
+				_m.WeeklyReservedUsd = value.Float64
+			}
+		case usersubscription.FieldMonthlyReservedUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field monthly_reserved_usd", values[i])
+			} else if value.Valid {
+				_m.MonthlyReservedUsd = value.Float64
+			}
 		case usersubscription.FieldAssignedBy:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field assigned_by", values[i])
@@ -276,9 +333,14 @@ func (_m *UserSubscription) QueryUser() *UserQuery {
 	return NewUserSubscriptionClient(_m.config).QueryUser(_m)
 }
 
-// QueryGroup queries the "group" edge of the UserSubscription entity.
-func (_m *UserSubscription) QueryGroup() *GroupQuery {
-	return NewUserSubscriptionClient(_m.config).QueryGroup(_m)
+// QueryPlan queries the "plan" edge of the UserSubscription entity.
+func (_m *UserSubscription) QueryPlan() *SubscriptionPlanQuery {
+	return NewUserSubscriptionClient(_m.config).QueryPlan(_m)
+}
+
+// QueryPlanVersion queries the "plan_version" edge of the UserSubscription entity.
+func (_m *UserSubscription) QueryPlanVersion() *SubscriptionPlanVersionQuery {
+	return NewUserSubscriptionClient(_m.config).QueryPlanVersion(_m)
 }
 
 // QueryAssignedByUser queries the "assigned_by_user" edge of the UserSubscription entity.
@@ -289,6 +351,11 @@ func (_m *UserSubscription) QueryAssignedByUser() *UserQuery {
 // QueryUsageLogs queries the "usage_logs" edge of the UserSubscription entity.
 func (_m *UserSubscription) QueryUsageLogs() *UsageLogQuery {
 	return NewUserSubscriptionClient(_m.config).QueryUsageLogs(_m)
+}
+
+// QueryAPIKeys queries the "api_keys" edge of the UserSubscription entity.
+func (_m *UserSubscription) QueryAPIKeys() *APIKeyQuery {
+	return NewUserSubscriptionClient(_m.config).QueryAPIKeys(_m)
 }
 
 // Update returns a builder for updating this UserSubscription.
@@ -328,8 +395,11 @@ func (_m *UserSubscription) String() string {
 	builder.WriteString("user_id=")
 	builder.WriteString(fmt.Sprintf("%v", _m.UserID))
 	builder.WriteString(", ")
-	builder.WriteString("group_id=")
-	builder.WriteString(fmt.Sprintf("%v", _m.GroupID))
+	builder.WriteString("plan_id=")
+	builder.WriteString(fmt.Sprintf("%v", _m.PlanID))
+	builder.WriteString(", ")
+	builder.WriteString("plan_version_id=")
+	builder.WriteString(fmt.Sprintf("%v", _m.PlanVersionID))
 	builder.WriteString(", ")
 	builder.WriteString("starts_at=")
 	builder.WriteString(_m.StartsAt.Format(time.ANSIC))
@@ -363,6 +433,15 @@ func (_m *UserSubscription) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("monthly_usage_usd=")
 	builder.WriteString(fmt.Sprintf("%v", _m.MonthlyUsageUsd))
+	builder.WriteString(", ")
+	builder.WriteString("daily_reserved_usd=")
+	builder.WriteString(fmt.Sprintf("%v", _m.DailyReservedUsd))
+	builder.WriteString(", ")
+	builder.WriteString("weekly_reserved_usd=")
+	builder.WriteString(fmt.Sprintf("%v", _m.WeeklyReservedUsd))
+	builder.WriteString(", ")
+	builder.WriteString("monthly_reserved_usd=")
+	builder.WriteString(fmt.Sprintf("%v", _m.MonthlyReservedUsd))
 	builder.WriteString(", ")
 	if v := _m.AssignedBy; v != nil {
 		builder.WriteString("assigned_by=")

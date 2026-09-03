@@ -5,9 +5,9 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
-	"github.com/Wei-Shaw/sub2api/ent/group"
-	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
+	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
+	"github.com/Wei-Shaw/sub2api/ent/subscriptionplanversion"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -22,15 +22,19 @@ func NewUserSubscriptionRepository(client *dbent.Client) service.UserSubscriptio
 	return &userSubscriptionRepository{client: client}
 }
 
+func withSubscriptionRelations(query *dbent.UserSubscriptionQuery) *dbent.UserSubscriptionQuery {
+	return query.WithUser().WithPlan().WithPlanVersion().WithAssignedByUser()
+}
+
 func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.UserSubscription) error {
 	if sub == nil {
 		return service.ErrSubscriptionNilInput
 	}
-
 	client := clientFromContext(ctx, r.client)
 	builder := client.UserSubscription.Create().
 		SetUserID(sub.UserID).
-		SetGroupID(sub.GroupID).
+		SetPlanID(sub.PlanID).
+		SetPlanVersionID(sub.PlanVersionID).
 		SetExpiresAt(sub.ExpiresAt).
 		SetNillableDailyWindowStart(sub.DailyWindowStart).
 		SetNillableWeeklyWindowStart(sub.WeeklyWindowStart).
@@ -38,8 +42,11 @@ func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.Us
 		SetDailyUsageUsd(sub.DailyUsageUSD).
 		SetWeeklyUsageUsd(sub.WeeklyUsageUSD).
 		SetMonthlyUsageUsd(sub.MonthlyUsageUSD).
-		SetNillableAssignedBy(sub.AssignedBy)
-
+		SetDailyReservedUsd(sub.DailyReservedUSD).
+		SetWeeklyReservedUsd(sub.WeeklyReservedUSD).
+		SetMonthlyReservedUsd(sub.MonthlyReservedUSD).
+		SetNillableAssignedBy(sub.AssignedBy).
+		SetNotes(sub.Notes)
 	if sub.StartsAt.IsZero() {
 		builder.SetStartsAt(time.Now())
 	} else {
@@ -51,9 +58,6 @@ func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.Us
 	if !sub.AssignedAt.IsZero() {
 		builder.SetAssignedAt(sub.AssignedAt)
 	}
-	// Keep compatibility with historical behavior: always store notes as a string value.
-	builder.SetNotes(sub.Notes)
-
 	created, err := builder.Save(ctx)
 	if err == nil {
 		applyUserSubscriptionEntityToService(sub, created)
@@ -63,12 +67,7 @@ func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.Us
 
 func (r *userSubscriptionRepository) GetByID(ctx context.Context, id int64) (*service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
-	m, err := client.UserSubscription.Query().
-		Where(usersubscription.IDEQ(id)).
-		WithUser().
-		WithGroup().
-		WithAssignedByUser().
-		Only(ctx)
+	m, err := withSubscriptionRelations(client.UserSubscription.Query().Where(usersubscription.IDEQ(id))).Only(ctx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 	}
@@ -77,10 +76,10 @@ func (r *userSubscriptionRepository) GetByID(ctx context.Context, id int64) (*se
 
 func (r *userSubscriptionRepository) GetByIDForUpdate(ctx context.Context, id int64) (*service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
-	m, err := client.UserSubscription.Query().
-		Where(usersubscription.IDEQ(id)).
-		ForUpdate().
-		Only(ctx)
+	// This method is used by mutation paths that need a row lock. Keep it as a
+	// single-row read: relation hydration would issue additional queries outside
+	// the locked statement and adds avoidable contention to renewal/maintenance.
+	m, err := client.UserSubscription.Query().Where(usersubscription.IDEQ(id)).ForUpdate().Only(ctx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 	}
@@ -90,41 +89,35 @@ func (r *userSubscriptionRepository) GetByIDForUpdate(ctx context.Context, id in
 func (r *userSubscriptionRepository) GetByIDIncludeDeleted(ctx context.Context, id int64) (*service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
 	queryCtx := mixins.SkipSoftDelete(ctx)
-	m, err := client.UserSubscription.Query().
-		Where(usersubscription.IDEQ(id)).
-		WithUser().
-		WithGroup().
-		WithAssignedByUser().
-		Only(queryCtx)
+	m, err := withSubscriptionRelations(client.UserSubscription.Query().Where(usersubscription.IDEQ(id))).Only(queryCtx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 	}
 	return userSubscriptionEntityToServicePreserveStatus(m), nil
 }
 
-func (r *userSubscriptionRepository) GetByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*service.UserSubscription, error) {
+func (r *userSubscriptionRepository) GetByUserIDAndPlanVersionID(ctx context.Context, userID, planVersionID int64) (*service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
-	m, err := client.UserSubscription.Query().
-		Where(usersubscription.UserIDEQ(userID), usersubscription.GroupIDEQ(groupID)).
-		WithGroup().
-		Only(ctx)
+	m, err := withSubscriptionRelations(client.UserSubscription.Query().Where(
+		usersubscription.UserIDEQ(userID),
+		usersubscription.PlanVersionIDEQ(planVersionID),
+	)).ForUpdate().Only(ctx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 	}
 	return userSubscriptionEntityToService(m), nil
 }
 
-func (r *userSubscriptionRepository) GetActiveByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*service.UserSubscription, error) {
+func (r *userSubscriptionRepository) GetActiveByUserIDAndPlanID(ctx context.Context, userID, planID int64) (*service.UserSubscription, error) {
+	now := time.Now()
 	client := clientFromContext(ctx, r.client)
-	m, err := client.UserSubscription.Query().
-		Where(
-			usersubscription.UserIDEQ(userID),
-			usersubscription.GroupIDEQ(groupID),
-			usersubscription.StatusEQ(service.SubscriptionStatusActive),
-			usersubscription.ExpiresAtGT(time.Now()),
-		).
-		WithGroup().
-		Only(ctx)
+	m, err := withSubscriptionRelations(client.UserSubscription.Query().Where(
+		usersubscription.UserIDEQ(userID),
+		usersubscription.PlanIDEQ(planID),
+		usersubscription.StatusEQ(service.SubscriptionStatusActive),
+		usersubscription.StartsAtLTE(now),
+		usersubscription.ExpiresAtGT(now),
+	)).Only(ctx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 	}
@@ -135,11 +128,11 @@ func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.Us
 	if sub == nil {
 		return service.ErrSubscriptionNilInput
 	}
-
 	client := clientFromContext(ctx, r.client)
-	builder := client.UserSubscription.UpdateOneID(sub.ID).
+	updated, err := client.UserSubscription.UpdateOneID(sub.ID).
 		SetUserID(sub.UserID).
-		SetGroupID(sub.GroupID).
+		SetPlanID(sub.PlanID).
+		SetPlanVersionID(sub.PlanVersionID).
 		SetStartsAt(sub.StartsAt).
 		SetExpiresAt(sub.ExpiresAt).
 		SetStatus(sub.Status).
@@ -149,11 +142,13 @@ func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.Us
 		SetDailyUsageUsd(sub.DailyUsageUSD).
 		SetWeeklyUsageUsd(sub.WeeklyUsageUSD).
 		SetMonthlyUsageUsd(sub.MonthlyUsageUSD).
+		SetDailyReservedUsd(sub.DailyReservedUSD).
+		SetWeeklyReservedUsd(sub.WeeklyReservedUSD).
+		SetMonthlyReservedUsd(sub.MonthlyReservedUSD).
 		SetNillableAssignedBy(sub.AssignedBy).
 		SetAssignedAt(sub.AssignedAt).
-		SetNotes(sub.Notes)
-
-	updated, err := builder.Save(ctx)
+		SetNotes(sub.Notes).
+		Save(ctx)
 	if err == nil {
 		applyUserSubscriptionEntityToService(sub, updated)
 		return nil
@@ -162,286 +157,227 @@ func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.Us
 }
 
 func (r *userSubscriptionRepository) Delete(ctx context.Context, id int64) error {
-	// Match GORM semantics: deleting a missing row is not an error.
 	client := clientFromContext(ctx, r.client)
 	_, err := client.UserSubscription.Delete().Where(usersubscription.IDEQ(id)).Exec(ctx)
 	return err
 }
 
-func (r *userSubscriptionRepository) Restore(ctx context.Context, subscriptionID int64, restoredStatus string) (*service.UserSubscription, error) {
+func (r *userSubscriptionRepository) Restore(ctx context.Context, id int64, status string) (*service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
 	queryCtx := mixins.SkipSoftDelete(ctx)
-	_, err := client.UserSubscription.UpdateOneID(subscriptionID).
-		SetStatus(restoredStatus).
-		ClearDeletedAt().
-		SetUpdatedAt(time.Now()).
-		Save(queryCtx)
+	_, err := client.UserSubscription.UpdateOneID(id).SetStatus(status).ClearDeletedAt().SetUpdatedAt(time.Now()).Save(queryCtx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, service.ErrSubscriptionRestoreConflict)
 	}
-	return r.GetByID(ctx, subscriptionID)
+	return r.GetByID(ctx, id)
 }
 
 func (r *userSubscriptionRepository) ListByUserID(ctx context.Context, userID int64) ([]service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
-	subs, err := client.UserSubscription.Query().
-		Where(usersubscription.UserIDEQ(userID)).
-		WithGroup().
-		Order(dbent.Desc(usersubscription.FieldCreatedAt)).
-		All(ctx)
+	rows, err := withSubscriptionRelations(client.UserSubscription.Query().Where(usersubscription.UserIDEQ(userID))).
+		Order(dbent.Desc(usersubscription.FieldCreatedAt)).All(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return userSubscriptionEntitiesToService(subs), nil
+	return userSubscriptionEntitiesToService(rows), nil
 }
 
 func (r *userSubscriptionRepository) ListActiveByUserID(ctx context.Context, userID int64) ([]service.UserSubscription, error) {
+	now := time.Now()
 	client := clientFromContext(ctx, r.client)
-	subs, err := client.UserSubscription.Query().
-		Where(
-			usersubscription.UserIDEQ(userID),
-			usersubscription.StatusEQ(service.SubscriptionStatusActive),
-			usersubscription.ExpiresAtGT(time.Now()),
-		).
-		WithGroup().
-		Order(dbent.Desc(usersubscription.FieldCreatedAt)).
-		All(ctx)
+	rows, err := withSubscriptionRelations(client.UserSubscription.Query().Where(
+		usersubscription.UserIDEQ(userID),
+		usersubscription.StatusEQ(service.SubscriptionStatusActive),
+		usersubscription.StartsAtLTE(now),
+		usersubscription.ExpiresAtGT(now),
+	)).Order(dbent.Desc(usersubscription.FieldCreatedAt)).All(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return userSubscriptionEntitiesToService(subs), nil
+	return userSubscriptionEntitiesToService(rows), nil
 }
 
-func (r *userSubscriptionRepository) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]service.UserSubscription, *pagination.PaginationResult, error) {
+func (r *userSubscriptionRepository) ListByPlanID(ctx context.Context, planID int64, params pagination.PaginationParams) ([]service.UserSubscription, *pagination.PaginationResult, error) {
 	client := clientFromContext(ctx, r.client)
-	q := client.UserSubscription.Query().Where(usersubscription.GroupIDEQ(groupID))
-
-	total, err := q.Clone().Count(ctx)
+	query := client.UserSubscription.Query().Where(usersubscription.PlanIDEQ(planID))
+	total, err := query.Clone().Count(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	subs, err := q.
-		WithUser().
-		WithGroup().
-		Order(dbent.Desc(usersubscription.FieldCreatedAt)).
-		Offset(params.Offset()).
-		Limit(params.Limit()).
-		All(ctx)
+	rows, err := withSubscriptionRelations(query).Order(dbent.Desc(usersubscription.FieldCreatedAt)).
+		Offset(params.Offset()).Limit(params.Limit()).All(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	return userSubscriptionEntitiesToService(subs), paginationResultFromTotal(int64(total), params), nil
+	return userSubscriptionEntitiesToService(rows), paginationResultFromTotal(int64(total), params), nil
 }
 
-func (r *userSubscriptionRepository) List(ctx context.Context, params pagination.PaginationParams, userID, groupID *int64, status, platform, sortBy, sortOrder string) ([]service.UserSubscription, *pagination.PaginationResult, error) {
+func (r *userSubscriptionRepository) List(ctx context.Context, params pagination.PaginationParams, userID, planID *int64, status, sortBy, sortOrder string) ([]service.UserSubscription, *pagination.PaginationResult, error) {
 	client := clientFromContext(ctx, r.client)
-	q := client.UserSubscription.Query()
-	includeSoftDeleted := status == "" || status == service.SubscriptionStatusRevoked
+	query := client.UserSubscription.Query()
+	includeDeleted := status == "" || status == service.SubscriptionStatusRevoked
 	if userID != nil {
-		q = q.Where(usersubscription.UserIDEQ(*userID))
+		query = query.Where(usersubscription.UserIDEQ(*userID))
 	}
-	if groupID != nil {
-		q = q.Where(usersubscription.GroupIDEQ(*groupID))
+	if planID != nil {
+		query = query.Where(usersubscription.PlanIDEQ(*planID))
 	}
-	if platform != "" {
-		groupPredicates := []predicate.Group{group.PlatformEQ(platform)}
-		if includeSoftDeleted {
-			groupPredicates = append(groupPredicates, group.DeletedAtIsNil())
-		}
-		q = q.Where(usersubscription.HasGroupWith(groupPredicates...))
-	}
-
-	// Status filtering with real-time expiration check
 	now := time.Now()
 	switch status {
 	case service.SubscriptionStatusActive:
-		// Active: status is active AND not yet expired
-		q = q.Where(
-			usersubscription.StatusEQ(service.SubscriptionStatusActive),
-			usersubscription.ExpiresAtGT(now),
-		)
+		query = query.Where(usersubscription.StatusEQ(service.SubscriptionStatusActive), usersubscription.StartsAtLTE(now), usersubscription.ExpiresAtGT(now))
 	case service.SubscriptionStatusExpired:
-		// Expired: status is expired OR (status is active but already expired)
-		q = q.Where(
-			usersubscription.Or(
-				usersubscription.StatusEQ(service.SubscriptionStatusExpired),
-				usersubscription.And(
-					usersubscription.StatusEQ(service.SubscriptionStatusActive),
-					usersubscription.ExpiresAtLTE(now),
-				),
-			),
-		)
+		query = query.Where(usersubscription.Or(
+			usersubscription.StatusEQ(service.SubscriptionStatusExpired),
+			usersubscription.And(usersubscription.StatusEQ(service.SubscriptionStatusActive), usersubscription.ExpiresAtLTE(now)),
+		))
 	case service.SubscriptionStatusRevoked:
-		// Revoked is a DTO/API display state backed by user_subscriptions.deleted_at.
-		q = q.Where(usersubscription.DeletedAtNotNil())
+		query = query.Where(usersubscription.DeletedAtNotNil())
 	case "":
-		// No filter. Use SkipSoftDelete below so admin "all status" includes revoked history.
 	default:
-		// Other persisted status.
-		q = q.Where(usersubscription.StatusEQ(status))
+		query = query.Where(usersubscription.StatusEQ(status))
 	}
-
 	queryCtx := ctx
-	if includeSoftDeleted {
+	if includeDeleted {
 		queryCtx = mixins.SkipSoftDelete(ctx)
 	}
-
-	total, err := q.Clone().Count(queryCtx)
+	total, err := query.Clone().Count(queryCtx)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	if !includeSoftDeleted {
-		q = q.WithUser().WithGroup().WithAssignedByUser()
+	if !includeDeleted {
+		query = withSubscriptionRelations(query)
 	}
-
-	// Determine sort field
-	var field string
-	switch sortBy {
-	case "expires_at":
+	field := usersubscription.FieldCreatedAt
+	if sortBy == "expires_at" {
 		field = usersubscription.FieldExpiresAt
-	case "status":
+	} else if sortBy == "status" {
 		field = usersubscription.FieldStatus
-	default:
-		field = usersubscription.FieldCreatedAt
 	}
-
-	// Determine sort order (default: desc)
 	if sortOrder == "asc" && sortBy != "" {
-		q = q.Order(dbent.Asc(field))
+		query = query.Order(dbent.Asc(field))
 	} else {
-		q = q.Order(dbent.Desc(field))
+		query = query.Order(dbent.Desc(field))
 	}
-
-	subs, err := q.
-		Offset(params.Offset()).
-		Limit(params.Limit()).
-		All(queryCtx)
+	rows, err := query.Offset(params.Offset()).Limit(params.Limit()).All(queryCtx)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	result := userSubscriptionEntitiesToService(subs)
-	if includeSoftDeleted {
+	result := userSubscriptionEntitiesToService(rows)
+	if includeDeleted {
 		if err := r.attachUserSubscriptionRelations(ctx, result); err != nil {
 			return nil, nil, err
 		}
 	}
-
 	return result, paginationResultFromTotal(int64(total), params), nil
 }
 
-func (r *userSubscriptionRepository) ExistsByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (bool, error) {
+func (r *userSubscriptionRepository) ExistsByUserIDAndPlanID(ctx context.Context, userID, planID int64) (bool, error) {
 	client := clientFromContext(ctx, r.client)
-	return client.UserSubscription.Query().
-		Where(usersubscription.UserIDEQ(userID), usersubscription.GroupIDEQ(groupID)).
-		Exist(ctx)
+	return client.UserSubscription.Query().Where(usersubscription.UserIDEQ(userID), usersubscription.PlanIDEQ(planID)).Exist(ctx)
 }
 
-func (r *userSubscriptionRepository) ExistsActiveByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (bool, error) {
-	return r.ExistsByUserIDAndGroupID(ctx, userID, groupID)
+func (r *userSubscriptionRepository) ExistsActiveByUserIDAndPlanVersionID(ctx context.Context, userID, planVersionID int64) (bool, error) {
+	now := time.Now()
+	client := clientFromContext(ctx, r.client)
+	return client.UserSubscription.Query().Where(
+		usersubscription.UserIDEQ(userID), usersubscription.PlanVersionIDEQ(planVersionID),
+		usersubscription.StatusEQ(service.SubscriptionStatusActive), usersubscription.StartsAtLTE(now), usersubscription.ExpiresAtGT(now),
+	).Exist(ctx)
 }
 
-func (r *userSubscriptionRepository) ExtendExpiry(ctx context.Context, subscriptionID int64, newExpiresAt time.Time) error {
+func (r *userSubscriptionRepository) ExtendExpiry(ctx context.Context, id int64, expiresAt time.Time) error {
 	client := clientFromContext(ctx, r.client)
-	_, err := client.UserSubscription.UpdateOneID(subscriptionID).
-		SetExpiresAt(newExpiresAt).
-		Save(ctx)
+	_, err := client.UserSubscription.UpdateOneID(id).SetExpiresAt(expiresAt).Save(ctx)
 	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 }
 
-func (r *userSubscriptionRepository) UpdateStatus(ctx context.Context, subscriptionID int64, status string) error {
+func (r *userSubscriptionRepository) UpdateStatus(ctx context.Context, id int64, status string) error {
 	client := clientFromContext(ctx, r.client)
-	_, err := client.UserSubscription.UpdateOneID(subscriptionID).
-		SetStatus(status).
-		Save(ctx)
+	_, err := client.UserSubscription.UpdateOneID(id).SetStatus(status).Save(ctx)
 	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 }
 
-func (r *userSubscriptionRepository) UpdateNotes(ctx context.Context, subscriptionID int64, notes string) error {
+func (r *userSubscriptionRepository) UpdateNotes(ctx context.Context, id int64, notes string) error {
 	client := clientFromContext(ctx, r.client)
-	_, err := client.UserSubscription.UpdateOneID(subscriptionID).
-		SetNotes(notes).
-		Save(ctx)
+	_, err := client.UserSubscription.UpdateOneID(id).SetNotes(notes).Save(ctx)
 	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 }
 
 func (r *userSubscriptionRepository) ActivateWindows(ctx context.Context, id int64, dailyStart, periodicStart time.Time) error {
 	client := clientFromContext(ctx, r.client)
-	n, err := client.UserSubscription.Update().
-		Where(
-			usersubscription.IDEQ(id),
-			usersubscription.DailyWindowStartIsNil(),
-			usersubscription.WeeklyWindowStartIsNil(),
-			usersubscription.MonthlyWindowStartIsNil(),
-		).
-		SetDailyWindowStart(dailyStart).
-		SetWeeklyWindowStart(periodicStart).
-		SetMonthlyWindowStart(periodicStart).
-		Save(ctx)
+	n, err := client.UserSubscription.Update().Where(
+		usersubscription.IDEQ(id), usersubscription.DailyWindowStartIsNil(),
+		usersubscription.WeeklyWindowStartIsNil(), usersubscription.MonthlyWindowStartIsNil(),
+	).SetDailyWindowStart(dailyStart).SetWeeklyWindowStart(periodicStart).SetMonthlyWindowStart(periodicStart).Save(ctx)
 	return r.translateConditionalWindowReset(ctx, client, id, n, err)
 }
 
 func (r *userSubscriptionRepository) ResetUsageWindows(ctx context.Context, id int64, resetDaily, resetWeekly, resetMonthly bool, dailyStart, periodicStart time.Time) error {
 	client := clientFromContext(ctx, r.client)
-	update := client.UserSubscription.UpdateOneID(id)
+	update := client.UserSubscription.Update().Where(usersubscription.IDEQ(id))
 	if resetDaily {
+		update.Where(usersubscription.DailyReservedUsdEQ(0))
 		update.SetDailyUsageUsd(0).SetDailyWindowStart(dailyStart)
 	}
 	if resetWeekly {
+		update.Where(usersubscription.WeeklyReservedUsdEQ(0))
 		update.SetWeeklyUsageUsd(0).SetWeeklyWindowStart(periodicStart)
 	}
 	if resetMonthly {
+		update.Where(usersubscription.MonthlyReservedUsdEQ(0))
 		update.SetMonthlyUsageUsd(0).SetMonthlyWindowStart(periodicStart)
 	}
-	_, err := update.Save(ctx)
-	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	n, err := update.Save(ctx)
+	if err != nil {
+		return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	}
+	if n == 1 {
+		return nil
+	}
+	exists, err := client.UserSubscription.Query().Where(usersubscription.IDEQ(id)).Exist(ctx)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return service.ErrSubscriptionNotFound
+	}
+	return service.ErrSubscriptionWindowBusy
 }
 
-func (r *userSubscriptionRepository) ResetDailyUsage(ctx context.Context, id int64, expectedWindowStart *time.Time, newWindowStart time.Time) error {
+func (r *userSubscriptionRepository) ResetDailyUsage(ctx context.Context, id int64, expected *time.Time, start time.Time) error {
 	client := clientFromContext(ctx, r.client)
-	query := client.UserSubscription.Update().Where(usersubscription.IDEQ(id))
-	if expectedWindowStart == nil {
+	query := client.UserSubscription.Update().Where(usersubscription.IDEQ(id), usersubscription.DailyReservedUsdEQ(0))
+	if expected == nil {
 		query = query.Where(usersubscription.DailyWindowStartIsNil())
 	} else {
-		query = query.Where(usersubscription.DailyWindowStartEQ(*expectedWindowStart))
+		query = query.Where(usersubscription.DailyWindowStartEQ(*expected))
 	}
-	n, err := query.
-		SetDailyUsageUsd(0).
-		SetDailyWindowStart(newWindowStart).
-		Save(ctx)
+	n, err := query.SetDailyUsageUsd(0).SetDailyWindowStart(start).Save(ctx)
 	return r.translateConditionalWindowReset(ctx, client, id, n, err)
 }
 
-func (r *userSubscriptionRepository) ResetWeeklyUsage(ctx context.Context, id int64, expectedWindowStart *time.Time, newWindowStart time.Time) error {
+func (r *userSubscriptionRepository) ResetWeeklyUsage(ctx context.Context, id int64, expected *time.Time, start time.Time) error {
 	client := clientFromContext(ctx, r.client)
-	query := client.UserSubscription.Update().Where(usersubscription.IDEQ(id))
-	if expectedWindowStart == nil {
+	query := client.UserSubscription.Update().Where(usersubscription.IDEQ(id), usersubscription.WeeklyReservedUsdEQ(0))
+	if expected == nil {
 		query = query.Where(usersubscription.WeeklyWindowStartIsNil())
 	} else {
-		query = query.Where(usersubscription.WeeklyWindowStartEQ(*expectedWindowStart))
+		query = query.Where(usersubscription.WeeklyWindowStartEQ(*expected))
 	}
-	n, err := query.
-		SetWeeklyUsageUsd(0).
-		SetWeeklyWindowStart(newWindowStart).
-		Save(ctx)
+	n, err := query.SetWeeklyUsageUsd(0).SetWeeklyWindowStart(start).Save(ctx)
 	return r.translateConditionalWindowReset(ctx, client, id, n, err)
 }
 
-func (r *userSubscriptionRepository) ResetMonthlyUsage(ctx context.Context, id int64, expectedWindowStart *time.Time, newWindowStart time.Time) error {
+func (r *userSubscriptionRepository) ResetMonthlyUsage(ctx context.Context, id int64, expected *time.Time, start time.Time) error {
 	client := clientFromContext(ctx, r.client)
-	query := client.UserSubscription.Update().Where(usersubscription.IDEQ(id))
-	if expectedWindowStart == nil {
+	query := client.UserSubscription.Update().Where(usersubscription.IDEQ(id), usersubscription.MonthlyReservedUsdEQ(0))
+	if expected == nil {
 		query = query.Where(usersubscription.MonthlyWindowStartIsNil())
 	} else {
-		query = query.Where(usersubscription.MonthlyWindowStartEQ(*expectedWindowStart))
+		query = query.Where(usersubscription.MonthlyWindowStartEQ(*expected))
 	}
-	n, err := query.
-		SetMonthlyUsageUsd(0).
-		SetMonthlyWindowStart(newWindowStart).
-		Save(ctx)
+	n, err := query.SetMonthlyUsageUsd(0).SetMonthlyWindowStart(start).Save(ctx)
 	return r.translateConditionalWindowReset(ctx, client, id, n, err)
 }
 
@@ -452,9 +388,6 @@ func (r *userSubscriptionRepository) translateConditionalWindowReset(ctx context
 	if affected > 0 {
 		return nil
 	}
-
-	// A stale reset is an expected no-op: another request already advanced the
-	// window. Preserve not-found semantics for callers that target a missing row.
 	exists, err := client.UserSubscription.Query().Where(usersubscription.IDEQ(id)).Exist(ctx)
 	if err != nil {
 		return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
@@ -465,92 +398,11 @@ func (r *userSubscriptionRepository) translateConditionalWindowReset(ctx context
 	return nil
 }
 
-// IncrementUsage 原子性地累加订阅用量。
-// 限额检查已在请求前由 BillingCacheService.CheckBillingEligibility 完成，
-// 此处仅负责记录实际消费，确保消费数据的完整性。
-func (r *userSubscriptionRepository) IncrementUsage(ctx context.Context, id int64, costUSD float64) error {
-	const updateSQL = `
-		UPDATE user_subscriptions us
-		SET
-			daily_usage_usd = us.daily_usage_usd + $1,
-			weekly_usage_usd = us.weekly_usage_usd + $1,
-			monthly_usage_usd = us.monthly_usage_usd + $1,
-			updated_at = NOW()
-		FROM groups g
-		WHERE us.id = $2
-			AND us.deleted_at IS NULL
-			AND us.group_id = g.id
-			AND g.deleted_at IS NULL
-	`
-
-	client := clientFromContext(ctx, r.client)
-	result, err := client.ExecContext(ctx, updateSQL, costUSD, id)
-	if err != nil {
-		return err
-	}
-
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if affected > 0 {
-		return nil
-	}
-
-	// affected == 0：订阅不存在或已删除
-	return service.ErrSubscriptionNotFound
-}
-
 func (r *userSubscriptionRepository) BatchUpdateExpiredStatus(ctx context.Context) (int64, error) {
 	client := clientFromContext(ctx, r.client)
-	n, err := client.UserSubscription.Update().
-		Where(
-			usersubscription.StatusEQ(service.SubscriptionStatusActive),
-			usersubscription.ExpiresAtLTE(time.Now()),
-		).
-		SetStatus(service.SubscriptionStatusExpired).
-		Save(ctx)
-	return int64(n), err
-}
-
-// Extra repository helpers (currently used only by integration tests).
-
-func (r *userSubscriptionRepository) ListExpired(ctx context.Context) ([]service.UserSubscription, error) {
-	client := clientFromContext(ctx, r.client)
-	subs, err := client.UserSubscription.Query().
-		Where(
-			usersubscription.StatusEQ(service.SubscriptionStatusActive),
-			usersubscription.ExpiresAtLTE(time.Now()),
-		).
-		All(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return userSubscriptionEntitiesToService(subs), nil
-}
-
-func (r *userSubscriptionRepository) CountByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	client := clientFromContext(ctx, r.client)
-	count, err := client.UserSubscription.Query().Where(usersubscription.GroupIDEQ(groupID)).Count(ctx)
-	return int64(count), err
-}
-
-func (r *userSubscriptionRepository) CountActiveByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	client := clientFromContext(ctx, r.client)
-	count, err := client.UserSubscription.Query().
-		Where(
-			usersubscription.GroupIDEQ(groupID),
-			usersubscription.StatusEQ(service.SubscriptionStatusActive),
-			usersubscription.ExpiresAtGT(time.Now()),
-		).
-		Count(ctx)
-	return int64(count), err
-}
-
-func (r *userSubscriptionRepository) DeleteByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	client := clientFromContext(ctx, r.client)
-	n, err := client.UserSubscription.Delete().Where(usersubscription.GroupIDEQ(groupID)).Exec(ctx)
+	n, err := client.UserSubscription.Update().Where(
+		usersubscription.StatusEQ(service.SubscriptionStatusActive), usersubscription.ExpiresAtLTE(time.Now()),
+	).SetStatus(service.SubscriptionStatusExpired).Save(ctx)
 	return int64(n), err
 }
 
@@ -558,52 +410,54 @@ func (r *userSubscriptionRepository) attachUserSubscriptionRelations(ctx context
 	if len(subs) == 0 {
 		return nil
 	}
-
-	userIDs := make([]int64, 0, len(subs))
-	groupIDs := make([]int64, 0, len(subs))
-	assignedByIDs := make([]int64, 0, len(subs))
+	userIDs, assignedIDs := make([]int64, 0, len(subs)), make([]int64, 0, len(subs))
+	planIDs, versionIDs := make([]int64, 0, len(subs)), make([]int64, 0, len(subs))
 	for i := range subs {
 		userIDs = append(userIDs, subs[i].UserID)
-		groupIDs = append(groupIDs, subs[i].GroupID)
+		planIDs = append(planIDs, subs[i].PlanID)
+		versionIDs = append(versionIDs, subs[i].PlanVersionID)
 		if subs[i].AssignedBy != nil {
-			assignedByIDs = append(assignedByIDs, *subs[i].AssignedBy)
+			assignedIDs = append(assignedIDs, *subs[i].AssignedBy)
 		}
 	}
-
 	client := clientFromContext(ctx, r.client)
 	users, err := client.User.Query().Where(user.IDIn(uniqueInt64s(userIDs)...)).All(ctx)
 	if err != nil {
 		return err
 	}
 	userByID := make(map[int64]*service.User, len(users))
-	for _, u := range users {
-		userByID[u.ID] = userEntityToService(u)
+	for _, row := range users {
+		userByID[row.ID] = userEntityToService(row)
 	}
-
-	groups, err := client.Group.Query().Where(group.IDIn(uniqueInt64s(groupIDs)...)).All(ctx)
+	plans, err := client.SubscriptionPlan.Query().Where(subscriptionplan.IDIn(uniqueInt64s(planIDs)...)).All(ctx)
 	if err != nil {
 		return err
 	}
-	groupByID := make(map[int64]*service.Group, len(groups))
-	for _, g := range groups {
-		groupByID[g.ID] = groupEntityToService(g)
+	planByID := make(map[int64]*dbent.SubscriptionPlan, len(plans))
+	for _, row := range plans {
+		planByID[row.ID] = row
 	}
-
+	versions, err := client.SubscriptionPlanVersion.Query().Where(subscriptionplanversion.IDIn(uniqueInt64s(versionIDs)...)).All(ctx)
+	if err != nil {
+		return err
+	}
+	versionByID := make(map[int64]*dbent.SubscriptionPlanVersion, len(versions))
+	for _, row := range versions {
+		versionByID[row.ID] = row
+	}
 	assignedByID := map[int64]*service.User{}
-	if len(assignedByIDs) > 0 {
-		assignedUsers, err := client.User.Query().Where(user.IDIn(uniqueInt64s(assignedByIDs)...)).All(ctx)
+	if len(assignedIDs) > 0 {
+		rows, err := client.User.Query().Where(user.IDIn(uniqueInt64s(assignedIDs)...)).All(ctx)
 		if err != nil {
 			return err
 		}
-		assignedByID = make(map[int64]*service.User, len(assignedUsers))
-		for _, u := range assignedUsers {
-			assignedByID[u.ID] = userEntityToService(u)
+		for _, row := range rows {
+			assignedByID[row.ID] = userEntityToService(row)
 		}
 	}
-
 	for i := range subs {
 		subs[i].User = userByID[subs[i].UserID]
-		subs[i].Group = groupByID[subs[i].GroupID]
+		subs[i].Plan = subscriptionPlanEntityToService(planByID[subs[i].PlanID], versionByID[subs[i].PlanVersionID])
 		if subs[i].AssignedBy != nil {
 			subs[i].AssignedByUser = assignedByID[*subs[i].AssignedBy]
 		}
@@ -614,12 +468,12 @@ func (r *userSubscriptionRepository) attachUserSubscriptionRelations(ctx context
 func uniqueInt64s(values []int64) []int64 {
 	seen := make(map[int64]struct{}, len(values))
 	out := make([]int64, 0, len(values))
-	for _, v := range values {
-		if _, ok := seen[v]; ok {
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
 			continue
 		}
-		seen[v] = struct{}{}
-		out = append(out, v)
+		seen[value] = struct{}{}
+		out = append(out, value)
 	}
 	return out
 }
@@ -641,42 +495,43 @@ func userSubscriptionEntityToServiceWithStatusMapping(m *dbent.UserSubscription,
 		status = service.SubscriptionStatusRevoked
 	}
 	out := &service.UserSubscription{
-		ID:                 m.ID,
-		UserID:             m.UserID,
-		GroupID:            m.GroupID,
-		StartsAt:           m.StartsAt,
-		ExpiresAt:          m.ExpiresAt,
-		Status:             status,
-		DailyWindowStart:   m.DailyWindowStart,
-		WeeklyWindowStart:  m.WeeklyWindowStart,
-		MonthlyWindowStart: m.MonthlyWindowStart,
-		DailyUsageUSD:      m.DailyUsageUsd,
-		WeeklyUsageUSD:     m.WeeklyUsageUsd,
-		MonthlyUsageUSD:    m.MonthlyUsageUsd,
-		AssignedBy:         m.AssignedBy,
-		AssignedAt:         m.AssignedAt,
-		Notes:              derefString(m.Notes),
-		CreatedAt:          m.CreatedAt,
-		UpdatedAt:          m.UpdatedAt,
-		DeletedAt:          m.DeletedAt,
+		ID: m.ID, UserID: m.UserID, PlanID: m.PlanID, PlanVersionID: m.PlanVersionID,
+		StartsAt: m.StartsAt, ExpiresAt: m.ExpiresAt, Status: status,
+		DailyWindowStart: m.DailyWindowStart, WeeklyWindowStart: m.WeeklyWindowStart, MonthlyWindowStart: m.MonthlyWindowStart,
+		DailyUsageUSD: m.DailyUsageUsd, WeeklyUsageUSD: m.WeeklyUsageUsd, MonthlyUsageUSD: m.MonthlyUsageUsd,
+		DailyReservedUSD: m.DailyReservedUsd, WeeklyReservedUSD: m.WeeklyReservedUsd, MonthlyReservedUSD: m.MonthlyReservedUsd,
+		AssignedBy: m.AssignedBy, AssignedAt: m.AssignedAt, Notes: derefString(m.Notes),
+		CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, DeletedAt: m.DeletedAt,
 	}
 	if m.Edges.User != nil {
 		out.User = userEntityToService(m.Edges.User)
 	}
-	if m.Edges.Group != nil {
-		out.Group = groupEntityToService(m.Edges.Group)
-	}
+	out.Plan = subscriptionPlanEntityToService(m.Edges.Plan, m.Edges.PlanVersion)
 	if m.Edges.AssignedByUser != nil {
 		out.AssignedByUser = userEntityToService(m.Edges.AssignedByUser)
 	}
 	return out
 }
 
-func userSubscriptionEntitiesToService(models []*dbent.UserSubscription) []service.UserSubscription {
-	out := make([]service.UserSubscription, 0, len(models))
-	for i := range models {
-		if s := userSubscriptionEntityToService(models[i]); s != nil {
-			out = append(out, *s)
+func subscriptionPlanEntityToService(plan *dbent.SubscriptionPlan, version *dbent.SubscriptionPlanVersion) *service.SubscriptionPlan {
+	if plan == nil || version == nil {
+		return nil
+	}
+	return &service.SubscriptionPlan{
+		ID: plan.ID, PublishedVersionID: version.ID, Version: version.Version,
+		Name: plan.Name, Description: plan.Description, Features: plan.Features, ProductName: plan.ProductName,
+		ForSale: plan.ForSale, SortOrder: plan.SortOrder, CreatedAt: plan.CreatedAt, UpdatedAt: plan.UpdatedAt,
+		Price: version.Price, OriginalPrice: version.OriginalPrice, Currency: version.Currency,
+		ValidityDays: version.ValidityDays, ValidityUnit: version.ValidityUnit,
+		DailyLimitUSD: version.DailyLimitUsd, WeeklyLimitUSD: version.WeeklyLimitUsd, MonthlyLimitUSD: version.MonthlyLimitUsd,
+	}
+}
+
+func userSubscriptionEntitiesToService(rows []*dbent.UserSubscription) []service.UserSubscription {
+	out := make([]service.UserSubscription, 0, len(rows))
+	for _, row := range rows {
+		if sub := userSubscriptionEntityToService(row); sub != nil {
+			out = append(out, *sub)
 		}
 	}
 	return out

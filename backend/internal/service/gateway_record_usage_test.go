@@ -117,6 +117,23 @@ func TestGatewayServiceRecordUsage_BillingUsesDetachedContext(t *testing.T) {
 	require.NoError(t, quotaSvc.lastQuotaCtxErr)
 }
 
+func TestGatewayServiceRecordUsage_RejectsSubscriptionKeyWithoutMatchingSubscription(t *testing.T) {
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(
+		&openAIRecordUsageLogRepoStub{}, billingRepo,
+		&openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{},
+	)
+	subscriptionID := int64(42)
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{RequestID: "gateway_subscription_missing", Model: "claude-sonnet-4"},
+		APIKey: &APIKey{ID: 501, FundingSource: FundingSourceSubscription, SubscriptionID: &subscriptionID},
+		User:   &User{ID: 601}, Account: &Account{ID: 701},
+	})
+
+	require.ErrorIs(t, err, ErrSubscriptionBillingInvalid)
+	require.Equal(t, 0, billingRepo.calls, "invalid subscription funding must not reach wallet or usage billing")
+}
+
 func TestGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}

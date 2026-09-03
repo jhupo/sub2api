@@ -216,6 +216,118 @@ func trimOpenAIEncryptedReasoningItems(reqBody map[string]any) bool {
 	}
 }
 
+// trimOpenAIEncryptedReasoningItemsRaw applies the same recovery policy as
+// trimOpenAIEncryptedReasoningItems while preserving every unrelated JSON
+// value in its original representation. This is used by WebSocket retries so
+// a recovery-only field deletion does not re-encode a potentially large body.
+func trimOpenAIEncryptedReasoningItemsRaw(body []byte) ([]byte, bool, error) {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return body, false, nil
+	}
+	if !gjson.ValidBytes(body) || !gjson.ParseBytes(body).IsObject() {
+		return body, false, errors.New("openai request body must be a JSON object")
+	}
+
+	input := gjson.GetBytes(body, "input")
+	if !input.Exists() {
+		return body, false, nil
+	}
+
+	if input.IsArray() {
+		items := input.Array()
+		rebuilt := make([][]byte, 0, len(items))
+		changed := false
+		for _, item := range items {
+			next, itemChanged, keep, err := sanitizeEncryptedReasoningInputItemRaw(item)
+			if err != nil {
+				return body, false, err
+			}
+			changed = changed || itemChanged
+			if keep {
+				rebuilt = append(rebuilt, next)
+			}
+		}
+		if !changed {
+			return body, false, nil
+		}
+		if len(rebuilt) == 0 {
+			updated, err := sjson.DeleteBytes(body, "input")
+			return updated, err == nil, err
+		}
+
+		var encoded bytes.Buffer
+		encoded.Grow(len(input.Raw))
+		encoded.WriteByte('[')
+		for i, item := range rebuilt {
+			if i > 0 {
+				encoded.WriteByte(',')
+			}
+			encoded.Write(item)
+		}
+		encoded.WriteByte(']')
+		updated, err := sjson.SetRawBytes(body, "input", encoded.Bytes())
+		return updated, err == nil, err
+	}
+
+	if !input.IsObject() {
+		return body, false, nil
+	}
+	next, changed, keep, err := sanitizeEncryptedReasoningInputItemRaw(input)
+	if err != nil || !changed {
+		return body, false, err
+	}
+	if !keep {
+		updated, deleteErr := sjson.DeleteBytes(body, "input")
+		return updated, deleteErr == nil, deleteErr
+	}
+	updated, err := sjson.SetRawBytes(body, "input", next)
+	return updated, err == nil, err
+}
+
+func sanitizeEncryptedReasoningInputItemRaw(item gjson.Result) ([]byte, bool, bool, error) {
+	raw := []byte(item.Raw)
+	if !item.IsObject() {
+		return raw, false, true, nil
+	}
+
+	switch strings.TrimSpace(item.Get("type").String()) {
+	case "compaction", "compaction_summary":
+		if item.Get("encrypted_content").Exists() {
+			return nil, true, false, nil
+		}
+		return raw, false, true, nil
+	case "reasoning":
+	default:
+		return raw, false, true, nil
+	}
+
+	changed := false
+	if item.Get("encrypted_content").Exists() {
+		updated, err := sjson.DeleteBytes(raw, "encrypted_content")
+		if err != nil {
+			return nil, false, false, err
+		}
+		raw = updated
+		changed = true
+	}
+	content := gjson.GetBytes(raw, "content")
+	if content.Exists() && content.Type == gjson.Null {
+		updated, err := sjson.DeleteBytes(raw, "content")
+		if err != nil {
+			return nil, false, false, err
+		}
+		raw = updated
+		changed = true
+	}
+	if !changed {
+		return raw, false, true, nil
+	}
+	if len(gjson.ParseBytes(raw).Map()) == 1 {
+		return nil, true, false, nil
+	}
+	return raw, true, true, nil
+}
+
 func sanitizeEncryptedReasoningInputItem(item any) (next any, changed bool, keep bool) {
 	inputItem, ok := item.(map[string]any)
 	if !ok {

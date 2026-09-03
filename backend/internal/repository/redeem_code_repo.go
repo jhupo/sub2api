@@ -30,11 +30,10 @@ func (r *redeemCodeRepository) Create(ctx context.Context, code *service.RedeemC
 		SetValue(code.Value).
 		SetStatus(code.Status).
 		SetNotes(code.Notes).
-		SetValidityDays(code.ValidityDays).
 		SetNillableExpiresAt(code.ExpiresAt).
 		SetNillableUsedBy(code.UsedBy).
 		SetNillableUsedAt(code.UsedAt).
-		SetNillableGroupID(code.GroupID).
+		SetNillablePlanVersionID(code.PlanVersionID).
 		Save(ctx)
 	if err == nil {
 		code.ID = created.ID
@@ -57,11 +56,10 @@ func (r *redeemCodeRepository) CreateBatch(ctx context.Context, codes []service.
 			SetValue(c.Value).
 			SetStatus(c.Status).
 			SetNotes(c.Notes).
-			SetValidityDays(c.ValidityDays).
 			SetNillableExpiresAt(c.ExpiresAt).
 			SetNillableUsedBy(c.UsedBy).
 			SetNillableUsedAt(c.UsedAt).
-			SetNillableGroupID(c.GroupID)
+			SetNillablePlanVersionID(c.PlanVersionID)
 		builders = append(builders, b)
 	}
 
@@ -160,7 +158,7 @@ func (r *redeemCodeRepository) ListWithFilters(ctx context.Context, params pagin
 
 	codesQuery := q.
 		WithUser().
-		WithGroup().
+		WithPlanVersion(func(q *dbent.SubscriptionPlanVersionQuery) { q.WithPlan() }).
 		Offset(params.Offset()).
 		Limit(params.Limit())
 	for _, order := range redeemCodeListOrder(params) {
@@ -213,8 +211,7 @@ func (r *redeemCodeRepository) Update(ctx context.Context, code *service.RedeemC
 		SetType(code.Type).
 		SetValue(code.Value).
 		SetStatus(code.Status).
-		SetNotes(code.Notes).
-		SetValidityDays(code.ValidityDays)
+		SetNotes(code.Notes)
 
 	if code.UsedBy != nil {
 		up.SetUsedBy(*code.UsedBy)
@@ -226,10 +223,10 @@ func (r *redeemCodeRepository) Update(ctx context.Context, code *service.RedeemC
 	} else {
 		up.ClearUsedAt()
 	}
-	if code.GroupID != nil {
-		up.SetGroupID(*code.GroupID)
+	if code.PlanVersionID != nil {
+		up.SetPlanVersionID(*code.PlanVersionID)
 	} else {
-		up.ClearGroupID()
+		up.ClearPlanVersionID()
 	}
 	if code.ExpiresAt != nil {
 		up.SetExpiresAt(*code.ExpiresAt)
@@ -315,11 +312,11 @@ func (r *redeemCodeRepository) batchUpdate(ctx context.Context, client *dbent.Cl
 			up.ClearExpiresAt()
 		}
 	}
-	if fields.GroupID.Set {
-		if fields.GroupID.Value != nil {
-			up.SetGroupID(*fields.GroupID.Value)
+	if fields.PlanVersionID.Set {
+		if fields.PlanVersionID.Value != nil {
+			up.SetPlanVersionID(*fields.PlanVersionID.Value)
 		} else {
-			up.ClearGroupID()
+			up.ClearPlanVersionID()
 		}
 	}
 
@@ -358,7 +355,7 @@ func (r *redeemCodeRepository) ListByUser(ctx context.Context, userID int64, lim
 
 	codes, err := r.client.RedeemCode.Query().
 		Where(redeemcode.UsedByEQ(userID)).
-		WithGroup().
+		WithPlanVersion(func(q *dbent.SubscriptionPlanVersionQuery) { q.WithPlan() }).
 		Order(dbent.Desc(redeemcode.FieldUsedAt)).
 		Limit(limit).
 		All(ctx)
@@ -386,7 +383,7 @@ func (r *redeemCodeRepository) ListByUserPaginated(ctx context.Context, userID i
 	}
 
 	codes, err := q.
-		WithGroup().
+		WithPlanVersion(func(q *dbent.SubscriptionPlanVersionQuery) { q.WithPlan() }).
 		Offset(params.Offset()).
 		Limit(params.Limit()).
 		Order(dbent.Desc(redeemcode.FieldUsedAt)).
@@ -425,24 +422,23 @@ func redeemCodeEntityToService(m *dbent.RedeemCode) *service.RedeemCode {
 		return nil
 	}
 	out := &service.RedeemCode{
-		ID:           m.ID,
-		Code:         m.Code,
-		Type:         m.Type,
-		Value:        m.Value,
-		Status:       m.Status,
-		UsedBy:       m.UsedBy,
-		UsedAt:       m.UsedAt,
-		Notes:        derefString(m.Notes),
-		CreatedAt:    m.CreatedAt,
-		ExpiresAt:    m.ExpiresAt,
-		GroupID:      m.GroupID,
-		ValidityDays: m.ValidityDays,
+		ID:            m.ID,
+		Code:          m.Code,
+		Type:          m.Type,
+		Value:         m.Value,
+		Status:        m.Status,
+		UsedBy:        m.UsedBy,
+		UsedAt:        m.UsedAt,
+		Notes:         derefString(m.Notes),
+		CreatedAt:     m.CreatedAt,
+		ExpiresAt:     m.ExpiresAt,
+		PlanVersionID: m.PlanVersionID,
 	}
 	if m.Edges.User != nil {
 		out.User = userEntityToService(m.Edges.User)
 	}
-	if m.Edges.Group != nil {
-		out.Group = groupEntityToService(m.Edges.Group)
+	if version := m.Edges.PlanVersion; version != nil && version.Edges.Plan != nil {
+		out.Plan = subscriptionPlanEntityToService(version.Edges.Plan, version)
 	}
 	return out
 }

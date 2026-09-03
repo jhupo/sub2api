@@ -11,7 +11,9 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/Wei-Shaw/sub2api/ent/group"
+	"github.com/Wei-Shaw/sub2api/ent/apikey"
+	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
+	"github.com/Wei-Shaw/sub2api/ent/subscriptionplanversion"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
@@ -73,9 +75,15 @@ func (_c *UserSubscriptionCreate) SetUserID(v int64) *UserSubscriptionCreate {
 	return _c
 }
 
-// SetGroupID sets the "group_id" field.
-func (_c *UserSubscriptionCreate) SetGroupID(v int64) *UserSubscriptionCreate {
-	_c.mutation.SetGroupID(v)
+// SetPlanID sets the "plan_id" field.
+func (_c *UserSubscriptionCreate) SetPlanID(v int64) *UserSubscriptionCreate {
+	_c.mutation.SetPlanID(v)
+	return _c
+}
+
+// SetPlanVersionID sets the "plan_version_id" field.
+func (_c *UserSubscriptionCreate) SetPlanVersionID(v int64) *UserSubscriptionCreate {
+	_c.mutation.SetPlanVersionID(v)
 	return _c
 }
 
@@ -189,6 +197,48 @@ func (_c *UserSubscriptionCreate) SetNillableMonthlyUsageUsd(v *float64) *UserSu
 	return _c
 }
 
+// SetDailyReservedUsd sets the "daily_reserved_usd" field.
+func (_c *UserSubscriptionCreate) SetDailyReservedUsd(v float64) *UserSubscriptionCreate {
+	_c.mutation.SetDailyReservedUsd(v)
+	return _c
+}
+
+// SetNillableDailyReservedUsd sets the "daily_reserved_usd" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableDailyReservedUsd(v *float64) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetDailyReservedUsd(*v)
+	}
+	return _c
+}
+
+// SetWeeklyReservedUsd sets the "weekly_reserved_usd" field.
+func (_c *UserSubscriptionCreate) SetWeeklyReservedUsd(v float64) *UserSubscriptionCreate {
+	_c.mutation.SetWeeklyReservedUsd(v)
+	return _c
+}
+
+// SetNillableWeeklyReservedUsd sets the "weekly_reserved_usd" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableWeeklyReservedUsd(v *float64) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetWeeklyReservedUsd(*v)
+	}
+	return _c
+}
+
+// SetMonthlyReservedUsd sets the "monthly_reserved_usd" field.
+func (_c *UserSubscriptionCreate) SetMonthlyReservedUsd(v float64) *UserSubscriptionCreate {
+	_c.mutation.SetMonthlyReservedUsd(v)
+	return _c
+}
+
+// SetNillableMonthlyReservedUsd sets the "monthly_reserved_usd" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableMonthlyReservedUsd(v *float64) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetMonthlyReservedUsd(*v)
+	}
+	return _c
+}
+
 // SetAssignedBy sets the "assigned_by" field.
 func (_c *UserSubscriptionCreate) SetAssignedBy(v int64) *UserSubscriptionCreate {
 	_c.mutation.SetAssignedBy(v)
@@ -236,9 +286,14 @@ func (_c *UserSubscriptionCreate) SetUser(v *User) *UserSubscriptionCreate {
 	return _c.SetUserID(v.ID)
 }
 
-// SetGroup sets the "group" edge to the Group entity.
-func (_c *UserSubscriptionCreate) SetGroup(v *Group) *UserSubscriptionCreate {
-	return _c.SetGroupID(v.ID)
+// SetPlan sets the "plan" edge to the SubscriptionPlan entity.
+func (_c *UserSubscriptionCreate) SetPlan(v *SubscriptionPlan) *UserSubscriptionCreate {
+	return _c.SetPlanID(v.ID)
+}
+
+// SetPlanVersion sets the "plan_version" edge to the SubscriptionPlanVersion entity.
+func (_c *UserSubscriptionCreate) SetPlanVersion(v *SubscriptionPlanVersion) *UserSubscriptionCreate {
+	return _c.SetPlanVersionID(v.ID)
 }
 
 // SetAssignedByUserID sets the "assigned_by_user" edge to the User entity by ID.
@@ -273,6 +328,21 @@ func (_c *UserSubscriptionCreate) AddUsageLogs(v ...*UsageLog) *UserSubscription
 		ids[i] = v[i].ID
 	}
 	return _c.AddUsageLogIDs(ids...)
+}
+
+// AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
+func (_c *UserSubscriptionCreate) AddAPIKeyIDs(ids ...int64) *UserSubscriptionCreate {
+	_c.mutation.AddAPIKeyIDs(ids...)
+	return _c
+}
+
+// AddAPIKeys adds the "api_keys" edges to the APIKey entity.
+func (_c *UserSubscriptionCreate) AddAPIKeys(v ...*APIKey) *UserSubscriptionCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddAPIKeyIDs(ids...)
 }
 
 // Mutation returns the UserSubscriptionMutation object of the builder.
@@ -342,6 +412,18 @@ func (_c *UserSubscriptionCreate) defaults() error {
 		v := usersubscription.DefaultMonthlyUsageUsd
 		_c.mutation.SetMonthlyUsageUsd(v)
 	}
+	if _, ok := _c.mutation.DailyReservedUsd(); !ok {
+		v := usersubscription.DefaultDailyReservedUsd
+		_c.mutation.SetDailyReservedUsd(v)
+	}
+	if _, ok := _c.mutation.WeeklyReservedUsd(); !ok {
+		v := usersubscription.DefaultWeeklyReservedUsd
+		_c.mutation.SetWeeklyReservedUsd(v)
+	}
+	if _, ok := _c.mutation.MonthlyReservedUsd(); !ok {
+		v := usersubscription.DefaultMonthlyReservedUsd
+		_c.mutation.SetMonthlyReservedUsd(v)
+	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		if usersubscription.DefaultAssignedAt == nil {
 			return fmt.Errorf("ent: uninitialized usersubscription.DefaultAssignedAt (forgotten import ent/runtime?)")
@@ -363,8 +445,11 @@ func (_c *UserSubscriptionCreate) check() error {
 	if _, ok := _c.mutation.UserID(); !ok {
 		return &ValidationError{Name: "user_id", err: errors.New(`ent: missing required field "UserSubscription.user_id"`)}
 	}
-	if _, ok := _c.mutation.GroupID(); !ok {
-		return &ValidationError{Name: "group_id", err: errors.New(`ent: missing required field "UserSubscription.group_id"`)}
+	if _, ok := _c.mutation.PlanID(); !ok {
+		return &ValidationError{Name: "plan_id", err: errors.New(`ent: missing required field "UserSubscription.plan_id"`)}
+	}
+	if _, ok := _c.mutation.PlanVersionID(); !ok {
+		return &ValidationError{Name: "plan_version_id", err: errors.New(`ent: missing required field "UserSubscription.plan_version_id"`)}
 	}
 	if _, ok := _c.mutation.StartsAt(); !ok {
 		return &ValidationError{Name: "starts_at", err: errors.New(`ent: missing required field "UserSubscription.starts_at"`)}
@@ -389,14 +474,26 @@ func (_c *UserSubscriptionCreate) check() error {
 	if _, ok := _c.mutation.MonthlyUsageUsd(); !ok {
 		return &ValidationError{Name: "monthly_usage_usd", err: errors.New(`ent: missing required field "UserSubscription.monthly_usage_usd"`)}
 	}
+	if _, ok := _c.mutation.DailyReservedUsd(); !ok {
+		return &ValidationError{Name: "daily_reserved_usd", err: errors.New(`ent: missing required field "UserSubscription.daily_reserved_usd"`)}
+	}
+	if _, ok := _c.mutation.WeeklyReservedUsd(); !ok {
+		return &ValidationError{Name: "weekly_reserved_usd", err: errors.New(`ent: missing required field "UserSubscription.weekly_reserved_usd"`)}
+	}
+	if _, ok := _c.mutation.MonthlyReservedUsd(); !ok {
+		return &ValidationError{Name: "monthly_reserved_usd", err: errors.New(`ent: missing required field "UserSubscription.monthly_reserved_usd"`)}
+	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		return &ValidationError{Name: "assigned_at", err: errors.New(`ent: missing required field "UserSubscription.assigned_at"`)}
 	}
 	if len(_c.mutation.UserIDs()) == 0 {
 		return &ValidationError{Name: "user", err: errors.New(`ent: missing required edge "UserSubscription.user"`)}
 	}
-	if len(_c.mutation.GroupIDs()) == 0 {
-		return &ValidationError{Name: "group", err: errors.New(`ent: missing required edge "UserSubscription.group"`)}
+	if len(_c.mutation.PlanIDs()) == 0 {
+		return &ValidationError{Name: "plan", err: errors.New(`ent: missing required edge "UserSubscription.plan"`)}
+	}
+	if len(_c.mutation.PlanVersionIDs()) == 0 {
+		return &ValidationError{Name: "plan_version", err: errors.New(`ent: missing required edge "UserSubscription.plan_version"`)}
 	}
 	return nil
 }
@@ -473,6 +570,18 @@ func (_c *UserSubscriptionCreate) createSpec() (*UserSubscription, *sqlgraph.Cre
 		_spec.SetField(usersubscription.FieldMonthlyUsageUsd, field.TypeFloat64, value)
 		_node.MonthlyUsageUsd = value
 	}
+	if value, ok := _c.mutation.DailyReservedUsd(); ok {
+		_spec.SetField(usersubscription.FieldDailyReservedUsd, field.TypeFloat64, value)
+		_node.DailyReservedUsd = value
+	}
+	if value, ok := _c.mutation.WeeklyReservedUsd(); ok {
+		_spec.SetField(usersubscription.FieldWeeklyReservedUsd, field.TypeFloat64, value)
+		_node.WeeklyReservedUsd = value
+	}
+	if value, ok := _c.mutation.MonthlyReservedUsd(); ok {
+		_spec.SetField(usersubscription.FieldMonthlyReservedUsd, field.TypeFloat64, value)
+		_node.MonthlyReservedUsd = value
+	}
 	if value, ok := _c.mutation.AssignedAt(); ok {
 		_spec.SetField(usersubscription.FieldAssignedAt, field.TypeTime, value)
 		_node.AssignedAt = value
@@ -498,21 +607,38 @@ func (_c *UserSubscriptionCreate) createSpec() (*UserSubscription, *sqlgraph.Cre
 		_node.UserID = nodes[0]
 		_spec.Edges = append(_spec.Edges, edge)
 	}
-	if nodes := _c.mutation.GroupIDs(); len(nodes) > 0 {
+	if nodes := _c.mutation.PlanIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
 			Inverse: true,
-			Table:   usersubscription.GroupTable,
-			Columns: []string{usersubscription.GroupColumn},
+			Table:   usersubscription.PlanTable,
+			Columns: []string{usersubscription.PlanColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(group.FieldID, field.TypeInt64),
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionplan.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
-		_node.GroupID = nodes[0]
+		_node.PlanID = nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.PlanVersionIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   usersubscription.PlanVersionTable,
+			Columns: []string{usersubscription.PlanVersionColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionplanversion.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_node.PlanVersionID = nodes[0]
 		_spec.Edges = append(_spec.Edges, edge)
 	}
 	if nodes := _c.mutation.AssignedByUserIDs(); len(nodes) > 0 {
@@ -541,6 +667,22 @@ func (_c *UserSubscriptionCreate) createSpec() (*UserSubscription, *sqlgraph.Cre
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(usagelog.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   usersubscription.APIKeysTable,
+			Columns: []string{usersubscription.APIKeysColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(apikey.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -642,15 +784,27 @@ func (u *UserSubscriptionUpsert) UpdateUserID() *UserSubscriptionUpsert {
 	return u
 }
 
-// SetGroupID sets the "group_id" field.
-func (u *UserSubscriptionUpsert) SetGroupID(v int64) *UserSubscriptionUpsert {
-	u.Set(usersubscription.FieldGroupID, v)
+// SetPlanID sets the "plan_id" field.
+func (u *UserSubscriptionUpsert) SetPlanID(v int64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldPlanID, v)
 	return u
 }
 
-// UpdateGroupID sets the "group_id" field to the value that was provided on create.
-func (u *UserSubscriptionUpsert) UpdateGroupID() *UserSubscriptionUpsert {
-	u.SetExcluded(usersubscription.FieldGroupID)
+// UpdatePlanID sets the "plan_id" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdatePlanID() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldPlanID)
+	return u
+}
+
+// SetPlanVersionID sets the "plan_version_id" field.
+func (u *UserSubscriptionUpsert) SetPlanVersionID(v int64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldPlanVersionID, v)
+	return u
+}
+
+// UpdatePlanVersionID sets the "plan_version_id" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdatePlanVersionID() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldPlanVersionID)
 	return u
 }
 
@@ -798,6 +952,60 @@ func (u *UserSubscriptionUpsert) AddMonthlyUsageUsd(v float64) *UserSubscription
 	return u
 }
 
+// SetDailyReservedUsd sets the "daily_reserved_usd" field.
+func (u *UserSubscriptionUpsert) SetDailyReservedUsd(v float64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldDailyReservedUsd, v)
+	return u
+}
+
+// UpdateDailyReservedUsd sets the "daily_reserved_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateDailyReservedUsd() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldDailyReservedUsd)
+	return u
+}
+
+// AddDailyReservedUsd adds v to the "daily_reserved_usd" field.
+func (u *UserSubscriptionUpsert) AddDailyReservedUsd(v float64) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldDailyReservedUsd, v)
+	return u
+}
+
+// SetWeeklyReservedUsd sets the "weekly_reserved_usd" field.
+func (u *UserSubscriptionUpsert) SetWeeklyReservedUsd(v float64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldWeeklyReservedUsd, v)
+	return u
+}
+
+// UpdateWeeklyReservedUsd sets the "weekly_reserved_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateWeeklyReservedUsd() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldWeeklyReservedUsd)
+	return u
+}
+
+// AddWeeklyReservedUsd adds v to the "weekly_reserved_usd" field.
+func (u *UserSubscriptionUpsert) AddWeeklyReservedUsd(v float64) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldWeeklyReservedUsd, v)
+	return u
+}
+
+// SetMonthlyReservedUsd sets the "monthly_reserved_usd" field.
+func (u *UserSubscriptionUpsert) SetMonthlyReservedUsd(v float64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldMonthlyReservedUsd, v)
+	return u
+}
+
+// UpdateMonthlyReservedUsd sets the "monthly_reserved_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateMonthlyReservedUsd() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldMonthlyReservedUsd)
+	return u
+}
+
+// AddMonthlyReservedUsd adds v to the "monthly_reserved_usd" field.
+func (u *UserSubscriptionUpsert) AddMonthlyReservedUsd(v float64) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldMonthlyReservedUsd, v)
+	return u
+}
+
 // SetAssignedBy sets the "assigned_by" field.
 func (u *UserSubscriptionUpsert) SetAssignedBy(v int64) *UserSubscriptionUpsert {
 	u.Set(usersubscription.FieldAssignedBy, v)
@@ -940,17 +1148,31 @@ func (u *UserSubscriptionUpsertOne) UpdateUserID() *UserSubscriptionUpsertOne {
 	})
 }
 
-// SetGroupID sets the "group_id" field.
-func (u *UserSubscriptionUpsertOne) SetGroupID(v int64) *UserSubscriptionUpsertOne {
+// SetPlanID sets the "plan_id" field.
+func (u *UserSubscriptionUpsertOne) SetPlanID(v int64) *UserSubscriptionUpsertOne {
 	return u.Update(func(s *UserSubscriptionUpsert) {
-		s.SetGroupID(v)
+		s.SetPlanID(v)
 	})
 }
 
-// UpdateGroupID sets the "group_id" field to the value that was provided on create.
-func (u *UserSubscriptionUpsertOne) UpdateGroupID() *UserSubscriptionUpsertOne {
+// UpdatePlanID sets the "plan_id" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdatePlanID() *UserSubscriptionUpsertOne {
 	return u.Update(func(s *UserSubscriptionUpsert) {
-		s.UpdateGroupID()
+		s.UpdatePlanID()
+	})
+}
+
+// SetPlanVersionID sets the "plan_version_id" field.
+func (u *UserSubscriptionUpsertOne) SetPlanVersionID(v int64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetPlanVersionID(v)
+	})
+}
+
+// UpdatePlanVersionID sets the "plan_version_id" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdatePlanVersionID() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdatePlanVersionID()
 	})
 }
 
@@ -1119,6 +1341,69 @@ func (u *UserSubscriptionUpsertOne) AddMonthlyUsageUsd(v float64) *UserSubscript
 func (u *UserSubscriptionUpsertOne) UpdateMonthlyUsageUsd() *UserSubscriptionUpsertOne {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateMonthlyUsageUsd()
+	})
+}
+
+// SetDailyReservedUsd sets the "daily_reserved_usd" field.
+func (u *UserSubscriptionUpsertOne) SetDailyReservedUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetDailyReservedUsd(v)
+	})
+}
+
+// AddDailyReservedUsd adds v to the "daily_reserved_usd" field.
+func (u *UserSubscriptionUpsertOne) AddDailyReservedUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddDailyReservedUsd(v)
+	})
+}
+
+// UpdateDailyReservedUsd sets the "daily_reserved_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateDailyReservedUsd() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateDailyReservedUsd()
+	})
+}
+
+// SetWeeklyReservedUsd sets the "weekly_reserved_usd" field.
+func (u *UserSubscriptionUpsertOne) SetWeeklyReservedUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetWeeklyReservedUsd(v)
+	})
+}
+
+// AddWeeklyReservedUsd adds v to the "weekly_reserved_usd" field.
+func (u *UserSubscriptionUpsertOne) AddWeeklyReservedUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddWeeklyReservedUsd(v)
+	})
+}
+
+// UpdateWeeklyReservedUsd sets the "weekly_reserved_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateWeeklyReservedUsd() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateWeeklyReservedUsd()
+	})
+}
+
+// SetMonthlyReservedUsd sets the "monthly_reserved_usd" field.
+func (u *UserSubscriptionUpsertOne) SetMonthlyReservedUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetMonthlyReservedUsd(v)
+	})
+}
+
+// AddMonthlyReservedUsd adds v to the "monthly_reserved_usd" field.
+func (u *UserSubscriptionUpsertOne) AddMonthlyReservedUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddMonthlyReservedUsd(v)
+	})
+}
+
+// UpdateMonthlyReservedUsd sets the "monthly_reserved_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateMonthlyReservedUsd() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateMonthlyReservedUsd()
 	})
 }
 
@@ -1438,17 +1723,31 @@ func (u *UserSubscriptionUpsertBulk) UpdateUserID() *UserSubscriptionUpsertBulk 
 	})
 }
 
-// SetGroupID sets the "group_id" field.
-func (u *UserSubscriptionUpsertBulk) SetGroupID(v int64) *UserSubscriptionUpsertBulk {
+// SetPlanID sets the "plan_id" field.
+func (u *UserSubscriptionUpsertBulk) SetPlanID(v int64) *UserSubscriptionUpsertBulk {
 	return u.Update(func(s *UserSubscriptionUpsert) {
-		s.SetGroupID(v)
+		s.SetPlanID(v)
 	})
 }
 
-// UpdateGroupID sets the "group_id" field to the value that was provided on create.
-func (u *UserSubscriptionUpsertBulk) UpdateGroupID() *UserSubscriptionUpsertBulk {
+// UpdatePlanID sets the "plan_id" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdatePlanID() *UserSubscriptionUpsertBulk {
 	return u.Update(func(s *UserSubscriptionUpsert) {
-		s.UpdateGroupID()
+		s.UpdatePlanID()
+	})
+}
+
+// SetPlanVersionID sets the "plan_version_id" field.
+func (u *UserSubscriptionUpsertBulk) SetPlanVersionID(v int64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetPlanVersionID(v)
+	})
+}
+
+// UpdatePlanVersionID sets the "plan_version_id" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdatePlanVersionID() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdatePlanVersionID()
 	})
 }
 
@@ -1617,6 +1916,69 @@ func (u *UserSubscriptionUpsertBulk) AddMonthlyUsageUsd(v float64) *UserSubscrip
 func (u *UserSubscriptionUpsertBulk) UpdateMonthlyUsageUsd() *UserSubscriptionUpsertBulk {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateMonthlyUsageUsd()
+	})
+}
+
+// SetDailyReservedUsd sets the "daily_reserved_usd" field.
+func (u *UserSubscriptionUpsertBulk) SetDailyReservedUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetDailyReservedUsd(v)
+	})
+}
+
+// AddDailyReservedUsd adds v to the "daily_reserved_usd" field.
+func (u *UserSubscriptionUpsertBulk) AddDailyReservedUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddDailyReservedUsd(v)
+	})
+}
+
+// UpdateDailyReservedUsd sets the "daily_reserved_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateDailyReservedUsd() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateDailyReservedUsd()
+	})
+}
+
+// SetWeeklyReservedUsd sets the "weekly_reserved_usd" field.
+func (u *UserSubscriptionUpsertBulk) SetWeeklyReservedUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetWeeklyReservedUsd(v)
+	})
+}
+
+// AddWeeklyReservedUsd adds v to the "weekly_reserved_usd" field.
+func (u *UserSubscriptionUpsertBulk) AddWeeklyReservedUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddWeeklyReservedUsd(v)
+	})
+}
+
+// UpdateWeeklyReservedUsd sets the "weekly_reserved_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateWeeklyReservedUsd() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateWeeklyReservedUsd()
+	})
+}
+
+// SetMonthlyReservedUsd sets the "monthly_reserved_usd" field.
+func (u *UserSubscriptionUpsertBulk) SetMonthlyReservedUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetMonthlyReservedUsd(v)
+	})
+}
+
+// AddMonthlyReservedUsd adds v to the "monthly_reserved_usd" field.
+func (u *UserSubscriptionUpsertBulk) AddMonthlyReservedUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddMonthlyReservedUsd(v)
+	})
+}
+
+// UpdateMonthlyReservedUsd sets the "monthly_reserved_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateMonthlyReservedUsd() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateMonthlyReservedUsd()
 	})
 }
 

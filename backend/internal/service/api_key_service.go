@@ -61,11 +61,12 @@ const (
 // 若编辑 Key 时无条件整行回写，并发累计的配额与限流计数就会被旧快照覆盖。
 // 因此调用方必须显式声明要改的列。
 type APIKeyUpdateFields struct {
-	Name      bool
-	Status    bool
-	Quota     bool
-	GroupID   bool
-	ExpiresAt bool
+	Name          bool
+	Status        bool
+	Quota         bool
+	GroupID       bool
+	FundingSource bool
+	ExpiresAt     bool
 	// QuotaUsed 仅供"重置配额用量"路径声明；常规计费走 IncrementQuotaUsed。
 	QuotaUsed bool
 	// RateLimits 覆盖 rate_limit_5h / _1d / _7d 三个阈值。
@@ -209,11 +210,13 @@ type APIKeyAuthCacheInvalidator interface {
 
 // CreateAPIKeyRequest 创建API Key请求
 type CreateAPIKeyRequest struct {
-	Name        string   `json:"name"`
-	GroupID     *int64   `json:"group_id"`
-	CustomKey   *string  `json:"custom_key"`   // 可选的自定义key
-	IPWhitelist []string `json:"ip_whitelist"` // IP 白名单
-	IPBlacklist []string `json:"ip_blacklist"` // IP 黑名单
+	Name           string   `json:"name"`
+	GroupID        *int64   `json:"group_id"`
+	FundingSource  string   `json:"funding_source"`
+	SubscriptionID *int64   `json:"subscription_id"`
+	CustomKey      *string  `json:"custom_key"`   // 可选的自定义key
+	IPWhitelist    []string `json:"ip_whitelist"` // IP 白名单
+	IPBlacklist    []string `json:"ip_blacklist"` // IP 黑名单
 
 	// Quota fields
 	Quota         float64 `json:"quota"`           // Quota limit in USD (0 = unlimited)
@@ -227,11 +230,13 @@ type CreateAPIKeyRequest struct {
 
 // UpdateAPIKeyRequest 更新API Key请求
 type UpdateAPIKeyRequest struct {
-	Name        *string   `json:"name"`
-	GroupID     *int64    `json:"group_id"`
-	Status      *string   `json:"status"`
-	IPWhitelist *[]string `json:"ip_whitelist"` // IP 白名单（nil 不修改，空数组清空）
-	IPBlacklist *[]string `json:"ip_blacklist"` // IP 黑名单（nil 不修改，空数组清空）
+	Name           *string   `json:"name"`
+	GroupID        *int64    `json:"group_id"`
+	FundingSource  *string   `json:"funding_source"`
+	SubscriptionID *int64    `json:"subscription_id"`
+	Status         *string   `json:"status"`
+	IPWhitelist    *[]string `json:"ip_whitelist"` // IP 白名单（nil 不修改，空数组清空）
+	IPBlacklist    *[]string `json:"ip_blacklist"` // IP 黑名单（nil 不修改，空数组清空）
 
 	// Quota fields
 	Quota           *float64   `json:"quota"`       // Quota limit in USD (nil = no change, 0 = unlimited)
@@ -262,6 +267,9 @@ func validateCreateAPIKeyRequest(req CreateAPIKeyRequest) error {
 	if req.ExpiresInDays != nil && *req.ExpiresInDays <= 0 {
 		return infraerrors.BadRequest("API_KEY_EXPIRY_INVALID", "expires_in_days must be greater than zero")
 	}
+	if err := validateFundingSource(req.FundingSource, req.SubscriptionID); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -273,7 +281,39 @@ func validateUpdateAPIKeyRequest(req UpdateAPIKeyRequest) error {
 			}
 		}
 	}
+	if req.FundingSource != nil {
+		if err := validateFundingSource(*req.FundingSource, req.SubscriptionID); err != nil {
+			return err
+		}
+	} else if req.SubscriptionID != nil {
+		return infraerrors.BadRequest("FUNDING_SOURCE_REQUIRED", "funding_source is required when changing subscription")
+	}
 	return nil
+}
+
+func validateFundingSource(source string, subscriptionID *int64) error {
+	source = normalizeFundingSource(source)
+	switch source {
+	case FundingSourceWallet:
+		if subscriptionID != nil {
+			return infraerrors.BadRequest("FUNDING_SOURCE_INVALID", "wallet payment cannot reference a subscription")
+		}
+	case FundingSourceSubscription:
+		if subscriptionID == nil || *subscriptionID <= 0 {
+			return infraerrors.BadRequest("SUBSCRIPTION_REQUIRED", "subscription payment requires a subscription")
+		}
+	default:
+		return infraerrors.BadRequest("FUNDING_SOURCE_INVALID", "funding_source must be wallet or subscription")
+	}
+	return nil
+}
+
+func normalizeFundingSource(source string) string {
+	source = strings.ToLower(strings.TrimSpace(source))
+	if source == "" {
+		return FundingSourceWallet
+	}
+	return source
 }
 
 // APIKeyService API Key服务
@@ -444,17 +484,25 @@ func (s *APIKeyService) incrementAPIKeyErrorCount(ctx context.Context, userID in
 	_ = s.cache.IncrementCreateAttemptCount(ctx, userID)
 }
 
-// canUserBindGroup 检查用户是否可以绑定指定分组
-// 对于订阅类型分组：检查用户是否有有效订阅
-// 对于标准类型分组：使用原有的 AllowedGroups 和 IsExclusive 逻辑
-func (s *APIKeyService) canUserBindGroup(ctx context.Context, user *User, group *Group) bool {
-	// 订阅类型分组：需要有效订阅
-	if group.IsSubscriptionType() {
-		_, err := s.userSubRepo.GetActiveByUserIDAndGroupID(ctx, user.ID, group.ID)
-		return err == nil // 有有效订阅则允许
-	}
-	// 标准类型分组：使用原有逻辑
+func (s *APIKeyService) canUserBindGroup(_ context.Context, user *User, group *Group) bool {
 	return user.CanBindGroup(group.ID, group.IsExclusive)
+}
+
+func (s *APIKeyService) validateSubscriptionFunding(ctx context.Context, userID int64, source string, subscriptionID *int64) (*UserSubscription, error) {
+	if source == "" || source == FundingSourceWallet {
+		return nil, nil
+	}
+	if subscriptionID == nil {
+		return nil, infraerrors.BadRequest("SUBSCRIPTION_REQUIRED", "subscription payment requires a subscription")
+	}
+	sub, err := s.userSubRepo.GetByID(ctx, *subscriptionID)
+	if err != nil || sub.UserID != userID {
+		return nil, infraerrors.Forbidden("SUBSCRIPTION_NOT_ALLOWED", "subscription does not belong to this user")
+	}
+	if !sub.IsActive() {
+		return nil, infraerrors.Forbidden("SUBSCRIPTION_INACTIVE", "subscription is not active")
+	}
+	return sub, nil
 }
 
 // Create 创建API Key
@@ -466,6 +514,11 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
+	}
+	fundingSource := normalizeFundingSource(req.FundingSource)
+	subscription, err := s.validateSubscriptionFunding(ctx, userID, fundingSource, req.SubscriptionID)
+	if err != nil {
+		return nil, err
 	}
 
 	// 验证 IP 白名单格式
@@ -532,18 +585,21 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 
 	// 创建API Key记录
 	apiKey := &APIKey{
-		UserID:      userID,
-		Key:         key,
-		Name:        html.EscapeString(req.Name),
-		GroupID:     req.GroupID,
-		Status:      StatusActive,
-		IPWhitelist: req.IPWhitelist,
-		IPBlacklist: req.IPBlacklist,
-		Quota:       req.Quota,
-		QuotaUsed:   0,
-		RateLimit5h: req.RateLimit5h,
-		RateLimit1d: req.RateLimit1d,
-		RateLimit7d: req.RateLimit7d,
+		UserID:         userID,
+		Key:            key,
+		Name:           html.EscapeString(req.Name),
+		GroupID:        req.GroupID,
+		FundingSource:  fundingSource,
+		SubscriptionID: req.SubscriptionID,
+		Subscription:   subscription,
+		Status:         StatusActive,
+		IPWhitelist:    req.IPWhitelist,
+		IPBlacklist:    req.IPBlacklist,
+		Quota:          req.Quota,
+		QuotaUsed:      0,
+		RateLimit5h:    req.RateLimit5h,
+		RateLimit1d:    req.RateLimit1d,
+		RateLimit7d:    req.RateLimit7d,
 	}
 
 	// Set expiration time if specified
@@ -817,6 +873,18 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		fields.GroupID = true
 	}
 
+	if req.FundingSource != nil {
+		fundingSource := normalizeFundingSource(*req.FundingSource)
+		subscription, err := s.validateSubscriptionFunding(ctx, userID, fundingSource, req.SubscriptionID)
+		if err != nil {
+			return nil, err
+		}
+		apiKey.FundingSource = fundingSource
+		apiKey.SubscriptionID = req.SubscriptionID
+		apiKey.Subscription = subscription
+		fields.FundingSource = true
+	}
+
 	if req.Status != nil {
 		apiKey.Status = *req.Status
 		fields.Status = true
@@ -1014,9 +1082,7 @@ func (s *APIKeyService) IncrementUsage(ctx context.Context, keyID int64) error {
 }
 
 // GetAvailableGroups 获取用户有权限绑定的分组列表
-// 返回用户可以选择的分组：
-// - 标准类型分组：公开的（非专属）或用户被明确允许的
-// - 订阅类型分组：用户有有效订阅的
+// 套餐只决定支付来源，不授予分组权限。
 func (s *APIKeyService) GetAvailableGroups(ctx context.Context, userID int64) ([]Group, error) {
 	// 获取用户信息
 	user, err := s.userRepo.GetByID(ctx, userID)
@@ -1030,37 +1096,15 @@ func (s *APIKeyService) GetAvailableGroups(ctx context.Context, userID int64) ([
 		return nil, fmt.Errorf("list active groups: %w", err)
 	}
 
-	// 获取用户的所有有效订阅
-	activeSubscriptions, err := s.userSubRepo.ListActiveByUserID(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("list active subscriptions: %w", err)
-	}
-
-	// 构建订阅分组 ID 集合
-	subscribedGroupIDs := make(map[int64]bool)
-	for _, sub := range activeSubscriptions {
-		subscribedGroupIDs[sub.GroupID] = true
-	}
-
 	// 过滤出用户有权限的分组
 	availableGroups := make([]Group, 0)
 	for _, group := range allGroups {
-		if s.canUserBindGroupInternal(user, &group, subscribedGroupIDs) {
+		if user.CanBindGroup(group.ID, group.IsExclusive) {
 			availableGroups = append(availableGroups, group)
 		}
 	}
 
 	return availableGroups, nil
-}
-
-// canUserBindGroupInternal 内部方法，检查用户是否可以绑定分组（使用预加载的订阅数据）
-func (s *APIKeyService) canUserBindGroupInternal(user *User, group *Group, subscribedGroupIDs map[int64]bool) bool {
-	// 订阅类型分组：需要有效订阅
-	if group.IsSubscriptionType() {
-		return subscribedGroupIDs[group.ID]
-	}
-	// 标准类型分组：使用原有逻辑
-	return user.CanBindGroup(group.ID, group.IsExclusive)
 }
 
 func (s *APIKeyService) SearchAPIKeys(ctx context.Context, userID int64, keyword string, limit int) ([]APIKey, error) {

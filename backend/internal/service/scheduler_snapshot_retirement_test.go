@@ -42,6 +42,10 @@ func (c *retirementRaceCache) GetSnapshot(context.Context, SchedulerBucket) ([]*
 	return nil, false, nil
 }
 
+func (c *retirementRaceCache) GetSnapshotVersion(context.Context, SchedulerBucket) (string, error) {
+	return "", nil
+}
+
 func (c *retirementRaceCache) CaptureBucketWriteToken(_ context.Context, bucket SchedulerBucket) (SchedulerBucketWriteToken, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

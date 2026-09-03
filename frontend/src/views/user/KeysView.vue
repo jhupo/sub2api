@@ -145,7 +145,6 @@
                   v-if="row.group"
                   :name="row.group.name"
                   :platform="row.group.platform"
-                  :subscription-type="row.group.subscription_type"
                   :rate-multiplier="row.group.rate_multiplier"
                   :user-rate-multiplier="userGroupRates[row.group.id]"
                   :peak-rate-enabled="row.group.peak_rate_enabled"
@@ -172,6 +171,17 @@
                 </svg>
               </button>
             </div>
+          </template>
+
+          <template #cell-funding_source="{ row }">
+            <span
+              class="inline-flex rounded px-2 py-1 text-xs font-medium"
+              :class="row.funding_source === 'subscription'
+                ? 'bg-sky-50 text-sky-700 dark:bg-sky-900/25 dark:text-sky-300'
+                : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/25 dark:text-emerald-300'"
+            >
+              {{ row.funding_source === 'subscription' ? t('keys.subscriptionPayment') : t('keys.walletPayment') }}
+            </span>
           </template>
 
           <template #cell-current_concurrency="{ value }">
@@ -479,7 +489,6 @@
                 v-if="option"
                 :name="(option as unknown as GroupOption).label"
                 :platform="(option as unknown as GroupOption).platform"
-                :subscription-type="(option as unknown as GroupOption).subscriptionType"
                 :rate-multiplier="(option as unknown as GroupOption).rate"
                 :user-rate-multiplier="(option as unknown as GroupOption).userRate"
                 :peak-rate-enabled="(option as unknown as GroupOption).peakRateEnabled"
@@ -493,7 +502,6 @@
               <GroupOptionItem
                 :name="(option as unknown as GroupOption).label"
                 :platform="(option as unknown as GroupOption).platform"
-                :subscription-type="(option as unknown as GroupOption).subscriptionType"
                 :rate-multiplier="(option as unknown as GroupOption).rate"
                 :user-rate-multiplier="(option as unknown as GroupOption).userRate"
                 :peak-rate-enabled="(option as unknown as GroupOption).peakRateEnabled"
@@ -505,6 +513,15 @@
               />
             </template>
           </Select>
+        </div>
+
+        <div>
+          <label class="input-label">{{ t('keys.paymentLabel') }}</label>
+          <Select
+            v-model="paymentSelection"
+            :options="fundingOptions"
+            :placeholder="t('keys.selectPayment')"
+          />
         </div>
 
         <!-- Custom Key Section (only for create) -->
@@ -1092,7 +1109,6 @@
             <GroupOptionItem
               :name="option.label"
               :platform="option.platform"
-              :subscription-type="option.subscriptionType"
               :rate-multiplier="option.rate"
               :user-rate-multiplier="option.userRate"
               :peak-rate-enabled="option.peakRateEnabled"
@@ -1140,7 +1156,8 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
-	import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
+	import type { ApiKey, Group, PublicSettings, GroupPlatform, UpdateApiKeyRequest } from '@/types'
+import { useSubscriptionStore } from '@/stores/subscriptions'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
@@ -1167,12 +1184,12 @@ interface GroupOption {
   peakStart: string
   peakEnd: string
   peakRateMultiplier: number
-  subscriptionType: SubscriptionType
   platform: GroupPlatform
 }
 
 const appStore = useAppStore()
 const onboardingStore = useOnboardingStore()
+const subscriptionStore = useSubscriptionStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
 
 const allColumns = computed<Column[]>(() => [
@@ -1180,6 +1197,7 @@ const allColumns = computed<Column[]>(() => [
   { key: 'id', label: t('keys.id'), sortable: true },
   { key: 'key', label: t('keys.apiKey'), sortable: false },
   { key: 'group', label: t('keys.group'), sortable: false },
+  { key: 'funding_source', label: t('keys.payment'), sortable: false },
   { key: 'current_concurrency', label: t('keys.currentConcurrency'), sortable: true },
   { key: 'usage', label: t('keys.usage'), sortable: false },
   { key: 'rate_limit', label: t('keys.rateLimitColumn'), sortable: false },
@@ -1330,6 +1348,8 @@ const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance 
 const formData = ref({
   name: '',
   group_id: null as number | null,
+  funding_source: 'wallet' as 'wallet' | 'subscription',
+  subscription_id: null as number | null,
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
   custom_key: '',
@@ -1370,6 +1390,46 @@ const statusOptions = computed(() => [
   { value: 'inactive', label: t('common.inactive') }
 ])
 
+const fundingOptions = computed(() => {
+  const options: Array<{ value: string; label: string; disabled?: boolean }> = [
+    { value: 'wallet', label: t('keys.walletPayment') }
+  ]
+  for (const subscription of subscriptionStore.activeSubscriptions) {
+    options.push({
+      value: `subscription:${subscription.id}`,
+      label: subscription.plan?.name || t('keys.subscriptionFallback', { id: subscription.id })
+    })
+  }
+  if (
+    formData.value.funding_source === 'subscription' &&
+    formData.value.subscription_id &&
+    !subscriptionStore.activeSubscriptions.some((item) => item.id === formData.value.subscription_id)
+  ) {
+    options.push({
+      value: `subscription:${formData.value.subscription_id}`,
+      label: t('keys.inactiveSubscription', { id: formData.value.subscription_id }),
+      disabled: true
+    })
+  }
+  return options
+})
+
+const paymentSelection = computed({
+  get: () => formData.value.funding_source === 'subscription' && formData.value.subscription_id
+    ? `subscription:${formData.value.subscription_id}`
+    : 'wallet',
+  set: (value: string | number | boolean | null) => {
+    const normalized = String(value ?? '')
+    if (normalized.startsWith('subscription:')) {
+      formData.value.funding_source = 'subscription'
+      formData.value.subscription_id = Number(normalized.slice('subscription:'.length))
+      return
+    }
+    formData.value.funding_source = 'wallet'
+    formData.value.subscription_id = null
+  }
+})
+
 const shouldSubmitEditStatus = (key: ApiKey, status: 'active' | 'inactive') => {
   if (key.status === 'quota_exhausted' || key.status === 'expired') {
     return status === 'active'
@@ -1407,7 +1467,7 @@ const onStatusFilterChange = (value: string | number | boolean | null) => {
   onFilterChange()
 }
 
-// Convert groups to Select options format with rate multiplier and subscription type
+// Convert groups to Select options format with rate multiplier.
 const groupOptions = computed(() =>
   groups.value.map((group) => ({
     value: group.id,
@@ -1419,7 +1479,6 @@ const groupOptions = computed(() =>
     peakStart: group.peak_start,
     peakEnd: group.peak_end,
     peakRateMultiplier: group.peak_rate_multiplier,
-    subscriptionType: group.subscription_type,
     platform: group.platform
   }))
 )
@@ -1564,6 +1623,8 @@ const editKey = (key: ApiKey) => {
   formData.value = {
     name: key.name,
     group_id: key.group_id,
+    funding_source: key.funding_source,
+    subscription_id: key.subscription_id,
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
     custom_key: '',
@@ -1667,6 +1728,10 @@ const handleSubmit = async () => {
     appStore.showError(t('keys.groupRequired'))
     return
   }
+  if (formData.value.funding_source === 'subscription' && !formData.value.subscription_id) {
+    appStore.showError(t('keys.subscriptionRequired'))
+    return
+  }
 
   // Validate custom key if enabled
   if (!showEditModal.value && formData.value.use_custom_key) {
@@ -1729,6 +1794,13 @@ const handleSubmit = async () => {
         rate_limit_1d: rateLimitData.rate_limit_1d,
         rate_limit_7d: rateLimitData.rate_limit_7d,
       }
+      if (
+        formData.value.funding_source !== selectedKey.value.funding_source ||
+        formData.value.subscription_id !== selectedKey.value.subscription_id
+      ) {
+        updates.funding_source = formData.value.funding_source
+        updates.subscription_id = formData.value.subscription_id
+      }
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
       }
@@ -1739,6 +1811,8 @@ const handleSubmit = async () => {
       await keysAPI.create(
         formData.value.name,
         formData.value.group_id,
+        formData.value.funding_source,
+        formData.value.subscription_id,
         customKey,
         ipWhitelist,
         ipBlacklist,
@@ -1790,6 +1864,8 @@ const closeModals = () => {
   formData.value = {
     name: '',
     group_id: null,
+    funding_source: 'wallet',
+    subscription_id: null,
     status: 'active',
     use_custom_key: false,
     custom_key: '',
@@ -1959,6 +2035,7 @@ onMounted(() => {
   loadGroups()
   loadUserGroupRates()
   loadPublicSettings()
+  subscriptionStore.fetchActiveSubscriptions().catch(() => {})
   document.addEventListener('click', closeGroupSelector)
   resetTimer = setInterval(() => { now.value = new Date() }, 60000)
 })

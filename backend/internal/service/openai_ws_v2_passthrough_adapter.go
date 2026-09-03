@@ -611,12 +611,21 @@ func (c *openAIWSClientFrameConn) ReadFrame(ctx context.Context) (coderws.Messag
 	if c == nil || c.conn == nil {
 		return coderws.MessageText, nil, errOpenAIWSConnClosed
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	controlCtx := ctx
 	if c.controlCtx != nil {
 		controlCtx = c.controlCtx
 	}
+	readCtx, cancel := context.WithCancel(controlCtx)
+	stopRelayCancel := context.AfterFunc(ctx, cancel)
+	defer func() {
+		stopRelayCancel()
+		cancel()
+	}()
 	msgType, payload, err := readOpenAIWSClientMessageWithTimeoutStart(
-		controlCtx,
+		readCtx,
 		c.conn,
 		c.interTurnIdleTimeout,
 		coderws.StatusNormalClosure,
@@ -1060,14 +1069,16 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				usageMeta.captureRequestedReasoningEffort(originalResponseCreate)
 			}
 			turnNo := int(completedTurns.Load()) + 1
-			if turnNo < 2 {
-				turnNo = 2
-			}
 			requestModelForThisFrame := ""
 			if isResponseCreate {
 				requestModelForThisFrame = usageMeta.requestModelForFrame(payload)
 				if requestModelForThisFrame == "" {
 					requestModelForThisFrame = loadCapturedSessionModel()
+				}
+				if hooks != nil && hooks.BeforeTurn != nil {
+					if err := hooks.BeforeTurn(turnNo); err != nil {
+						return payload, nil, err
+					}
 				}
 				if hooks != nil && hooks.BeforeRequest != nil {
 					if err := hooks.BeforeRequest(turnNo, payload, requestModelForThisFrame); err != nil {

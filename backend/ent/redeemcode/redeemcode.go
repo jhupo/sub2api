@@ -32,14 +32,12 @@ const (
 	FieldCreatedAt = "created_at"
 	// FieldExpiresAt holds the string denoting the expires_at field in the database.
 	FieldExpiresAt = "expires_at"
-	// FieldGroupID holds the string denoting the group_id field in the database.
-	FieldGroupID = "group_id"
-	// FieldValidityDays holds the string denoting the validity_days field in the database.
-	FieldValidityDays = "validity_days"
+	// FieldPlanVersionID holds the string denoting the plan_version_id field in the database.
+	FieldPlanVersionID = "plan_version_id"
 	// EdgeUser holds the string denoting the user edge name in mutations.
 	EdgeUser = "user"
-	// EdgeGroup holds the string denoting the group edge name in mutations.
-	EdgeGroup = "group"
+	// EdgePlanVersion holds the string denoting the plan_version edge name in mutations.
+	EdgePlanVersion = "plan_version"
 	// Table holds the table name of the redeemcode in the database.
 	Table = "redeem_codes"
 	// UserTable is the table that holds the user relation/edge.
@@ -49,13 +47,13 @@ const (
 	UserInverseTable = "users"
 	// UserColumn is the table column denoting the user relation/edge.
 	UserColumn = "used_by"
-	// GroupTable is the table that holds the group relation/edge.
-	GroupTable = "redeem_codes"
-	// GroupInverseTable is the table name for the Group entity.
-	// It exists in this package in order to avoid circular dependency with the "group" package.
-	GroupInverseTable = "groups"
-	// GroupColumn is the table column denoting the group relation/edge.
-	GroupColumn = "group_id"
+	// PlanVersionTable is the table that holds the plan_version relation/edge.
+	PlanVersionTable = "redeem_codes"
+	// PlanVersionInverseTable is the table name for the SubscriptionPlanVersion entity.
+	// It exists in this package in order to avoid circular dependency with the "subscriptionplanversion" package.
+	PlanVersionInverseTable = "subscription_plan_versions"
+	// PlanVersionColumn is the table column denoting the plan_version relation/edge.
+	PlanVersionColumn = "plan_version_id"
 )
 
 // Columns holds all SQL columns for redeemcode fields.
@@ -70,8 +68,7 @@ var Columns = []string{
 	FieldNotes,
 	FieldCreatedAt,
 	FieldExpiresAt,
-	FieldGroupID,
-	FieldValidityDays,
+	FieldPlanVersionID,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -99,8 +96,6 @@ var (
 	StatusValidator func(string) error
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
-	// DefaultValidityDays holds the default value on creation for the "validity_days" field.
-	DefaultValidityDays int
 )
 
 // OrderOption defines the ordering options for the RedeemCode queries.
@@ -156,14 +151,9 @@ func ByExpiresAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldExpiresAt, opts...).ToFunc()
 }
 
-// ByGroupID orders the results by the group_id field.
-func ByGroupID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldGroupID, opts...).ToFunc()
-}
-
-// ByValidityDays orders the results by the validity_days field.
-func ByValidityDays(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldValidityDays, opts...).ToFunc()
+// ByPlanVersionID orders the results by the plan_version_id field.
+func ByPlanVersionID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPlanVersionID, opts...).ToFunc()
 }
 
 // ByUserField orders the results by user field.
@@ -173,10 +163,10 @@ func ByUserField(field string, opts ...sql.OrderTermOption) OrderOption {
 	}
 }
 
-// ByGroupField orders the results by group field.
-func ByGroupField(field string, opts ...sql.OrderTermOption) OrderOption {
+// ByPlanVersionField orders the results by plan_version field.
+func ByPlanVersionField(field string, opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
-		sqlgraph.OrderByNeighborTerms(s, newGroupStep(), sql.OrderByField(field, opts...))
+		sqlgraph.OrderByNeighborTerms(s, newPlanVersionStep(), sql.OrderByField(field, opts...))
 	}
 }
 func newUserStep() *sqlgraph.Step {
@@ -186,10 +176,10 @@ func newUserStep() *sqlgraph.Step {
 		sqlgraph.Edge(sqlgraph.M2O, true, UserTable, UserColumn),
 	)
 }
-func newGroupStep() *sqlgraph.Step {
+func newPlanVersionStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
-		sqlgraph.To(GroupInverseTable, FieldID),
-		sqlgraph.Edge(sqlgraph.M2O, true, GroupTable, GroupColumn),
+		sqlgraph.To(PlanVersionInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2O, true, PlanVersionTable, PlanVersionColumn),
 	)
 }

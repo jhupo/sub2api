@@ -627,7 +627,7 @@ func TestAlreadyProcessedRecoversStaleRechargingLease(t *testing.T) {
 	svc := &PaymentService{
 		entClient:       client,
 		groupRepo:       groupRepo,
-		subscriptionSvc: NewSubscriptionService(groupRepo, userSubRepoNoop{}, nil, nil, nil),
+		subscriptionSvc: NewSubscriptionService(userSubRepoNoop{}, nil),
 	}
 
 	require.NoError(t, svc.alreadyProcessed(ctx, order))
@@ -794,7 +794,7 @@ func TestExecuteSubscriptionFulfillmentRecoversCommittedAssignmentWithoutExtendi
 	svc := &PaymentService{
 		entClient:       client,
 		groupRepo:       groupRepo,
-		subscriptionSvc: NewSubscriptionService(groupRepo, subRepo, nil, nil, nil),
+		subscriptionSvc: NewSubscriptionService(subRepo, nil),
 	}
 
 	require.NoError(t, svc.ExecuteSubscriptionFulfillment(ctx, order.ID))

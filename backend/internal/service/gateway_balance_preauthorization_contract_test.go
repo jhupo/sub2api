@@ -323,7 +323,6 @@ func TestBalancePreauthorizationSearchCostsMatchSettlementCalculators(t *testing
 		RateMultiplier:        2.5,
 		WebSearchPricePerCall: &webSearchPrice,
 		SearchPricePer1k:      &searchPricePer1k,
-		SubscriptionType:      "subscription",
 		PeakRateEnabled:       true,
 		PeakStart:             "00:00",
 		PeakEnd:               "23:59",
@@ -370,4 +369,15 @@ func TestBalancePreauthorizationAudioCostMatchesAudioSettlement(t *testing.T) {
 	require.InDelta(t, want.ActualCost, actual, 1e-12)
 	_, err = openAI.BalancePreauthorizationAudioCost(context.Background(), apiKey, "tts", "invalid", units, time.Unix(1000, 0))
 	require.Error(t, err)
+}
+
+func TestBalancePreauthorizationBillingTypeUsesAPIKeyFundingSource(t *testing.T) {
+	subscriptionID := int64(42)
+	subscriptionKey := &APIKey{
+		ID: 1, FundingSource: FundingSourceSubscription, SubscriptionID: &subscriptionID,
+	}
+	walletKey := &APIKey{ID: 2, FundingSource: FundingSourceWallet}
+
+	require.Equal(t, BillingTypeSubscription, BalancePreauthorizationBillingType(subscriptionKey, nil))
+	require.Equal(t, BillingTypeBalance, BalancePreauthorizationBillingType(walletKey, &UserSubscription{ID: subscriptionID}))
 }

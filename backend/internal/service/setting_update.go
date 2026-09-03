@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -808,31 +807,23 @@ func (s *SettingService) validateDefaultSubscriptionGroups(ctx context.Context, 
 
 	checked := make(map[int64]struct{}, len(items))
 	for _, item := range items {
-		if item.GroupID <= 0 {
+		if item.PlanID <= 0 {
 			continue
 		}
-		if _, ok := checked[item.GroupID]; ok {
-			return ErrDefaultSubGroupDuplicate.WithMetadata(map[string]string{
-				"group_id": strconv.FormatInt(item.GroupID, 10),
+		if _, ok := checked[item.PlanID]; ok {
+			return ErrDefaultSubPlanDuplicate.WithMetadata(map[string]string{
+				"plan_id": strconv.FormatInt(item.PlanID, 10),
 			})
 		}
-		checked[item.GroupID] = struct{}{}
-		if s.defaultSubGroupReader == nil {
+		checked[item.PlanID] = struct{}{}
+		if s.defaultSubPlanReader == nil {
 			continue
 		}
 
-		group, err := s.defaultSubGroupReader.GetByID(ctx, item.GroupID)
+		_, err := s.defaultSubPlanReader.GetPlan(ctx, item.PlanID)
 		if err != nil {
-			if errors.Is(err, ErrGroupNotFound) {
-				return ErrDefaultSubGroupInvalid.WithMetadata(map[string]string{
-					"group_id": strconv.FormatInt(item.GroupID, 10),
-				})
-			}
-			return fmt.Errorf("get default subscription group %d: %w", item.GroupID, err)
-		}
-		if !group.IsSubscriptionType() {
-			return ErrDefaultSubGroupInvalid.WithMetadata(map[string]string{
-				"group_id": strconv.FormatInt(item.GroupID, 10),
+			return ErrDefaultSubPlanInvalid.WithMetadata(map[string]string{
+				"plan_id": strconv.FormatInt(item.PlanID, 10),
 			})
 		}
 	}

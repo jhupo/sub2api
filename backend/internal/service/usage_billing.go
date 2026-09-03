@@ -54,10 +54,14 @@ type UsageBillingCommand struct {
 	// amount as finalization_pending; it must not enqueue the database deduction
 	// until the Redis reservation has been finalized.
 	BalancePreauthorized bool
-	SubscriptionCost     float64
-	APIKeyQuotaCost      float64
-	APIKeyRateLimitCost  float64
-	AccountQuotaCost     float64
+	// SubscriptionPreauthorized means the allowance was already reserved by the
+	// request guard. Apply records the remaining billing effects but must not
+	// increment subscription usage; capture performs that transition exactly once.
+	SubscriptionPreauthorized bool
+	SubscriptionCost          float64
+	APIKeyQuotaCost           float64
+	APIKeyRateLimitCost       float64
+	AccountQuotaCost          float64
 }
 
 func (c *UsageBillingCommand) Normalize() {
@@ -217,6 +221,54 @@ type BalancePreauthorizationRecord struct {
 	ExpiresAt                time.Time
 	UpdatedAt                time.Time
 	AsyncTaskID              string
+}
+
+const (
+	BillingReservationAuthorized = "authorized"
+	BillingReservationFinalizing = "finalizing"
+	BillingReservationCaptured   = "captured"
+	BillingReservationReleased   = "released"
+)
+
+type SubscriptionAllowanceCommand struct {
+	RequestID                string
+	APIKeyID                 int64
+	UserID                   int64
+	SubscriptionID           int64
+	AuthorizationFingerprint string
+	Amount                   float64
+	AuthorizedAt             time.Time
+	ExpiresAt                time.Time
+}
+
+type SubscriptionAllowanceReservation struct {
+	RequestID                string
+	APIKeyID                 int64
+	UserID                   int64
+	SubscriptionID           int64
+	AuthorizationFingerprint string
+	RequestFingerprint       string
+	AuthorizedAmount         float64
+	CapturedAmount           float64
+	Status                   string
+	DailyWindowStart         *time.Time
+	WeeklyWindowStart        *time.Time
+	MonthlyWindowStart       *time.Time
+	ExpiresAt                time.Time
+	UpdatedAt                time.Time
+	AsyncTaskID              string
+}
+
+// SubscriptionAllowanceRepository owns the atomic PostgreSQL allowance
+// reservation lifecycle. It is separate from UsageBillingRepository so wallet
+// accounting and subscription allowance storage remain independently testable.
+type SubscriptionAllowanceRepository interface {
+	AuthorizeSubscriptionAllowance(context.Context, *SubscriptionAllowanceCommand) (*SubscriptionAllowanceReservation, error)
+	ResumeSubscriptionAllowance(context.Context, *SubscriptionAllowanceCommand) (*SubscriptionAllowanceReservation, error)
+	TopUpSubscriptionAllowance(context.Context, *SubscriptionAllowanceCommand) (*SubscriptionAllowanceReservation, error)
+	CaptureSubscriptionAllowance(context.Context, *SubscriptionAllowanceCommand, string) (*SubscriptionAllowanceReservation, error)
+	ReleaseSubscriptionAllowance(context.Context, *SubscriptionAllowanceCommand) (*SubscriptionAllowanceReservation, error)
+	ListRecoverableSubscriptionAllowances(context.Context, time.Time, time.Time, int) ([]SubscriptionAllowanceReservation, error)
 }
 
 // GrokVideoPendingBillingBinding connects an accepted async video task to the

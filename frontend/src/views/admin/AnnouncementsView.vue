@@ -213,7 +213,7 @@
 
         <AnnouncementTargetingEditor
           v-model="form.targeting"
-          :groups="subscriptionGroups"
+          :plans="subscriptionPlans"
         />
       </form>
 
@@ -263,7 +263,8 @@ import { useAppStore } from '@/stores/app'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { adminAPI } from '@/api/admin'
 import { formatDateTime, formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
-import type { AdminGroup, Announcement, AnnouncementTargeting } from '@/types'
+import type { Announcement, AnnouncementTargeting } from '@/types'
+import type { SubscriptionPlan } from '@/types/payment'
 import type { Column } from '@/components/common/types'
 
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -341,7 +342,7 @@ const statusLabel = (status: string) => {
 const targetingSummary = (targeting: AnnouncementTargeting) => {
   const anyOf = targeting?.any_of ?? []
   if (!anyOf || anyOf.length === 0) return t('admin.announcements.targetingSummaryAll')
-  return t('admin.announcements.targetingSummaryCustom', { groups: anyOf.length })
+  return t('admin.announcements.targetingSummaryCustom', { count: anyOf.length })
 }
 
 // ===== CRUD / list =====
@@ -437,14 +438,13 @@ const form = reactive({
   targeting: { any_of: [] } as AnnouncementTargeting
 })
 
-const subscriptionGroups = ref<AdminGroup[]>([])
+const subscriptionPlans = ref<SubscriptionPlan[]>([])
 
-async function loadSubscriptionGroups() {
+async function loadSubscriptionPlans() {
   try {
-    const all = await adminAPI.groups.getAll()
-    subscriptionGroups.value = (all || []).filter((g) => g.subscription_type === 'subscription')
+    subscriptionPlans.value = (await adminAPI.payment.getPlans()).data
   } catch (error: any) {
-    console.error('Error loading groups:', error)
+    console.error('Error loading subscription plans:', error)
     // not fatal
   }
 }
@@ -543,7 +543,11 @@ async function handleSave() {
   }
   for (const g of anyOf) {
     const allOf = g?.all_of ?? []
-    if (allOf.length > 50) {
+    if (allOf.length === 0 || allOf.length > 50) {
+      appStore.showError(t('admin.announcements.failedToCreate'))
+      return
+    }
+    if (allOf.some((condition) => condition.type === 'subscription' && !condition.plan_ids?.length)) {
       appStore.showError(t('admin.announcements.failedToCreate'))
       return
     }
@@ -614,7 +618,7 @@ function openReadStatus(row: Announcement) {
 }
 
 onMounted(async () => {
-  await loadSubscriptionGroups()
+  await loadSubscriptionPlans()
   await loadAnnouncements()
 })
 

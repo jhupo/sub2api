@@ -24,6 +24,10 @@ func (c *outboxCleanupCache) GetSnapshot(ctx context.Context, bucket SchedulerBu
 	return nil, false, nil
 }
 
+func (c *outboxCleanupCache) GetSnapshotVersion(context.Context, SchedulerBucket) (string, error) {
+	return "", nil
+}
+
 func (c *outboxCleanupCache) CaptureBucketWriteToken(ctx context.Context, bucket SchedulerBucket) (SchedulerBucketWriteToken, error) {
 	return SchedulerBucketWriteToken{Bucket: bucket, Epoch: 1}, nil
 }

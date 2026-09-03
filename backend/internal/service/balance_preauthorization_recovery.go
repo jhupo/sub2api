@@ -67,6 +67,52 @@ func (s *BalancePreauthorizationService) RecoverBalancePreauthorization(
 	}
 }
 
+func (s *BalancePreauthorizationService) RecoverSubscriptionAllowance(
+	ctx context.Context,
+	record SubscriptionAllowanceReservation,
+) error {
+	if s == nil || s.subscriptionRepo == nil {
+		return balancePreauthorizationUnavailable(errors.New("subscription allowance recovery dependency is unavailable"))
+	}
+	cmd := &SubscriptionAllowanceCommand{
+		RequestID: record.RequestID, APIKeyID: record.APIKeyID, UserID: record.UserID,
+		SubscriptionID: record.SubscriptionID, AuthorizationFingerprint: record.AuthorizationFingerprint,
+		Amount: record.AuthorizedAmount, AuthorizedAt: record.UpdatedAt, ExpiresAt: record.ExpiresAt,
+	}
+	switch record.Status {
+	case BillingReservationAuthorized:
+		if IsGrokVideoHoldRequestID(record.RequestID) && strings.TrimSpace(record.AsyncTaskID) != "" {
+			cmd.Amount = 0
+			_, err := s.subscriptionRepo.ReleaseSubscriptionAllowance(ctx, cmd)
+			return err
+		}
+		cmd.Amount = record.AuthorizedAmount
+		fingerprint := subscriptionAllowanceRecoveryFingerprint(record)
+		_, err := s.subscriptionRepo.CaptureSubscriptionAllowance(ctx, cmd, fingerprint)
+		return err
+	case BillingReservationFinalizing:
+		if record.CapturedAmount < 0 || strings.TrimSpace(record.RequestFingerprint) == "" {
+			return balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
+		}
+		cmd.Amount = record.CapturedAmount
+		_, err := s.subscriptionRepo.CaptureSubscriptionAllowance(ctx, cmd, record.RequestFingerprint)
+		return err
+	default:
+		return balancePreauthorizationUnavailable(fmt.Errorf("unsupported recoverable subscription reservation status %s", record.Status))
+	}
+}
+
+func subscriptionAllowanceRecoveryFingerprint(record SubscriptionAllowanceReservation) string {
+	cmd := &UsageBillingCommand{
+		UserID: record.UserID, APIKeyID: record.APIKeyID,
+		SubscriptionID: &record.SubscriptionID, BillingType: BillingTypeSubscription,
+		SubscriptionCost:   record.AuthorizedAmount,
+		RequestPayloadHash: "authorized-subscription-hold-recovery:v1:" + strings.TrimSpace(record.RequestID) + ":" + strings.TrimSpace(record.AuthorizationFingerprint),
+	}
+	cmd.Normalize()
+	return cmd.RequestFingerprint
+}
+
 func balancePreauthorizationRecoveryHoldFingerprint(record BalancePreauthorizationRecord) string {
 	cmd := &UsageBillingCommand{
 		UserID:             record.UserID,

@@ -19,6 +19,10 @@ func (c *snapshotHydrationCache) GetSnapshot(ctx context.Context, bucket Schedul
 	return c.snapshot, true, nil
 }
 
+func (c *snapshotHydrationCache) GetSnapshotVersion(context.Context, SchedulerBucket) (string, error) {
+	return "test", nil
+}
+
 func (c *snapshotHydrationCache) CaptureBucketWriteToken(ctx context.Context, bucket SchedulerBucket) (SchedulerBucketWriteToken, error) {
 	return SchedulerBucketWriteToken{Bucket: bucket, Epoch: 1}, nil
 }

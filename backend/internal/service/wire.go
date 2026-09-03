@@ -772,10 +772,10 @@ func ProvideOpsIngressRejectAggregator(opsRepo OpsRepository, opsService *OpsSer
 	return aggregator
 }
 
-// ProvideSettingService wires SettingService with group reader and proxy repo.
-func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, cfg *config.Config) *SettingService {
+// ProvideSettingService wires settings validation and runtime dependencies.
+func ProvideSettingService(settingRepo SettingRepository, planReader *PaymentConfigService, proxyRepo ProxyRepository, cfg *config.Config) *SettingService {
 	svc := NewSettingService(settingRepo, cfg)
-	svc.SetDefaultSubscriptionGroupReader(groupRepo)
+	svc.SetDefaultSubscriptionPlanReader(planReader)
 	svc.SetProxyRepository(proxyRepo)
 	if err := svc.LoadForwardedClientIPSettings(context.Background()); err != nil {
 		logger.LegacyPrintf("service.setting", "Warning: load forwarded client IP settings failed: %v", err)
@@ -802,7 +802,6 @@ func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupReposit
 func ProvideBillingCacheService(
 	cache BillingCache,
 	userRepo UserRepository,
-	subRepo UserSubscriptionRepository,
 	apiKeyRepo APIKeyRepository,
 	rpmCache UserRPMCache,
 	rateRepo UserGroupRateRepository,
@@ -811,7 +810,7 @@ func ProvideBillingCacheService(
 	settingService *SettingService,
 	usageBillingRepo UsageBillingRepository,
 ) *BillingCacheService {
-	service := NewBillingCacheService(cache, userRepo, subRepo, apiKeyRepo, rpmCache, rateRepo, cfg, userPlatformQuotaRepo)
+	service := NewBillingCacheService(cache, userRepo, apiKeyRepo, rpmCache, rateRepo, cfg, userPlatformQuotaRepo)
 	service.balancePreauthorizationSettings = settingService
 	service.balancePreauthorizationSnapshot, _ = usageBillingRepo.(balancePreauthorizationSnapshotReader)
 	return service

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -143,6 +144,28 @@ type SchedulerSnapshotService struct {
 	fullRebuildRequested uint64
 	fullRebuildCompleted uint64
 	fullRebuildLastErr   error
+
+	decodeCache           sync.Map
+	snapshotVersionCache  sync.Map
+	snapshotFallbackGroup singleflight.Group
+	accountFallbackGroup  singleflight.Group
+}
+
+const (
+	snapshotDecodeCacheTTL     = 30 * time.Second
+	snapshotVersionCacheWindow = time.Second
+	snapshotFallbackHardLimit  = 30 * time.Second
+)
+
+type schedulerSnapshotDecodeCacheEntry struct {
+	accounts []*Account
+	version  string
+	expires  time.Time
+}
+
+type schedulerSnapshotVersionCacheEntry struct {
+	version string
+	readAt  time.Time
 }
 
 func NewSchedulerSnapshotService(
@@ -211,13 +234,20 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
 	mode := s.resolveMode(platform, hasForcePlatform)
 	bucket := s.bucketFor(groupID, platform, mode)
-	var writeToken SchedulerBucketWriteToken
-	canPublish := false
 	if err := ctx.Err(); err != nil {
 		return nil, useMixed, err
 	}
 
 	if s.cache != nil {
+		cacheKey := bucket.String()
+		if cached, ok := s.loadDecodedSnapshot(ctx, cacheKey, bucket); ok {
+			return cached, useMixed, nil
+		}
+
+		version, versionErr := s.snapshotVersion(ctx, cacheKey, bucket)
+		if versionErr != nil {
+			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] snapshot version read failed: bucket=%s err=%v", cacheKey, versionErr)
+		}
 		cached, hit, err := s.cache.GetSnapshot(ctx, bucket)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, useMixed, ctxErr
@@ -225,50 +255,164 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 		if err != nil {
 			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache read failed: bucket=%s err=%v", bucket.String(), err)
 		} else if hit {
+			if version == "" {
+				version, _ = s.refreshSnapshotVersion(ctx, cacheKey, bucket)
+			}
+			s.storeDecodedSnapshot(cacheKey, version, cached)
 			return derefAccounts(cached), useMixed, nil
 		}
-		token, err := s.cache.CaptureBucketWriteToken(ctx, bucket)
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, useMixed, ctxErr
-		}
-		if err != nil {
-			if errors.Is(err, ErrSchedulerBucketRetired) || errors.Is(err, ErrSchedulerBucketWriteFenced) {
-				slog.Debug("[Scheduler] cache publish fenced", "bucket", bucket.String())
-			} else {
-				logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache publish token failed: bucket=%s err=%v", bucket.String(), err)
+	}
+
+	resultCh := s.snapshotFallbackGroup.DoChan(bucket.String(), func() (any, error) {
+		fallbackCtx, cancel := s.fallbackQueryContext(ctx)
+		defer cancel()
+
+		if s.cache != nil {
+			if cached, hit, cacheErr := s.cache.GetSnapshot(fallbackCtx, bucket); cacheErr == nil && hit {
+				return derefAccounts(cached), nil
 			}
-		} else {
-			writeToken = token
-			canPublish = true
+		}
+		if err := s.guardFallback(fallbackCtx); err != nil {
+			return nil, err
+		}
+
+		var token SchedulerBucketWriteToken
+		canPublish := false
+		if s.cache != nil {
+			captured, captureErr := s.cache.CaptureBucketWriteToken(fallbackCtx, bucket)
+			if captureErr != nil {
+				if errors.Is(captureErr, ErrSchedulerBucketRetired) || errors.Is(captureErr, ErrSchedulerBucketWriteFenced) {
+					slog.Debug("[Scheduler] cache publish fenced", "bucket", bucket.String())
+				} else {
+					logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache publish token failed: bucket=%s err=%v", bucket.String(), captureErr)
+				}
+			} else {
+				token = captured
+				canPublish = true
+			}
+		}
+
+		accounts, loadErr := s.loadAccountsFromDB(fallbackCtx, bucket, useMixed)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if canPublish {
+			if publishErr := s.publishSnapshot(fallbackCtx, bucket, token, accounts); publishErr != nil {
+				if errors.Is(publishErr, ErrSchedulerBucketRetired) || errors.Is(publishErr, ErrSchedulerBucketWriteFenced) {
+					slog.Debug("[Scheduler] cache publish fenced", "bucket", bucket.String())
+				} else {
+					logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache write failed: bucket=%s err=%v", bucket.String(), publishErr)
+				}
+			}
+		}
+		return accounts, nil
+	})
+
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, useMixed, result.Err
+		}
+		accounts, _ := result.Val.([]Account)
+		return cloneSnapshotAccounts(accounts), useMixed, nil
+	case <-ctx.Done():
+		return nil, useMixed, ctx.Err()
+	}
+}
+
+func (s *SchedulerSnapshotService) loadDecodedSnapshot(ctx context.Context, cacheKey string, bucket SchedulerBucket) ([]Account, bool) {
+	raw, ok := s.decodeCache.Load(cacheKey)
+	if !ok {
+		return nil, false
+	}
+	entry, ok := raw.(*schedulerSnapshotDecodeCacheEntry)
+	if !ok || time.Now().After(entry.expires) {
+		s.decodeCache.Delete(cacheKey)
+		return nil, false
+	}
+	version, err := s.snapshotVersion(ctx, cacheKey, bucket)
+	if err != nil || version == "" || version != entry.version {
+		return nil, false
+	}
+	return derefAccounts(entry.accounts), true
+}
+
+func (s *SchedulerSnapshotService) snapshotVersion(ctx context.Context, cacheKey string, bucket SchedulerBucket) (string, error) {
+	if raw, ok := s.snapshotVersionCache.Load(cacheKey); ok {
+		if entry, ok := raw.(*schedulerSnapshotVersionCacheEntry); ok && time.Since(entry.readAt) < snapshotVersionCacheWindow {
+			return entry.version, nil
 		}
 	}
+	return s.refreshSnapshotVersion(ctx, cacheKey, bucket)
+}
 
-	if err := s.guardFallback(ctx); err != nil {
-		return nil, useMixed, err
-	}
-
-	fallbackCtx, cancel := s.withFallbackTimeout(ctx)
-	defer cancel()
-
-	accounts, err := s.loadAccountsFromDB(fallbackCtx, bucket, useMixed)
+func (s *SchedulerSnapshotService) refreshSnapshotVersion(ctx context.Context, cacheKey string, bucket SchedulerBucket) (string, error) {
+	version, err := s.cache.GetSnapshotVersion(ctx, bucket)
 	if err != nil {
-		return nil, useMixed, err
+		return "", err
 	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, useMixed, ctxErr
-	}
+	s.snapshotVersionCache.Store(cacheKey, &schedulerSnapshotVersionCacheEntry{version: version, readAt: time.Now()})
+	return version, nil
+}
 
-	if s.cache != nil && canPublish {
-		if err := s.cache.SetSnapshot(fallbackCtx, bucket, writeToken, accounts); err != nil {
-			if errors.Is(err, ErrSchedulerBucketRetired) || errors.Is(err, ErrSchedulerBucketWriteFenced) {
-				slog.Debug("[Scheduler] cache publish fenced", "bucket", bucket.String())
-			} else {
-				logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache write failed: bucket=%s err=%v", bucket.String(), err)
-			}
-		}
+func (s *SchedulerSnapshotService) storeDecodedSnapshot(cacheKey, version string, accounts []*Account) {
+	if version == "" {
+		return
 	}
+	s.decodeCache.Store(cacheKey, &schedulerSnapshotDecodeCacheEntry{
+		accounts: accounts,
+		version:  version,
+		expires:  time.Now().Add(snapshotDecodeCacheTTL),
+	})
+}
 
-	return accounts, useMixed, nil
+func (s *SchedulerSnapshotService) publishSnapshot(ctx context.Context, bucket SchedulerBucket, token SchedulerBucketWriteToken, accounts []Account) error {
+	if s.cache == nil {
+		return ErrSchedulerCacheNotReady
+	}
+	if err := s.cache.SetSnapshot(ctx, bucket, token, accounts); err != nil {
+		return err
+	}
+	s.cachePublishedSnapshot(ctx, bucket, accounts)
+	return nil
+}
+
+func (s *SchedulerSnapshotService) cachePublishedSnapshot(ctx context.Context, bucket SchedulerBucket, accounts []Account) {
+	cacheKey := bucket.String()
+	version, err := s.refreshSnapshotVersion(ctx, cacheKey, bucket)
+	if err != nil || version == "" {
+		s.decodeCache.Delete(cacheKey)
+		return
+	}
+	s.storeDecodedSnapshot(cacheKey, version, accountsToPointers(accounts))
+}
+
+func accountsToPointers(accounts []Account) []*Account {
+	result := make([]*Account, len(accounts))
+	for i := range accounts {
+		account := accounts[i]
+		result[i] = &account
+	}
+	return result
+}
+
+func cloneSnapshotAccounts(accounts []Account) []Account {
+	result := make([]Account, len(accounts))
+	for i := range accounts {
+		result[i] = cloneSnapshotAccount(&accounts[i])
+	}
+	return result
+}
+
+func (s *SchedulerSnapshotService) invalidateSnapshotDecodeCache() {
+	s.decodeCache.Range(func(key, _ any) bool {
+		s.decodeCache.Delete(key)
+		return true
+	})
+	s.snapshotVersionCache.Range(func(key, _ any) bool {
+		s.snapshotVersionCache.Delete(key)
+		return true
+	})
 }
 
 func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int64) (*Account, error) {
@@ -290,12 +434,48 @@ func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int
 		}
 	}
 
-	if err := s.guardFallback(ctx); err != nil {
-		return nil, err
+	if s.accountRepo == nil {
+		return nil, ErrSchedulerCacheNotReady
 	}
-	fallbackCtx, cancel := s.withFallbackTimeout(ctx)
-	defer cancel()
-	return s.accountRepo.GetByID(fallbackCtx, accountID)
+
+	resultCh := s.accountFallbackGroup.DoChan(strconv.FormatInt(accountID, 10), func() (any, error) {
+		fallbackCtx, cancel := s.fallbackQueryContext(ctx)
+		defer cancel()
+		if s.cache != nil {
+			account, err := s.cache.GetAccount(fallbackCtx, accountID)
+			if err == nil && account != nil {
+				return account, nil
+			}
+			if err := fallbackCtx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.guardFallback(fallbackCtx); err != nil {
+			return nil, err
+		}
+		account, err := s.accountRepo.GetByID(fallbackCtx, accountID)
+		if err == nil && account != nil && s.cache != nil {
+			if cacheErr := s.cache.SetAccount(fallbackCtx, account); cacheErr != nil {
+				slog.Debug("scheduler account fallback cache write failed", "account_id", accountID, "err", cacheErr)
+			}
+		}
+		return account, err
+	})
+
+	select {
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		account, _ := result.Val.(*Account)
+		if account == nil {
+			return nil, nil
+		}
+		cloned := cloneSnapshotAccount(account)
+		return &cloned, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // GetGroupByID 获取分组信息（供调度器使用）
@@ -322,7 +502,11 @@ func (s *SchedulerSnapshotService) UpdateAccountInCache(ctx context.Context, acc
 	if s.cache == nil || account == nil {
 		return nil
 	}
-	return s.cache.SetAccount(ctx, account)
+	err := s.cache.SetAccount(ctx, account)
+	if err == nil {
+		s.invalidateSnapshotDecodeCache()
+	}
+	return err
 }
 
 func (s *SchedulerSnapshotService) runInitialRebuild() {
@@ -506,7 +690,11 @@ func (s *SchedulerSnapshotService) handleLastUsedEvent(ctx context.Context, payl
 	if len(updates) == 0 {
 		return nil
 	}
-	return s.cache.UpdateLastUsed(ctx, updates)
+	err := s.cache.UpdateLastUsed(ctx, updates)
+	if err == nil {
+		s.invalidateSnapshotDecodeCache()
+	}
+	return err
 }
 
 func (s *SchedulerSnapshotService) handleBulkAccountEvent(ctx context.Context, payload map[string]any, seen map[batchSeenKey]struct{}) error {
@@ -537,6 +725,7 @@ func (s *SchedulerSnapshotService) handleBulkAccountEvent(ctx context.Context, p
 	if len(ids) == 0 {
 		return nil
 	}
+	s.invalidateSnapshotDecodeCache()
 
 	preloadGroupIDs := parseInt64Slice(payload["group_ids"])
 	accounts, err := s.accountRepo.GetByIDs(ctx, ids)
@@ -656,6 +845,7 @@ func (s *SchedulerSnapshotService) handleAccountEvent(ctx context.Context, accou
 	if s.accountRepo == nil {
 		return nil
 	}
+	s.invalidateSnapshotDecodeCache()
 
 	var groupIDs []int64
 	if payload != nil {
@@ -721,6 +911,7 @@ func (s *SchedulerSnapshotService) prepareGroupLifecycle(ctx context.Context, gr
 	if groupID <= 0 || s.isRunModeSimple() {
 		return schedulerGroupLifecyclePlan{}, nil
 	}
+	s.invalidateSnapshotDecodeCache()
 	if s.cache == nil || s.groupRepo == nil {
 		return schedulerGroupLifecyclePlan{}, ErrSchedulerCacheNotReady
 	}
@@ -995,14 +1186,18 @@ func (s *SchedulerSnapshotService) setRebuildSnapshot(
 	writer, ok := s.cache.(schedulerSnapshotAccountIDWriter)
 	key, reusable := schedulerAccountQueryKeyForBucket(task.bucket)
 	if !ok || queries == nil || !reusable {
-		return s.cache.SetSnapshot(ctx, task.bucket, task.token, accounts)
+		return s.publishSnapshot(ctx, task.bucket, task.token, accounts)
 	}
 
 	if accountIDs, exists := queries.snapshotAccountIDs[key]; exists {
-		return writer.SetSnapshotByAccountIDs(ctx, task.bucket, task.token, accountIDs)
+		if err := writer.SetSnapshotByAccountIDs(ctx, task.bucket, task.token, accountIDs); err != nil {
+			return err
+		}
+		s.cachePublishedSnapshot(ctx, task.bucket, accounts)
+		return nil
 	}
 	if queries.remaining[key] <= 1 {
-		return s.cache.SetSnapshot(ctx, task.bucket, task.token, accounts)
+		return s.publishSnapshot(ctx, task.bucket, task.token, accounts)
 	}
 
 	accountIDs, err := writer.SetSnapshotAndReturnAccountIDs(ctx, task.bucket, task.token, accounts)
@@ -1015,6 +1210,7 @@ func (s *SchedulerSnapshotService) setRebuildSnapshot(
 		// 返回切片由当前批次独占，直接接管可避免 10k 账号场景再次复制。
 		queries.snapshotAccountIDs[key] = accountIDs
 	}
+	s.cachePublishedSnapshot(ctx, task.bucket, accounts)
 	return nil
 }
 
@@ -1600,6 +1796,16 @@ func (s *SchedulerSnapshotService) withFallbackTimeout(ctx context.Context) (con
 	return context.WithTimeout(ctx, timeout)
 }
 
+func (s *SchedulerSnapshotService) fallbackQueryContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	base := context.WithoutCancel(ctx)
+	bounded, boundedCancel := context.WithTimeout(base, snapshotFallbackHardLimit)
+	fallbackCtx, fallbackCancel := s.withFallbackTimeout(bounded)
+	return fallbackCtx, func() {
+		fallbackCancel()
+		boundedCancel()
+	}
+}
+
 func (s *SchedulerSnapshotService) isRunModeSimple() bool {
 	return s.cfg != nil && s.cfg.RunMode == config.RunModeSimple
 }
@@ -1649,9 +1855,66 @@ func derefAccounts(accounts []*Account) []Account {
 		if account == nil {
 			continue
 		}
-		out = append(out, *account)
+		out = append(out, cloneSnapshotAccount(account))
 	}
 	return out
+}
+
+func cloneSnapshotAccount(account *Account) Account {
+	if account == nil {
+		return Account{}
+	}
+	clone := *account
+	clone.Credentials = cloneSnapshotJSONMap(account.Credentials)
+	clone.Extra = cloneSnapshotJSONMap(account.Extra)
+	clone.modelMappingCache = nil
+	clone.modelMappingCacheReady = false
+	clone.modelMappingCacheCredentialsPtr = 0
+	clone.modelMappingCacheRawPtr = 0
+	clone.modelMappingCacheRawLen = 0
+	clone.modelMappingCacheRawSig = 0
+	clone.modelMappingCacheRuntimeVersion = 0
+	clone.headerOverrideCache = nil
+	clone.headerOverrideCacheReady = false
+	clone.headerOverrideCacheCredentialsPtr = 0
+	clone.headerOverrideCacheRawPtr = 0
+	clone.headerOverrideCacheRawLen = 0
+	clone.headerOverrideCacheRawSig = 0
+	return clone
+}
+
+func cloneSnapshotJSONMap(input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+	output := make(map[string]any, len(input))
+	for key, value := range input {
+		output[key] = cloneSnapshotJSONValue(value)
+	}
+	return output
+}
+
+func cloneSnapshotJSONValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneSnapshotJSONMap(typed)
+	case map[string]string:
+		output := make(map[string]string, len(typed))
+		for key, item := range typed {
+			output[key] = item
+		}
+		return output
+	case []any:
+		output := make([]any, len(typed))
+		for index, item := range typed {
+			output[index] = cloneSnapshotJSONValue(item)
+		}
+		return output
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return value
+	}
 }
 
 func parseInt64Slice(value any) []int64 {

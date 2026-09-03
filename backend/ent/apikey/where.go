@@ -90,6 +90,16 @@ func GroupID(v int64) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldGroupID, v))
 }
 
+// FundingSource applies equality check predicate on the "funding_source" field. It's identical to FundingSourceEQ.
+func FundingSource(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldFundingSource, v))
+}
+
+// SubscriptionID applies equality check predicate on the "subscription_id" field. It's identical to SubscriptionIDEQ.
+func SubscriptionID(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldSubscriptionID, v))
+}
+
 // Status applies equality check predicate on the "status" field. It's identical to StatusEQ.
 func Status(v string) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldStatus, v))
@@ -468,6 +478,101 @@ func GroupIDIsNil() predicate.APIKey {
 // GroupIDNotNil applies the NotNil predicate on the "group_id" field.
 func GroupIDNotNil() predicate.APIKey {
 	return predicate.APIKey(sql.FieldNotNull(FieldGroupID))
+}
+
+// FundingSourceEQ applies the EQ predicate on the "funding_source" field.
+func FundingSourceEQ(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldFundingSource, v))
+}
+
+// FundingSourceNEQ applies the NEQ predicate on the "funding_source" field.
+func FundingSourceNEQ(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldFundingSource, v))
+}
+
+// FundingSourceIn applies the In predicate on the "funding_source" field.
+func FundingSourceIn(vs ...string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldFundingSource, vs...))
+}
+
+// FundingSourceNotIn applies the NotIn predicate on the "funding_source" field.
+func FundingSourceNotIn(vs ...string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldFundingSource, vs...))
+}
+
+// FundingSourceGT applies the GT predicate on the "funding_source" field.
+func FundingSourceGT(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGT(FieldFundingSource, v))
+}
+
+// FundingSourceGTE applies the GTE predicate on the "funding_source" field.
+func FundingSourceGTE(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGTE(FieldFundingSource, v))
+}
+
+// FundingSourceLT applies the LT predicate on the "funding_source" field.
+func FundingSourceLT(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLT(FieldFundingSource, v))
+}
+
+// FundingSourceLTE applies the LTE predicate on the "funding_source" field.
+func FundingSourceLTE(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLTE(FieldFundingSource, v))
+}
+
+// FundingSourceContains applies the Contains predicate on the "funding_source" field.
+func FundingSourceContains(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldContains(FieldFundingSource, v))
+}
+
+// FundingSourceHasPrefix applies the HasPrefix predicate on the "funding_source" field.
+func FundingSourceHasPrefix(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldHasPrefix(FieldFundingSource, v))
+}
+
+// FundingSourceHasSuffix applies the HasSuffix predicate on the "funding_source" field.
+func FundingSourceHasSuffix(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldHasSuffix(FieldFundingSource, v))
+}
+
+// FundingSourceEqualFold applies the EqualFold predicate on the "funding_source" field.
+func FundingSourceEqualFold(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEqualFold(FieldFundingSource, v))
+}
+
+// FundingSourceContainsFold applies the ContainsFold predicate on the "funding_source" field.
+func FundingSourceContainsFold(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldContainsFold(FieldFundingSource, v))
+}
+
+// SubscriptionIDEQ applies the EQ predicate on the "subscription_id" field.
+func SubscriptionIDEQ(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldSubscriptionID, v))
+}
+
+// SubscriptionIDNEQ applies the NEQ predicate on the "subscription_id" field.
+func SubscriptionIDNEQ(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldSubscriptionID, v))
+}
+
+// SubscriptionIDIn applies the In predicate on the "subscription_id" field.
+func SubscriptionIDIn(vs ...int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldSubscriptionID, vs...))
+}
+
+// SubscriptionIDNotIn applies the NotIn predicate on the "subscription_id" field.
+func SubscriptionIDNotIn(vs ...int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldSubscriptionID, vs...))
+}
+
+// SubscriptionIDIsNil applies the IsNil predicate on the "subscription_id" field.
+func SubscriptionIDIsNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldIsNull(FieldSubscriptionID))
+}
+
+// SubscriptionIDNotNil applies the NotNil predicate on the "subscription_id" field.
+func SubscriptionIDNotNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotNull(FieldSubscriptionID))
 }
 
 // StatusEQ applies the EQ predicate on the "status" field.
@@ -1163,6 +1268,29 @@ func HasGroup() predicate.APIKey {
 func HasGroupWith(preds ...predicate.Group) predicate.APIKey {
 	return predicate.APIKey(func(s *sql.Selector) {
 		step := newGroupStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasSubscription applies the HasEdge predicate on the "subscription" edge.
+func HasSubscription() predicate.APIKey {
+	return predicate.APIKey(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, SubscriptionTable, SubscriptionColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasSubscriptionWith applies the HasEdge predicate on the "subscription" edge with a given conditions (other predicates).
+func HasSubscriptionWith(preds ...predicate.UserSubscription) predicate.APIKey {
+	return predicate.APIKey(func(s *sql.Selector) {
+		step := newSubscriptionStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

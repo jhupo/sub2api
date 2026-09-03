@@ -110,18 +110,11 @@ export interface PaymentOrder {
 
 export interface SubscriptionPlan {
   id: number
-  group_id: number
-  group_platform?: string
-  group_name?: string
-  rate_multiplier?: number
-  peak_rate_enabled?: boolean
-  peak_start?: string
-  peak_end?: string
-  peak_rate_multiplier?: number
+  published_version_id?: number
+  version?: number
   daily_limit_usd?: number | null
   weekly_limit_usd?: number | null
   monthly_limit_usd?: number | null
-  supported_model_scopes?: string[]
   name: string
   description: string
   price: number
@@ -132,6 +125,7 @@ export interface SubscriptionPlan {
   validity_unit: string
   /** Stored as JSON string in backend; API layer should parse before use */
   features: string[]
+  product_name?: string
   for_sale: boolean
   sort_order: number
 }

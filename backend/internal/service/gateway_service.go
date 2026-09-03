@@ -795,6 +795,7 @@ type GatewayService struct {
 	tlsFPProfileService   *TLSFingerprintProfileService
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	windowCostPrefetchSF  singleflight.Group
 }
 
 // NewGatewayService creates a new GatewayService

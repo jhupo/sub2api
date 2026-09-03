@@ -608,41 +608,21 @@ func TestBalancePreauthorizationLifecycleDependencyFailureIsFailClosed(t *testin
 	})
 }
 
-func TestBalancePreauthorizationLifecycleSkipsSimpleAndSubscription(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(*preauthorizationFixture, *BalancePreauthorizationRequest)
-	}{
-		{
-			name: "simple",
-			mutate: func(fixture *preauthorizationFixture, _ *BalancePreauthorizationRequest) {
-				fixture.service.cfg.RunMode = config.RunModeSimple
-			},
-		},
-		{
-			name: "subscription",
-			mutate: func(_ *preauthorizationFixture, request *BalancePreauthorizationRequest) {
-				request.BillingType = BillingTypeSubscription
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			fixture := newPreauthorizationFixture()
-			request := balancePreauthorizationTestRequest()
-			test.mutate(fixture, &request)
-			guard, err := fixture.service.Preauthorize(context.Background(), request)
-			require.NoError(t, err)
-			require.Nil(t, guard)
-			require.Empty(t, fixture.recorder.snapshot())
-		})
-	}
+func TestBalancePreauthorizationLifecycleSkipsSimpleMode(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	fixture.service.cfg.RunMode = config.RunModeSimple
+	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
+	require.NoError(t, err)
+	require.Nil(t, guard)
+	require.Empty(t, fixture.recorder.snapshot())
 }
 
 func TestBalancePreauthorizationRequirementMatchesLifecycleModes(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	require.True(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeBalance))
-	require.False(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeSubscription))
+	// Subscription allowances are the atomic quota gate and remain mandatory;
+	// the setting only controls wallet preauthorization.
+	require.True(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeSubscription))
 
 	fixture.service.cfg.Billing.BalancePreauthorizationEnabled = false
 	require.True(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeBalance))

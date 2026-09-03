@@ -41,6 +41,7 @@ type UsageLogRepository interface {
 	ListByModelAndTimeRange(ctx context.Context, modelName string, startTime, endTime time.Time) ([]UsageLog, *pagination.PaginationResult, error)
 
 	GetAccountWindowStats(ctx context.Context, accountID int64, startTime time.Time) (*usagestats.AccountStats, error)
+	GetAccountWindowCostsBatch(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]float64, error)
 	GetAccountTodayStats(ctx context.Context, accountID int64) (*usagestats.AccountStats, error)
 
 	// Admin dashboard stats

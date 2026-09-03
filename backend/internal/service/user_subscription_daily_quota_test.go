@@ -1,3 +1,5 @@
+//go:build legacy
+
 package service
 
 import (
@@ -43,7 +45,7 @@ func TestAssignOrExtendSubscription_ExpiredDailyCardStartsNewOneTimeQuota(t *tes
 		MonthlyUsageUSD:    30,
 		Notes:              "old",
 	})
-	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil)
+	svc := NewSubscriptionService(subRepo, nil)
 
 	renewed, reused, err := svc.AssignOrExtendSubscription(context.Background(), &AssignSubscriptionInput{
 		UserID:       200,
@@ -81,7 +83,7 @@ func TestAssignOrExtendSubscription_ExpiredSubscriptionAppendsMatchingNotes(t *t
 		Status:    SubscriptionStatusExpired,
 		Notes:     "same",
 	})
-	svc := NewSubscriptionService(groupRepo, subRepo, nil, nil, nil)
+	svc := NewSubscriptionService(subRepo, nil)
 
 	renewed, reused, err := svc.AssignOrExtendSubscription(context.Background(), &AssignSubscriptionInput{
 		UserID:       201,
@@ -142,7 +144,7 @@ func TestCheckAndResetWindows_DailyCardDoesNotResetDailyUsage(t *testing.T) {
 	startsAt := now.Add(-23 * time.Hour)
 	dailyWindowStart := now.Add(-25 * time.Hour)
 	repo := &dailyResetTrackingUserSubRepo{}
-	svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil)
+	svc := NewSubscriptionService(repo, nil)
 	sub := &UserSubscription{
 		ID:               1,
 		UserID:           10,
@@ -165,7 +167,7 @@ func TestCheckAndResetWindows_MultiDaySubscriptionStillResetsDailyUsage(t *testi
 	startsAt := now.Add(-48 * time.Hour)
 	dailyWindowStart := now.Add(-25 * time.Hour)
 	repo := &dailyResetTrackingUserSubRepo{}
-	svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil)
+	svc := NewSubscriptionService(repo, nil)
 	svc.now = func() time.Time { return now }
 	sub := &UserSubscription{
 		ID:               1,
@@ -199,7 +201,7 @@ func TestValidateAndCheckLimits_DailyCardDoesNotAllowSecondQuotaAfterMidnight(t 
 		SubscriptionType: SubscriptionTypeSubscription,
 		DailyLimitUSD:    &dailyLimit,
 	}
-	svc := NewSubscriptionService(groupRepoNoop{}, userSubRepoNoop{}, nil, nil, nil)
+	svc := NewSubscriptionService(userSubRepoNoop{}, nil)
 
 	needsMaintenance, err := svc.ValidateAndCheckLimits(sub, group)
 

@@ -130,6 +130,7 @@ export default {
     noExpiration: '无到期时间',
     unlimited: '无限制',
     unlimitedDesc: '该订阅无用量限制',
+    reserved: '其中 ${amount} 为处理中请求冻结额度',
     daily: '每日',
     weekly: '每周',
     monthly: '每月',

@@ -130,9 +130,9 @@ func (p *postUsageBillingParams) shouldUpdateAccountQuota() bool {
 	return p.Cost.TotalCost > 0 && p.Account.IsAPIKeyOrBedrock() && p.Account.HasAnyQuotaLimit()
 }
 
-// postUsageBilling is the legacy fallback billing path used when the unified
-// billing repo is unavailable (nil). Production uses applyUsageBilling → repo.Apply
-// for atomic billing. This path only runs in tests or degraded mode.
+// postUsageBilling is the wallet-only fallback used when the unified billing
+// repository is unavailable. Subscription billing must never enter this path:
+// its allowance is reserved and captured by the durable PostgreSQL state machine.
 func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps) {
 	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
@@ -140,21 +140,15 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 	cost := p.Cost
 
 	if p.IsSubscriptionBill {
-		// Subscription usage tracked by ActualCost so group rate multiplier
-		// consumes the quota at the expected speed.
-		if cost.ActualCost > 0 {
-			if err := deps.userSubRepo.IncrementUsage(billingCtx, p.Subscription.ID, cost.ActualCost); err != nil {
-				slog.Error("increment subscription usage failed", "subscription_id", p.Subscription.ID, "error", err)
-			}
-		}
-	} else {
-		if cost.ActualCost > 0 {
-			if err := deps.userRepo.DeductBalance(billingCtx, p.User.ID, cost.ActualCost); err != nil {
-				slog.Error("deduct balance failed", "user_id", p.User.ID, "error", err)
-			} else if deps.billingCacheService != nil {
-				if err := deps.billingCacheService.InvalidateUserBalance(billingCtx, p.User.ID); err != nil {
-					slog.Warn("invalidate balance cache after legacy deduction failed", "user_id", p.User.ID, "error", err)
-				}
+		slog.Error("subscription billing reached wallet fallback")
+		return
+	}
+	if cost.ActualCost > 0 {
+		if err := deps.userRepo.DeductBalance(billingCtx, p.User.ID, cost.ActualCost); err != nil {
+			slog.Error("deduct balance failed", "user_id", p.User.ID, "error", err)
+		} else if deps.billingCacheService != nil {
+			if err := deps.billingCacheService.InvalidateUserBalance(billingCtx, p.User.ID); err != nil {
+				slog.Warn("invalidate balance cache after legacy deduction failed", "user_id", p.User.ID, "error", err)
 			}
 		}
 	}
@@ -312,7 +306,7 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 	// user-specific) rate multiplier consumes subscription quota at the expected
 	// speed. TotalCost remains the raw (pre-multiplier) value; downstream guards
 	// on "> 0" still correctly skip free subscriptions (RateMultiplier == 0).
-	if p.IsSubscriptionBill && p.Subscription != nil && p.Cost.TotalCost > 0 {
+	if p.IsSubscriptionBill && p.Subscription != nil {
 		cmd.SubscriptionID = &p.Subscription.ID
 		cmd.SubscriptionCost = p.Cost.ActualCost
 	} else if p.Cost.ActualCost > 0 {
@@ -337,9 +331,12 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	if p == nil || deps == nil {
 		return false, nil
 	}
-	guard, balancePreauthorized := BalancePreauthorizationGuardFromContext(ctx)
-	if balancePreauthorized && !guard.IsCurrentOwner() {
+	guard, preauthorized := BalancePreauthorizationGuardFromContext(ctx)
+	if preauthorized && !guard.IsCurrentOwner() {
 		return false, ErrBalancePreauthorizationOwnershipTransferred
+	}
+	if p.IsSubscriptionBill && !preauthorized {
+		return false, balancePreauthorizationUnavailable(errors.New("subscription billing requires an active allowance reservation"))
 	}
 	// The reserve is admission state, never a usage measurement. BalanceCost
 	// must come only from the provider's billable units calculated above. A
@@ -356,12 +353,28 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 			usageLog.ActualCost = p.Cost.ActualCost
 		}
 	}
-	if balancePreauthorized && cmd != nil {
-		cmd.BalancePreauthorized = true
+	guardedCost := 0.0
+	walletPreauthorized := false
+	if preauthorized && cmd != nil {
+		switch guard.FundingSource() {
+		case FundingSourceWallet:
+			cmd.BalancePreauthorized = true
+			guardedCost = cmd.BalanceCost
+			walletPreauthorized = true
+		case FundingSourceSubscription:
+			guardSubscriptionID := guard.SubscriptionID()
+			if cmd.SubscriptionID == nil || guardSubscriptionID == nil || *cmd.SubscriptionID != *guardSubscriptionID {
+				return false, ErrUsageBillingRequestConflict
+			}
+			cmd.SubscriptionPreauthorized = true
+			guardedCost = cmd.SubscriptionCost
+		default:
+			return false, balancePreauthorizationUnavailable(errors.New("guard funding source is invalid"))
+		}
 		cmd.Normalize()
 	}
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
-		if balancePreauthorized {
+		if preauthorized {
 			return false, balancePreauthorizationUnavailable(errors.New("guarded usage billing repository is unavailable"))
 		}
 		postUsageBilling(ctx, p, deps)
@@ -370,14 +383,14 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
-	if balancePreauthorized {
-		if err := guard.TopUpTo(billingCtx, cmd.BalanceCost); err != nil {
+	if preauthorized {
+		if err := guard.TopUpTo(billingCtx, guardedCost); err != nil {
 			return false, err
 		}
 	}
 
 	result, applyErr := repo.Apply(billingCtx, cmd)
-	if balancePreauthorized {
+	if preauthorized {
 		if applyErr != nil {
 			return false, applyErr
 		}
@@ -387,7 +400,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		// Finalize even when Apply reports a duplicate. A prior worker may have
 		// committed finalization_pending and crashed before settling the Redis
 		// hold; Applied=false is therefore not proof that settlement completed.
-		if err := guard.Finalize(billingCtx, cmd.BalanceCost, cmd.RequestFingerprint); err != nil {
+		if err := guard.Finalize(billingCtx, guardedCost, cmd.RequestFingerprint); err != nil {
 			return false, err
 		}
 	} else if applyErr != nil {
@@ -405,7 +418,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		}
 	}
 
-	finalizePostUsageBilling(billingCtx, p, deps, result, balancePreauthorized)
+	finalizePostUsageBilling(billingCtx, p, deps, result, walletPreauthorized)
 	return true, nil
 }
 
@@ -414,11 +427,7 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		return
 	}
 
-	if p.IsSubscriptionBill {
-		if p.Cost.ActualCost > 0 && p.User != nil && p.APIKey != nil && p.APIKey.GroupID != nil {
-			deps.billingCacheService.QueueUpdateSubscriptionUsage(p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
-		}
-	} else if !balancePreauthorized && p.Cost.ActualCost > 0 && p.User != nil {
+	if !p.IsSubscriptionBill && !balancePreauthorized && p.Cost.ActualCost > 0 && p.User != nil {
 		syncBalanceCacheAfterDeduction(ctx, p, deps, result)
 	}
 
@@ -440,7 +449,7 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 			deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, p.Cost.ActualCost)
 			if deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled {
 				// 降级路径:flusher 未启用时保留原有异步直写 DB
-				dbCtx, dbCancel := detachUpstreamContext(ctx)
+				dbCtx, dbCancel := detachedBillingContext(ctx)
 				userID, platform, cost := p.User.ID, p.Platform, p.Cost.ActualCost
 				go func() {
 					defer func() {
@@ -641,6 +650,15 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 
 // RecordUsage 记录使用量并扣费（或更新订阅用量）
 func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInput) error {
+	if input == nil {
+		return errors.New("gateway usage input is nil")
+	}
+	if input.Result == nil {
+		return errors.New("gateway usage result is nil")
+	}
+	if err := validateUsageBillingContext(input.APIKey, input.User, input.Account); err != nil {
+		return err
+	}
 	return s.recordUsageCore(ctx, &recordUsageCoreInput{
 		Result:             input.Result,
 		APIKey:             input.APIKey,
@@ -659,6 +677,42 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 		QuotaPlatform:      input.QuotaPlatform,
 		ChannelUsageFields: input.ChannelUsageFields,
 	})
+}
+
+// validateUsageBillingContext makes the API key's persisted funding source the
+// source of truth for settlement. A missing subscription on a subscription key
+// must fail closed; otherwise a malformed internal call could silently fall
+// through to wallet billing.
+func validateUsageBillingContext(apiKey *APIKey, user *User, account *Account) error {
+	if apiKey == nil {
+		return errors.New("usage api key is nil")
+	}
+	if user == nil {
+		return errors.New("usage user is nil")
+	}
+	if account == nil {
+		return errors.New("usage account is nil")
+	}
+	if apiKey.UsesSubscription() && (apiKey.SubscriptionID == nil || *apiKey.SubscriptionID <= 0) {
+		return ErrSubscriptionBillingInvalid
+	}
+	return nil
+}
+
+func validateUsageBillingFunding(apiKey *APIKey, subscription *UserSubscription) (bool, error) {
+	if apiKey == nil {
+		return false, errors.New("usage api key is nil")
+	}
+	if !apiKey.UsesSubscription() {
+		return false, nil
+	}
+	if apiKey.SubscriptionID == nil || *apiKey.SubscriptionID <= 0 || subscription == nil {
+		return false, ErrSubscriptionBillingInvalid
+	}
+	if subscription.ID != *apiKey.SubscriptionID {
+		return false, ErrUsageBillingRequestConflict
+	}
+	return true, nil
 }
 
 // recordUsageCoreInput 是 recordUsageCore 的公共输入字段，从两种输入结构体中提取。
@@ -850,7 +904,15 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 
 	// 判断计费方式：订阅模式 vs 余额模式
-	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
+	isSubscriptionBilling, err := validateUsageBillingFunding(apiKey, subscription)
+	if err != nil {
+		return err
+	}
+	if !isSubscriptionBilling {
+		// A wallet key cannot carry an entitlement in the usage event, even if an
+		// internal caller supplied stale context from a previous request.
+		subscription = nil
+	}
 	billingType := BillingTypeBalance
 	if isSubscriptionBilling {
 		billingType = BillingTypeSubscription

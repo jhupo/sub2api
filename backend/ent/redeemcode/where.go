@@ -100,14 +100,9 @@ func ExpiresAt(v time.Time) predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldEQ(FieldExpiresAt, v))
 }
 
-// GroupID applies equality check predicate on the "group_id" field. It's identical to GroupIDEQ.
-func GroupID(v int64) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldEQ(FieldGroupID, v))
-}
-
-// ValidityDays applies equality check predicate on the "validity_days" field. It's identical to ValidityDaysEQ.
-func ValidityDays(v int) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldEQ(FieldValidityDays, v))
+// PlanVersionID applies equality check predicate on the "plan_version_id" field. It's identical to PlanVersionIDEQ.
+func PlanVersionID(v int64) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldEQ(FieldPlanVersionID, v))
 }
 
 // CodeEQ applies the EQ predicate on the "code" field.
@@ -590,74 +585,34 @@ func ExpiresAtNotNil() predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldNotNull(FieldExpiresAt))
 }
 
-// GroupIDEQ applies the EQ predicate on the "group_id" field.
-func GroupIDEQ(v int64) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldEQ(FieldGroupID, v))
+// PlanVersionIDEQ applies the EQ predicate on the "plan_version_id" field.
+func PlanVersionIDEQ(v int64) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldEQ(FieldPlanVersionID, v))
 }
 
-// GroupIDNEQ applies the NEQ predicate on the "group_id" field.
-func GroupIDNEQ(v int64) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldNEQ(FieldGroupID, v))
+// PlanVersionIDNEQ applies the NEQ predicate on the "plan_version_id" field.
+func PlanVersionIDNEQ(v int64) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNEQ(FieldPlanVersionID, v))
 }
 
-// GroupIDIn applies the In predicate on the "group_id" field.
-func GroupIDIn(vs ...int64) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldIn(FieldGroupID, vs...))
+// PlanVersionIDIn applies the In predicate on the "plan_version_id" field.
+func PlanVersionIDIn(vs ...int64) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldIn(FieldPlanVersionID, vs...))
 }
 
-// GroupIDNotIn applies the NotIn predicate on the "group_id" field.
-func GroupIDNotIn(vs ...int64) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldNotIn(FieldGroupID, vs...))
+// PlanVersionIDNotIn applies the NotIn predicate on the "plan_version_id" field.
+func PlanVersionIDNotIn(vs ...int64) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNotIn(FieldPlanVersionID, vs...))
 }
 
-// GroupIDIsNil applies the IsNil predicate on the "group_id" field.
-func GroupIDIsNil() predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldIsNull(FieldGroupID))
+// PlanVersionIDIsNil applies the IsNil predicate on the "plan_version_id" field.
+func PlanVersionIDIsNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldIsNull(FieldPlanVersionID))
 }
 
-// GroupIDNotNil applies the NotNil predicate on the "group_id" field.
-func GroupIDNotNil() predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldNotNull(FieldGroupID))
-}
-
-// ValidityDaysEQ applies the EQ predicate on the "validity_days" field.
-func ValidityDaysEQ(v int) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldEQ(FieldValidityDays, v))
-}
-
-// ValidityDaysNEQ applies the NEQ predicate on the "validity_days" field.
-func ValidityDaysNEQ(v int) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldNEQ(FieldValidityDays, v))
-}
-
-// ValidityDaysIn applies the In predicate on the "validity_days" field.
-func ValidityDaysIn(vs ...int) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldIn(FieldValidityDays, vs...))
-}
-
-// ValidityDaysNotIn applies the NotIn predicate on the "validity_days" field.
-func ValidityDaysNotIn(vs ...int) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldNotIn(FieldValidityDays, vs...))
-}
-
-// ValidityDaysGT applies the GT predicate on the "validity_days" field.
-func ValidityDaysGT(v int) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldGT(FieldValidityDays, v))
-}
-
-// ValidityDaysGTE applies the GTE predicate on the "validity_days" field.
-func ValidityDaysGTE(v int) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldGTE(FieldValidityDays, v))
-}
-
-// ValidityDaysLT applies the LT predicate on the "validity_days" field.
-func ValidityDaysLT(v int) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldLT(FieldValidityDays, v))
-}
-
-// ValidityDaysLTE applies the LTE predicate on the "validity_days" field.
-func ValidityDaysLTE(v int) predicate.RedeemCode {
-	return predicate.RedeemCode(sql.FieldLTE(FieldValidityDays, v))
+// PlanVersionIDNotNil applies the NotNil predicate on the "plan_version_id" field.
+func PlanVersionIDNotNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNotNull(FieldPlanVersionID))
 }
 
 // HasUser applies the HasEdge predicate on the "user" edge.
@@ -683,21 +638,21 @@ func HasUserWith(preds ...predicate.User) predicate.RedeemCode {
 	})
 }
 
-// HasGroup applies the HasEdge predicate on the "group" edge.
-func HasGroup() predicate.RedeemCode {
+// HasPlanVersion applies the HasEdge predicate on the "plan_version" edge.
+func HasPlanVersion() predicate.RedeemCode {
 	return predicate.RedeemCode(func(s *sql.Selector) {
 		step := sqlgraph.NewStep(
 			sqlgraph.From(Table, FieldID),
-			sqlgraph.Edge(sqlgraph.M2O, true, GroupTable, GroupColumn),
+			sqlgraph.Edge(sqlgraph.M2O, true, PlanVersionTable, PlanVersionColumn),
 		)
 		sqlgraph.HasNeighbors(s, step)
 	})
 }
 
-// HasGroupWith applies the HasEdge predicate on the "group" edge with a given conditions (other predicates).
-func HasGroupWith(preds ...predicate.Group) predicate.RedeemCode {
+// HasPlanVersionWith applies the HasEdge predicate on the "plan_version" edge with a given conditions (other predicates).
+func HasPlanVersionWith(preds ...predicate.SubscriptionPlanVersion) predicate.RedeemCode {
 	return predicate.RedeemCode(func(s *sql.Selector) {
-		step := newGroupStep()
+		step := newPlanVersionStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

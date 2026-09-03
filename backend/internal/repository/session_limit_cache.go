@@ -318,6 +318,18 @@ func (c *sessionLimitCache) SetWindowCost(ctx context.Context, accountID int64, 
 	return c.rdb.Set(ctx, key, cost, windowCostCacheTTL).Err()
 }
 
+func (c *sessionLimitCache) SetWindowCostBatch(ctx context.Context, costs map[int64]float64) error {
+	if len(costs) == 0 {
+		return nil
+	}
+	pipe := c.rdb.Pipeline()
+	for accountID, cost := range costs {
+		pipe.Set(ctx, windowCostKey(accountID), cost, windowCostCacheTTL)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
 // GetWindowCostBatch 批量获取窗口费用缓存
 func (c *sessionLimitCache) GetWindowCostBatch(ctx context.Context, accountIDs []int64) (map[int64]float64, error) {
 	if len(accountIDs) == 0 {

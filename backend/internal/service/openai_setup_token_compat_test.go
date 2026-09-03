@@ -139,8 +139,9 @@ func TestOpenAISetupTokenWSCompatibility(t *testing.T) {
 	require.Equal(t, "session-one", session.SessionID)
 	require.NotEqual(t, session.SessionID, headers.Get("session_id"))
 
-	payload := svc.buildOpenAIWSCreatePayload(map[string]any{"store": true}, account)
-	require.Equal(t, false, payload["store"])
+	payload, err := svc.buildOpenAIWSCreatePayloadRaw([]byte(`{"store":true}`), account)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(payload, "store").Bool())
 }
 
 func TestOpenAISetupTokenChatCompletionsUsesCodexTransform(t *testing.T) {

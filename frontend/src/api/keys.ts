@@ -60,6 +60,8 @@ export async function getById(id: number): Promise<ApiKey> {
 export async function create(
   name: string,
   groupId?: number | null,
+  fundingSource: 'wallet' | 'subscription' = 'wallet',
+  subscriptionId?: number | null,
   customKey?: string,
   ipWhitelist?: string[],
   ipBlacklist?: string[],
@@ -67,9 +69,12 @@ export async function create(
   expiresInDays?: number,
   rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number }
 ): Promise<ApiKey> {
-  const payload: CreateApiKeyRequest = { name }
+  const payload: CreateApiKeyRequest = { name, funding_source: fundingSource }
   if (groupId !== undefined) {
     payload.group_id = groupId
+  }
+  if (fundingSource === 'subscription') {
+    payload.subscription_id = subscriptionId
   }
   if (customKey) {
     payload.custom_key = customKey

@@ -46,10 +46,12 @@ const (
 	FieldOrderType = "order_type"
 	// FieldPlanID holds the string denoting the plan_id field in the database.
 	FieldPlanID = "plan_id"
-	// FieldSubscriptionGroupID holds the string denoting the subscription_group_id field in the database.
-	FieldSubscriptionGroupID = "subscription_group_id"
-	// FieldSubscriptionDays holds the string denoting the subscription_days field in the database.
-	FieldSubscriptionDays = "subscription_days"
+	// FieldPlanVersionID holds the string denoting the plan_version_id field in the database.
+	FieldPlanVersionID = "plan_version_id"
+	// FieldFulfilledSubscriptionID holds the string denoting the fulfilled_subscription_id field in the database.
+	FieldFulfilledSubscriptionID = "fulfilled_subscription_id"
+	// FieldEntitlementSnapshot holds the string denoting the entitlement_snapshot field in the database.
+	FieldEntitlementSnapshot = "entitlement_snapshot"
 	// FieldProviderInstanceID holds the string denoting the provider_instance_id field in the database.
 	FieldProviderInstanceID = "provider_instance_id"
 	// FieldProviderKey holds the string denoting the provider_key field in the database.
@@ -124,8 +126,9 @@ var Columns = []string{
 	FieldQrCodeImg,
 	FieldOrderType,
 	FieldPlanID,
-	FieldSubscriptionGroupID,
-	FieldSubscriptionDays,
+	FieldPlanVersionID,
+	FieldFulfilledSubscriptionID,
+	FieldEntitlementSnapshot,
 	FieldProviderInstanceID,
 	FieldProviderKey,
 	FieldProviderSnapshot,
@@ -294,14 +297,14 @@ func ByPlanID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPlanID, opts...).ToFunc()
 }
 
-// BySubscriptionGroupID orders the results by the subscription_group_id field.
-func BySubscriptionGroupID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldSubscriptionGroupID, opts...).ToFunc()
+// ByPlanVersionID orders the results by the plan_version_id field.
+func ByPlanVersionID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPlanVersionID, opts...).ToFunc()
 }
 
-// BySubscriptionDays orders the results by the subscription_days field.
-func BySubscriptionDays(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldSubscriptionDays, opts...).ToFunc()
+// ByFulfilledSubscriptionID orders the results by the fulfilled_subscription_id field.
+func ByFulfilledSubscriptionID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldFulfilledSubscriptionID, opts...).ToFunc()
 }
 
 // ByProviderInstanceID orders the results by the provider_instance_id field.

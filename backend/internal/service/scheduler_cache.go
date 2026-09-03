@@ -77,6 +77,9 @@ func ParseSchedulerBucket(raw string) (SchedulerBucket, bool) {
 type SchedulerCache interface {
 	// GetSnapshot 读取快照并返回命中与否（ready + active + 数据完整）。
 	GetSnapshot(ctx context.Context, bucket SchedulerBucket) ([]*Account, bool, error)
+	// GetSnapshotVersion returns the active Redis snapshot version. An empty
+	// version means the bucket is not ready and must not be served locally.
+	GetSnapshotVersion(ctx context.Context, bucket SchedulerBucket) (string, error)
 	// CaptureBucketWriteToken captures the current open epoch without changing
 	// retirement state. A tombstoned bucket returns ErrSchedulerBucketRetired.
 	CaptureBucketWriteToken(ctx context.Context, bucket SchedulerBucket) (SchedulerBucketWriteToken, error)

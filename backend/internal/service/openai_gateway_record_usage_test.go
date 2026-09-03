@@ -69,6 +69,23 @@ func TestOpenAIGatewayServiceRecordUsage_RejectsNilInput(t *testing.T) {
 	require.Error(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{}))
 }
 
+func TestOpenAIGatewayServiceRecordUsage_RejectsSubscriptionKeyWithoutMatchingSubscription(t *testing.T) {
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(
+		&openAIRecordUsageLogRepoStub{}, billingRepo,
+		&openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil,
+	)
+	subscriptionID := int64(42)
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{RequestID: "openai_subscription_missing", Model: "gpt-5.1"},
+		APIKey: &APIKey{ID: 501, FundingSource: FundingSourceSubscription, SubscriptionID: &subscriptionID},
+		User:   &User{ID: 601}, Account: &Account{ID: 701},
+	})
+
+	require.ErrorIs(t, err, ErrSubscriptionBillingInvalid)
+	require.Equal(t, 0, billingRepo.calls, "invalid subscription funding must not reach wallet or usage billing")
+}
+
 func TestRecordCyberPolicyUsageLog_BillsRealUpstreamTokens(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}
@@ -467,7 +484,6 @@ func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputToke
 			Group: &Group{
 				ID:                 groupID,
 				RateMultiplier:     groupRate,
-				SubscriptionType:   "subscription",
 				PeakRateEnabled:    true,
 				PeakStart:          "00:00",
 				PeakEnd:            "23:59",
@@ -522,7 +538,7 @@ func TestOpenAIGatewayServiceRecordUsage_TimePricingUsesPricingAt(t *testing.T) 
 			Usage:     OpenAIUsage{InputTokens: 1000, OutputTokens: 500},
 		},
 		APIKey: &APIKey{ID: 1006, GroupID: i64p(groupID), Group: &Group{
-			ID: groupID, RateMultiplier: 0.8, SubscriptionType: SubscriptionTypeSubscription,
+			ID: groupID, RateMultiplier: 0.8,
 		}},
 		User:      &User{ID: 2006},
 		Account:   &Account{ID: 3006},
@@ -555,7 +571,7 @@ func TestOpenAIGatewayServiceRecordUsage_TimePricingUsesExplicitPricingAt(t *tes
 			Usage:     OpenAIUsage{InputTokens: 1000, OutputTokens: 500},
 		},
 		APIKey: &APIKey{ID: 1007, GroupID: i64p(groupID), Group: &Group{
-			ID: groupID, RateMultiplier: 0.8, SubscriptionType: SubscriptionTypeSubscription,
+			ID: groupID, RateMultiplier: 0.8,
 		}},
 		User:      &User{ID: 2007},
 		Account:   &Account{ID: 3007},
@@ -1942,7 +1958,7 @@ func TestOpenAIGatewayServiceRecordUsage_SubscriptionBillingSetsSubscriptionFiel
 			Model:     "gpt-5.1",
 			Duration:  time.Second,
 		},
-		APIKey:       &APIKey{ID: 100, GroupID: i64p(88), Group: &Group{ID: 88, SubscriptionType: SubscriptionTypeSubscription, RateMultiplier: 1.0}},
+		APIKey:       &APIKey{ID: 100, GroupID: i64p(88), Group: &Group{ID: 88, RateMultiplier: 1.0}},
 		User:         &User{ID: 200},
 		Account:      &Account{ID: 300},
 		Subscription: subscription,

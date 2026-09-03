@@ -53,6 +53,9 @@ type AccountRepository interface {
 	// GetByIDs fetches accounts by IDs in a single query.
 	// It should return all accounts found (missing IDs are ignored).
 	GetByIDs(ctx context.Context, ids []int64) ([]*Account, error)
+	// ReadSchedulerFreshness fetches only durable scheduling state for a set of
+	// snapshot accounts. Missing IDs represent deleted accounts.
+	ReadSchedulerFreshness(ctx context.Context, ids []int64) (map[int64]SchedulerFreshness, error)
 	// ExistsByID 检查账号是否存在，仅返回布尔值，用于删除前的轻量级存在性检查
 	ExistsByID(ctx context.Context, id int64) (bool, error)
 	// GetByCRSAccountID finds an account previously synced from CRS.

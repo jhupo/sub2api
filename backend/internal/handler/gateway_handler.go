@@ -134,6 +134,8 @@ func NewGatewayHandler(
 // Messages handles Claude API compatible messages endpoint
 // POST /v1/messages
 func (h *GatewayHandler) Messages(c *gin.Context) {
+	c.Request = c.Request.WithContext(h.gatewayService.PrepareSchedulerRequestContext(c.Request.Context()))
+
 	// 从context获取apiKey和user（ApiKeyAuth中间件已设置）
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok {
@@ -1010,12 +1012,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 							return
 						}
 						if fallbackGroup.Platform != service.PlatformAnthropic ||
-							fallbackGroup.SubscriptionType == service.SubscriptionTypeSubscription ||
 							fallbackGroup.FallbackGroupIDOnInvalidRequest != nil {
 							reqLog.Warn("gateway.fallback_group_invalid",
 								zap.Int64("fallback_group_id", fallbackGroup.ID),
 								zap.String("fallback_platform", fallbackGroup.Platform),
-								zap.String("fallback_subscription_type", fallbackGroup.SubscriptionType),
 							)
 							_ = h.antigravityGatewayService.WriteMappedClaudeError(c, account, promptTooLongErr.StatusCode, promptTooLongErr.RequestID, promptTooLongErr.Body)
 							return
@@ -1033,7 +1033,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						ctx := context.WithValue(c.Request.Context(), ctxkey.ForcePlatform, "")
 						c.Request = c.Request.WithContext(ctx)
 						currentAPIKey = fallbackAPIKey
-						currentSubscription = nil
 						fallbackUsed = true
 						retryWithFallback = true
 						break
@@ -1789,32 +1788,38 @@ func (h *GatewayHandler) usageQuotaLimited(c *gin.Context, ctx context.Context, 
 	c.JSON(http.StatusOK, resp)
 }
 
-// usageUnrestricted 处理 unrestricted 模式的响应（向后兼容）
+// usageUnrestricted 处理 unrestricted 模式的响应。
 func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, apiKey *service.APIKey, subject middleware2.AuthSubject, usageData gin.H, dailyUsage any, modelStats any) {
 	// 订阅模式
-	if apiKey.Group != nil && apiKey.Group.IsSubscriptionType() {
+	if apiKey.UsesSubscription() {
 		resp := gin.H{
-			"mode":     "unrestricted",
-			"isValid":  true,
-			"planName": apiKey.Group.Name,
-			"unit":     "USD",
+			"mode":    "unrestricted",
+			"isValid": true,
+			"unit":    "USD",
 		}
 
 		// 订阅信息可能不在 context 中（/v1/usage 路径跳过了中间件的计费检查）
 		subscription, ok := middleware2.GetSubscriptionFromContext(c)
-		if ok {
-			remaining := h.calculateSubscriptionRemaining(apiKey.Group, subscription)
+		if ok && subscription.Plan != nil {
+			remaining := h.calculateSubscriptionRemaining(subscription)
+			resp["planName"] = subscription.Plan.Name
 			resp["remaining"] = remaining
 			resp["subscription"] = gin.H{
-				"daily_usage_usd":     subscription.DailyUsageUSD,
-				"weekly_usage_usd":    subscription.WeeklyUsageUSD,
-				"monthly_usage_usd":   subscription.MonthlyUsageUSD,
-				"daily_limit_usd":     apiKey.Group.DailyLimitUSD,
-				"weekly_limit_usd":    apiKey.Group.WeeklyLimitUSD,
-				"monthly_limit_usd":   apiKey.Group.MonthlyLimitUSD,
-				"weekly_window_start": subscription.WeeklyWindowStart,
-				"expires_at":          subscription.ExpiresAt,
+				"daily_usage_usd":      subscription.DailyUsageUSD,
+				"weekly_usage_usd":     subscription.WeeklyUsageUSD,
+				"monthly_usage_usd":    subscription.MonthlyUsageUSD,
+				"daily_reserved_usd":   subscription.DailyReservedUSD,
+				"weekly_reserved_usd":  subscription.WeeklyReservedUSD,
+				"monthly_reserved_usd": subscription.MonthlyReservedUSD,
+				"daily_limit_usd":      subscription.Plan.DailyLimitUSD,
+				"weekly_limit_usd":     subscription.Plan.WeeklyLimitUSD,
+				"monthly_limit_usd":    subscription.Plan.MonthlyLimitUSD,
+				"weekly_window_start":  subscription.WeeklyWindowStart,
+				"expires_at":           subscription.ExpiresAt,
 			}
+		} else {
+			resp["planName"] = "订阅"
+			resp["remaining"] = 0
 		}
 
 		if usageData != nil {
@@ -1861,12 +1866,15 @@ func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, 
 // 逻辑：
 // 1. 如果日/周/月任一限额达到100%，返回0
 // 2. 否则返回所有已配置周期中剩余额度的最小值
-func (h *GatewayHandler) calculateSubscriptionRemaining(group *service.Group, sub *service.UserSubscription) float64 {
+func (h *GatewayHandler) calculateSubscriptionRemaining(sub *service.UserSubscription) float64 {
 	var remainingValues []float64
+	if sub == nil || sub.Plan == nil {
+		return 0
+	}
 
 	// 检查日限额
-	if group.HasDailyLimit() {
-		remaining := *group.DailyLimitUSD - sub.DailyUsageUSD
+	if sub.Plan.DailyLimitUSD != nil {
+		remaining := *sub.Plan.DailyLimitUSD - sub.DailyUsageUSD - sub.DailyReservedUSD
 		if remaining <= 0 {
 			return 0
 		}
@@ -1874,8 +1882,8 @@ func (h *GatewayHandler) calculateSubscriptionRemaining(group *service.Group, su
 	}
 
 	// 检查周限额
-	if group.HasWeeklyLimit() {
-		remaining := *group.WeeklyLimitUSD - sub.WeeklyUsageUSD
+	if sub.Plan.WeeklyLimitUSD != nil {
+		remaining := *sub.Plan.WeeklyLimitUSD - sub.WeeklyUsageUSD - sub.WeeklyReservedUSD
 		if remaining <= 0 {
 			return 0
 		}
@@ -1883,8 +1891,8 @@ func (h *GatewayHandler) calculateSubscriptionRemaining(group *service.Group, su
 	}
 
 	// 检查月限额
-	if group.HasMonthlyLimit() {
-		remaining := *group.MonthlyLimitUSD - sub.MonthlyUsageUSD
+	if sub.Plan.MonthlyLimitUSD != nil {
+		remaining := *sub.Plan.MonthlyLimitUSD - sub.MonthlyUsageUSD - sub.MonthlyReservedUSD
 		if remaining <= 0 {
 			return 0
 		}

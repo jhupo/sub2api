@@ -44,7 +44,7 @@ func TestAnnouncementTargeting_Matches_AndOrSemantics(t *testing.T) {
 			{
 				AllOf: []AnnouncementCondition{
 					{Type: AnnouncementConditionTypeBalance, Operator: AnnouncementOperatorGTE, Value: 100},
-					{Type: AnnouncementConditionTypeSubscription, Operator: AnnouncementOperatorIn, GroupIDs: []int64{10}},
+					{Type: AnnouncementConditionTypeSubscription, Operator: AnnouncementOperatorIn, PlanIDs: []int64{10}},
 				},
 			},
 			{

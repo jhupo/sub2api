@@ -3,7 +3,7 @@ import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 
 import PlanEditDialog from '../PlanEditDialog.vue'
-import type { AdminGroup } from '@/types'
+import { adminPaymentAPI } from '@/api/admin/payment'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
@@ -75,56 +75,11 @@ const SelectStub = defineComponent({
   `,
 })
 
-const groupFixture = (overrides: Partial<AdminGroup>): AdminGroup => ({
-  id: 1,
-  name: 'OpenAI',
-  description: null,
-  platform: 'openai',
-  rate_multiplier: 1,
-  rpm_limit: 0,
-  is_exclusive: false,
-  status: 'active',
-  subscription_type: 'subscription',
-  daily_limit_usd: null,
-  weekly_limit_usd: null,
-  monthly_limit_usd: null,
-  allow_image_generation: false,
-  image_rate_independent: false,
-  image_rate_multiplier: 1,
-  image_price_1k: null,
-  image_price_2k: null,
-  image_price_4k: null,
-  peak_rate_enabled: false,
-  peak_start: '',
-  peak_end: '',
-  peak_rate_multiplier: 1,
-  claude_code_only: false,
-  fallback_group_id: null,
-  fallback_group_id_on_invalid_request: null,
-  allow_messages_dispatch: false,
-  require_oauth_only: false,
-  require_privacy_set: false,
-  created_at: '2026-07-01T00:00:00Z',
-  updated_at: '2026-07-01T00:00:00Z',
-  model_routing: null,
-  model_routing_enabled: false,
-  mcp_xml_inject: false,
-  sort_order: 0,
-  ...overrides,
-})
-
-function mountDialog({
-  groups = [],
-  paymentConfig = null,
-}: {
-  groups?: AdminGroup[]
-  paymentConfig?: Record<string, unknown> | null
-} = {}) {
+function mountDialog({ paymentConfig = null }: { paymentConfig?: Record<string, unknown> | null } = {}) {
   return mount(PlanEditDialog, {
     props: {
       show: true,
       plan: null,
-      groups,
       paymentConfig,
     },
     global: {
@@ -132,7 +87,6 @@ function mountDialog({
         BaseDialog: BaseDialogStub,
         Select: SelectStub,
         Icon: true,
-        GroupBadge: true,
       },
     },
   })
@@ -169,28 +123,25 @@ describe('PlanEditDialog', () => {
     expect(wrapper.text()).not.toContain('¥71.43')
   })
 
-  it('allows composite subscription groups for payment plans', () => {
-    const wrapper = mountDialog({
-      groups: [
-        groupFixture({
-          id: 10,
-          name: 'OpenAI + Claude + Gemini + Grok',
-          platform: 'composite',
-          rate_multiplier: 1.2,
-          subscription_type: 'subscription',
-        }),
-        groupFixture({
-          id: 11,
-          name: 'Standard OpenAI',
-          platform: 'openai',
-          subscription_type: 'standard',
-        }),
-      ],
-    })
+  it('publishes the configured allowance limits with the plan', async () => {
+    const wrapper = mountDialog()
+    const inputs = wrapper.findAll('input[type="number"]')
 
-    const options = wrapper.findAll('option').map(option => option.text())
+    await inputs[0].setValue('19.99')
+    await inputs[2].setValue('30')
+    await inputs[3].setValue('50')
+    await inputs[4].setValue('250')
+    await inputs[5].setValue('900')
+    await wrapper.get('#plan-form').trigger('submit')
 
-    expect(options).toContain('OpenAI + Claude + Gemini + Grok — composite (1.2x)')
-    expect(options).not.toContain('Standard OpenAI — openai (1x)')
+    expect(adminPaymentAPI.createPlan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        price: 19.99,
+        validity_days: 30,
+        daily_limit_usd: 50,
+        weekly_limit_usd: 250,
+        monthly_limit_usd: 900,
+      }),
+    )
   })
 })

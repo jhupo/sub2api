@@ -734,9 +734,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		agentTaskRecoveryTried := false
 		wsPrevResponseRecoveryTried := false
 		wsInvalidEncryptedContentRecoveryTried := false
-		recoverPrevResponseNotFound := func(attempt int) bool {
+		wsRetryBody := body
+		recoverPrevResponseNotFound := func(attempt int) (bool, error) {
 			if wsPrevResponseRecoveryTried {
-				return false
+				return false, nil
 			}
 			previousResponseID := openAIWSPayloadString(wsReqBody, "previous_response_id")
 			if previousResponseID == "" {
@@ -745,7 +746,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					account.ID,
 					attempt,
 				)
-				return false
+				return false, nil
 			}
 			if HasFunctionCallOutput(wsReqBody) {
 				logOpenAIWSModeInfo(
@@ -753,7 +754,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					account.ID,
 					attempt,
 				)
-				return false
+				return false, nil
+			}
+			wsRetryBody = RemovePreviousResponseIDFromBody(wsRetryBody)
+			if gjson.GetBytes(wsRetryBody, "previous_response_id").Exists() {
+				return false, errors.New("remove previous_response_id from websocket retry body")
 			}
 			delete(wsReqBody, "previous_response_id")
 			wsPrevResponseRecoveryTried = true
@@ -764,24 +769,35 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				truncateOpenAIWSLogValue(previousResponseID, openAIWSIDValueMaxLen),
 				normalizeOpenAIWSLogValue(ClassifyOpenAIPreviousResponseIDKind(previousResponseID)),
 			)
-			return true
+			return true, nil
 		}
-		recoverInvalidEncryptedContent := func(attempt int) bool {
+		recoverInvalidEncryptedContent := func(attempt int) (bool, error) {
 			if wsInvalidEncryptedContentRecoveryTried {
-				return false
+				return false, nil
 			}
-			removedReasoningItems := trimOpenAIEncryptedReasoningItems(wsReqBody)
+			nextRetryBody, removedReasoningItems, sanitizeErr := trimOpenAIEncryptedReasoningItemsRaw(wsRetryBody)
+			if sanitizeErr != nil {
+				return false, sanitizeErr
+			}
 			if !removedReasoningItems {
 				logOpenAIWSModeInfo(
 					"reconnect_invalid_encrypted_content_recovery_skip account_id=%d attempt=%d reason=missing_encrypted_reasoning_items",
 					account.ID,
 					attempt,
 				)
-				return false
+				return false, nil
+			}
+			wsRetryBody = nextRetryBody
+			if !trimOpenAIEncryptedReasoningItems(wsReqBody) {
+				return false, errors.New("websocket retry body views diverged while removing encrypted reasoning")
 			}
 			previousResponseID := openAIWSPayloadString(wsReqBody, "previous_response_id")
 			hasFunctionCallOutput := HasFunctionCallOutput(wsReqBody)
 			if previousResponseID != "" && !hasFunctionCallOutput {
+				wsRetryBody = RemovePreviousResponseIDFromBody(wsRetryBody)
+				if gjson.GetBytes(wsRetryBody, "previous_response_id").Exists() {
+					return false, errors.New("remove previous_response_id from encrypted-content retry body")
+				}
 				delete(wsReqBody, "previous_response_id")
 			}
 			wsInvalidEncryptedContentRecoveryTried = true
@@ -795,7 +811,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				hasFunctionCallOutput,
 				previousResponseID != "" && !hasFunctionCallOutput,
 			)
-			return true
+			return true, nil
 		}
 		retryBudget := s.openAIWSRetryTotalBudget()
 		retryStartedAt := time.Now()
@@ -807,6 +823,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				c,
 				account,
 				wsReqBody,
+				wsRetryBody,
 				clientPromptCacheKey,
 				token,
 				wsDecision,
@@ -836,11 +853,25 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			// previous_response_not_found 说明续链锚点不可用：
 			// 对非 function_call_output 场景，允许一次“去掉 previous_response_id 后重放”。
-			if reason == "previous_response_not_found" && recoverPrevResponseNotFound(attempt) {
-				continue
+			if reason == "previous_response_not_found" {
+				recovered, recoveryErr := recoverPrevResponseNotFound(attempt)
+				if recoveryErr != nil {
+					wsErr = wrapOpenAIWSFallback("recover_previous_response", recoveryErr)
+					break
+				}
+				if recovered {
+					continue
+				}
 			}
-			if reason == "invalid_encrypted_content" && recoverInvalidEncryptedContent(attempt) {
-				continue
+			if reason == "invalid_encrypted_content" {
+				recovered, recoveryErr := recoverInvalidEncryptedContent(attempt)
+				if recoveryErr != nil {
+					wsErr = wrapOpenAIWSFallback("recover_invalid_encrypted_content", recoveryErr)
+					break
+				}
+				if recovered {
+					continue
+				}
 			}
 			if retryable && attempt < maxAttempts {
 				backoff := s.openAIWSRetryBackoff(attempt)

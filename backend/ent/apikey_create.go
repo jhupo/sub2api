@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
+	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 )
 
 // APIKeyCreate is the builder for creating a APIKey entity.
@@ -95,6 +96,34 @@ func (_c *APIKeyCreate) SetGroupID(v int64) *APIKeyCreate {
 func (_c *APIKeyCreate) SetNillableGroupID(v *int64) *APIKeyCreate {
 	if v != nil {
 		_c.SetGroupID(*v)
+	}
+	return _c
+}
+
+// SetFundingSource sets the "funding_source" field.
+func (_c *APIKeyCreate) SetFundingSource(v string) *APIKeyCreate {
+	_c.mutation.SetFundingSource(v)
+	return _c
+}
+
+// SetNillableFundingSource sets the "funding_source" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableFundingSource(v *string) *APIKeyCreate {
+	if v != nil {
+		_c.SetFundingSource(*v)
+	}
+	return _c
+}
+
+// SetSubscriptionID sets the "subscription_id" field.
+func (_c *APIKeyCreate) SetSubscriptionID(v int64) *APIKeyCreate {
+	_c.mutation.SetSubscriptionID(v)
+	return _c
+}
+
+// SetNillableSubscriptionID sets the "subscription_id" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableSubscriptionID(v *int64) *APIKeyCreate {
+	if v != nil {
+		_c.SetSubscriptionID(*v)
 	}
 	return _c
 }
@@ -317,6 +346,11 @@ func (_c *APIKeyCreate) SetGroup(v *Group) *APIKeyCreate {
 	return _c.SetGroupID(v.ID)
 }
 
+// SetSubscription sets the "subscription" edge to the UserSubscription entity.
+func (_c *APIKeyCreate) SetSubscription(v *UserSubscription) *APIKeyCreate {
+	return _c.SetSubscriptionID(v.ID)
+}
+
 // AddUsageLogIDs adds the "usage_logs" edge to the UsageLog entity by IDs.
 func (_c *APIKeyCreate) AddUsageLogIDs(ids ...int64) *APIKeyCreate {
 	_c.mutation.AddUsageLogIDs(ids...)
@@ -383,6 +417,10 @@ func (_c *APIKeyCreate) defaults() error {
 		v := apikey.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
+	if _, ok := _c.mutation.FundingSource(); !ok {
+		v := apikey.DefaultFundingSource
+		_c.mutation.SetFundingSource(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := apikey.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -447,6 +485,14 @@ func (_c *APIKeyCreate) check() error {
 	if v, ok := _c.mutation.Name(); ok {
 		if err := apikey.NameValidator(v); err != nil {
 			return &ValidationError{Name: "name", err: fmt.Errorf(`ent: validator failed for field "APIKey.name": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.FundingSource(); !ok {
+		return &ValidationError{Name: "funding_source", err: errors.New(`ent: missing required field "APIKey.funding_source"`)}
+	}
+	if v, ok := _c.mutation.FundingSource(); ok {
+		if err := apikey.FundingSourceValidator(v); err != nil {
+			return &ValidationError{Name: "funding_source", err: fmt.Errorf(`ent: validator failed for field "APIKey.funding_source": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.Status(); !ok {
@@ -530,6 +576,10 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Name(); ok {
 		_spec.SetField(apikey.FieldName, field.TypeString, value)
 		_node.Name = value
+	}
+	if value, ok := _c.mutation.FundingSource(); ok {
+		_spec.SetField(apikey.FieldFundingSource, field.TypeString, value)
+		_node.FundingSource = value
 	}
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(apikey.FieldStatus, field.TypeString, value)
@@ -627,6 +677,23 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		_node.GroupID = &nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.SubscriptionIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   apikey.SubscriptionTable,
+			Columns: []string{apikey.SubscriptionColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usersubscription.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_node.SubscriptionID = &nodes[0]
 		_spec.Edges = append(_spec.Edges, edge)
 	}
 	if nodes := _c.mutation.UsageLogsIDs(); len(nodes) > 0 {
@@ -778,6 +845,36 @@ func (u *APIKeyUpsert) UpdateGroupID() *APIKeyUpsert {
 // ClearGroupID clears the value of the "group_id" field.
 func (u *APIKeyUpsert) ClearGroupID() *APIKeyUpsert {
 	u.SetNull(apikey.FieldGroupID)
+	return u
+}
+
+// SetFundingSource sets the "funding_source" field.
+func (u *APIKeyUpsert) SetFundingSource(v string) *APIKeyUpsert {
+	u.Set(apikey.FieldFundingSource, v)
+	return u
+}
+
+// UpdateFundingSource sets the "funding_source" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateFundingSource() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldFundingSource)
+	return u
+}
+
+// SetSubscriptionID sets the "subscription_id" field.
+func (u *APIKeyUpsert) SetSubscriptionID(v int64) *APIKeyUpsert {
+	u.Set(apikey.FieldSubscriptionID, v)
+	return u
+}
+
+// UpdateSubscriptionID sets the "subscription_id" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateSubscriptionID() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldSubscriptionID)
+	return u
+}
+
+// ClearSubscriptionID clears the value of the "subscription_id" field.
+func (u *APIKeyUpsert) ClearSubscriptionID() *APIKeyUpsert {
+	u.SetNull(apikey.FieldSubscriptionID)
 	return u
 }
 
@@ -1203,6 +1300,41 @@ func (u *APIKeyUpsertOne) UpdateGroupID() *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) ClearGroupID() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearGroupID()
+	})
+}
+
+// SetFundingSource sets the "funding_source" field.
+func (u *APIKeyUpsertOne) SetFundingSource(v string) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetFundingSource(v)
+	})
+}
+
+// UpdateFundingSource sets the "funding_source" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateFundingSource() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateFundingSource()
+	})
+}
+
+// SetSubscriptionID sets the "subscription_id" field.
+func (u *APIKeyUpsertOne) SetSubscriptionID(v int64) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetSubscriptionID(v)
+	})
+}
+
+// UpdateSubscriptionID sets the "subscription_id" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateSubscriptionID() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateSubscriptionID()
+	})
+}
+
+// ClearSubscriptionID clears the value of the "subscription_id" field.
+func (u *APIKeyUpsertOne) ClearSubscriptionID() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.ClearSubscriptionID()
 	})
 }
 
@@ -1841,6 +1973,41 @@ func (u *APIKeyUpsertBulk) UpdateGroupID() *APIKeyUpsertBulk {
 func (u *APIKeyUpsertBulk) ClearGroupID() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearGroupID()
+	})
+}
+
+// SetFundingSource sets the "funding_source" field.
+func (u *APIKeyUpsertBulk) SetFundingSource(v string) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetFundingSource(v)
+	})
+}
+
+// UpdateFundingSource sets the "funding_source" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateFundingSource() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateFundingSource()
+	})
+}
+
+// SetSubscriptionID sets the "subscription_id" field.
+func (u *APIKeyUpsertBulk) SetSubscriptionID(v int64) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetSubscriptionID(v)
+	})
+}
+
+// UpdateSubscriptionID sets the "subscription_id" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateSubscriptionID() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateSubscriptionID()
+	})
+}
+
+// ClearSubscriptionID clears the value of the "subscription_id" field.
+func (u *APIKeyUpsertBulk) ClearSubscriptionID() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.ClearSubscriptionID()
 	})
 }
 

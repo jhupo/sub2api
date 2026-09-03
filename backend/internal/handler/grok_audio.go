@@ -27,6 +27,7 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		h.errorResponse(c, http.StatusUpgradeRequired, "invalid_request_error", "WebSocket upgrade required (Upgrade: websocket)")
 		return
 	}
+	c.Request = c.Request.WithContext(h.gatewayService.PrepareSchedulerRequestContext(c.Request.Context()))
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok || apiKey.Group == nil || apiKey.Group.Platform != service.PlatformGrok {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Realtime API is not supported for this platform")
@@ -204,6 +205,8 @@ func isExpectedGrokRealtimeClose(err error) bool {
 
 // GrokVoice handles xAI Voice HTTP endpoints. endpoint is "tts", "stt", or "custom-voices".
 func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
+	c.Request = c.Request.WithContext(h.gatewayService.PrepareSchedulerRequestContext(c.Request.Context()))
+
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok || apiKey.Group == nil || apiKey.Group.Platform != service.PlatformGrok {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Voice API is not supported for this platform")
@@ -437,10 +440,14 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 	}
 	guard, guarded := service.BalancePreauthorizationGuardFromContext(c.Request.Context())
 	preauthorizationOwner := guarded && guard.IsCurrentOwner()
+	if preauthorizationOwner {
+		// All guarded audio endpoints settle the reservation under its request ID.
+		// TTS/STT must not fall back to the upstream-generated ID.
+		result.RequestID = guard.RequestID()
+	}
 	if preauthorizationOwner && endpoint == "realtime" {
 		// Realtime keeps its existing reconciliation path: reservation happens
 		// during relay, and this final pass aligns the usage task with the hold.
-		result.RequestID = guard.RequestID()
 		actualCost, err := h.gatewayService.BalancePreauthorizationAudioCost(
 			c.Request.Context(), apiKey, model, result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, pricingAt,
 		)

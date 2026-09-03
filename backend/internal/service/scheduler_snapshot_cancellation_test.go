@@ -15,6 +15,10 @@ type schedulerCancellationCache struct {
 	tokenCaptures int
 }
 
+func (c *schedulerCancellationCache) GetSnapshotVersion(context.Context, SchedulerBucket) (string, error) {
+	return "", nil
+}
+
 func (c *schedulerCancellationCache) GetSnapshot(ctx context.Context, _ SchedulerBucket) ([]*Account, bool, error) {
 	c.cancel()
 	return nil, false, ctx.Err()

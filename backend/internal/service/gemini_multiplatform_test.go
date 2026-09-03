@@ -38,6 +38,16 @@ func (m *mockAccountRepoForGemini) GetByIDs(ctx context.Context, ids []int64) ([
 	return result, nil
 }
 
+func (m *mockAccountRepoForGemini) ReadSchedulerFreshness(_ context.Context, ids []int64) (map[int64]SchedulerFreshness, error) {
+	result := make(map[int64]SchedulerFreshness, len(ids))
+	for _, id := range ids {
+		if account, ok := m.accountsByID[id]; ok && account != nil {
+			result[id] = schedulerFreshnessFromAccount(account)
+		}
+	}
+	return result, nil
+}
+
 func (m *mockAccountRepoForGemini) ExistsByID(ctx context.Context, id int64) (bool, error) {
 	if m.accountsByID == nil {
 		return false, nil

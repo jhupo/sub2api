@@ -133,6 +133,7 @@ export default {
     noExpiration: 'No expiration',
     unlimited: 'Unlimited',
     unlimitedDesc: 'No usage limits on this subscription',
+    reserved: '${amount} is reserved by in-flight requests',
     daily: 'Daily',
     weekly: 'Weekly',
     monthly: 'Monthly',

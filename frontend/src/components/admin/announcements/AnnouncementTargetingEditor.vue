@@ -103,10 +103,25 @@
 
               <div v-if="cond.type === 'subscription'" class="flex-1">
                 <label class="input-label">{{ t('admin.announcements.form.selectPackages') }}</label>
-                <GroupSelector
-                  v-model="subscriptionSelections[groupIndex][condIndex]"
-                  :groups="groups"
-                />
+                <div class="max-h-44 space-y-1 overflow-y-auto rounded border border-gray-200 bg-white p-2 dark:border-dark-600 dark:bg-dark-800">
+                  <label
+                    v-for="plan in plans"
+                    :key="plan.id"
+                    class="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-dark-700"
+                  >
+                    <input
+                      type="checkbox"
+                      class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      :checked="cond.plan_ids?.includes(plan.id)"
+                      @change="togglePlan(groupIndex, condIndex, plan.id)"
+                    />
+                    <span class="min-w-0 flex-1 truncate">{{ plan.name }}</span>
+                    <span class="text-xs text-gray-400">v{{ plan.version }}</span>
+                  </label>
+                  <div v-if="plans.length === 0" class="px-2 py-3 text-sm text-gray-400">
+                    {{ t('common.noData') }}
+                  </div>
+                </div>
               </div>
 
               <div v-else class="flex flex-1 flex-col gap-3 sm:flex-row">
@@ -165,26 +180,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type {
-  AdminGroup,
   AnnouncementTargeting,
   AnnouncementCondition,
   AnnouncementConditionGroup,
   AnnouncementConditionType,
   AnnouncementOperator
 } from '@/types'
+import type { SubscriptionPlan } from '@/types/payment'
 
 import Select from '@/components/common/Select.vue'
-import GroupSelector from '@/components/common/GroupSelector.vue'
 import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: AnnouncementTargeting
-  groups: AdminGroup[]
+  plans: SubscriptionPlan[]
 }>()
 
 const emit = defineEmits<{
@@ -223,7 +237,7 @@ function defaultSubscriptionCondition(): AnnouncementCondition {
   return {
     type: 'subscription' as AnnouncementConditionType,
     operator: 'in' as AnnouncementOperator,
-    group_ids: []
+    plan_ids: []
   }
 }
 
@@ -314,74 +328,17 @@ function setBalanceValue(groupIndex: number, condIndex: number, raw: string) {
   })
 }
 
-// We keep group_ids selection in a parallel reactive map because GroupSelector is numeric list.
-// Then we mirror it back to targeting.group_ids via a watcher.
-const subscriptionSelections = reactive<Record<number, Record<number, number[]>>>({})
-
-function ensureSelectionPath(groupIndex: number, condIndex: number) {
-  if (!subscriptionSelections[groupIndex]) subscriptionSelections[groupIndex] = {}
-  if (!subscriptionSelections[groupIndex][condIndex]) subscriptionSelections[groupIndex][condIndex] = []
+function togglePlan(groupIndex: number, condIndex: number, planID: number) {
+  updateTargeting((draft) => {
+    const cond = draft.any_of[groupIndex]?.all_of?.[condIndex]
+    if (!cond || cond.type !== 'subscription') return
+    const selected = new Set(cond.plan_ids ?? [])
+    if (selected.has(planID)) selected.delete(planID)
+    else selected.add(planID)
+    cond.operator = 'in'
+    cond.plan_ids = [...selected]
+  })
 }
-
-// Sync from modelValue to subscriptionSelections (one-way: model -> local state)
-watch(
-  () => props.modelValue,
-  (v) => {
-    const groups = v?.any_of ?? []
-    for (let gi = 0; gi < groups.length; gi++) {
-      const allOf = groups[gi]?.all_of ?? []
-      for (let ci = 0; ci < allOf.length; ci++) {
-        const c = allOf[ci]
-        if (c?.type === 'subscription') {
-          ensureSelectionPath(gi, ci)
-          // Only update if different to avoid triggering unnecessary updates
-          const newIds = (c.group_ids ?? []).slice()
-          const currentIds = subscriptionSelections[gi]?.[ci] ?? []
-          if (JSON.stringify(newIds.sort()) !== JSON.stringify(currentIds.sort())) {
-            subscriptionSelections[gi][ci] = newIds
-          }
-        }
-      }
-    }
-  },
-  { immediate: true }
-)
-
-// Sync from subscriptionSelections to modelValue (one-way: local state -> model)
-// Use a debounced approach to avoid infinite loops
-let syncTimeout: ReturnType<typeof setTimeout> | null = null
-watch(
-  () => subscriptionSelections,
-  () => {
-    // Debounce the sync to avoid rapid fire updates
-    if (syncTimeout) clearTimeout(syncTimeout)
-
-    syncTimeout = setTimeout(() => {
-      // Build the new targeting state
-      const newTargeting: TargetingDraft = JSON.parse(JSON.stringify(props.modelValue ?? { any_of: [] }))
-      if (!newTargeting.any_of) newTargeting.any_of = []
-
-      const groups = newTargeting.any_of ?? []
-      for (let gi = 0; gi < groups.length; gi++) {
-        const allOf = groups[gi]?.all_of ?? []
-        for (let ci = 0; ci < allOf.length; ci++) {
-          const c = allOf[ci]
-          if (c?.type === 'subscription') {
-            ensureSelectionPath(gi, ci)
-            c.operator = 'in' as AnnouncementOperator
-            c.group_ids = (subscriptionSelections[gi]?.[ci] ?? []).slice()
-          }
-        }
-      }
-
-      // Only emit if there's an actual change (deep comparison)
-      if (JSON.stringify(props.modelValue) !== JSON.stringify(newTargeting)) {
-        emit('update:modelValue', newTargeting)
-      }
-    }, 0)
-  },
-  { deep: true }
-)
 
 const validationError = computed(() => {
   if (mode.value !== 'custom') return ''
@@ -398,7 +355,7 @@ const validationError = computed(() => {
 
     for (const c of allOf) {
       if (c.type === 'subscription') {
-        if (!c.group_ids || c.group_ids.length === 0) return t('admin.announcements.form.selectPackages')
+        if (!c.plan_ids || c.plan_ids.length === 0) return t('admin.announcements.form.selectPackages')
       }
     }
   }

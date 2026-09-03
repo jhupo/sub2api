@@ -34,7 +34,6 @@ func newMidnightTestSub(dailyWindowStart time.Time, base time.Time) *UserSubscri
 	return &UserSubscription{
 		ID:               1,
 		UserID:           10,
-		GroupID:          20,
 		StartsAt:         base.AddDate(0, 0, -3),
 		ExpiresAt:        base.AddDate(0, 0, 30),
 		DailyUsageUSD:    43.34,
@@ -50,7 +49,7 @@ func TestCheckAndResetWindows_DailyResetsAtMidnightNotRollingAnchor(t *testing.T
 	now := base.AddDate(0, 0, 1).Add(5 * time.Minute)        // 次日 00:05
 
 	repo := &dailyMidnightResetRepo{}
-	svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil)
+	svc := NewSubscriptionService(repo, nil)
 	svc.now = func() time.Time { return now }
 	sub := newMidnightTestSub(manualResetAt, base)
 
@@ -69,7 +68,7 @@ func TestCheckAndResetWindows_DailyNoResetWithinSameCalendarDay(t *testing.T) {
 	now := base.Add(23*time.Hour + 59*time.Minute)
 
 	repo := &dailyMidnightResetRepo{}
-	svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil)
+	svc := NewSubscriptionService(repo, nil)
 	svc.now = func() time.Time { return now }
 	sub := newMidnightTestSub(manualResetAt, base)
 
@@ -86,7 +85,7 @@ func TestCheckAndResetWindows_LegacyRollingAnchorHealsToMidnight(t *testing.T) {
 	now := base.Add(10 * time.Hour)
 
 	repo := &dailyMidnightResetRepo{}
-	svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil)
+	svc := NewSubscriptionService(repo, nil)
 	svc.now = func() time.Time { return now }
 	sub := newMidnightTestSub(staleAnchor, base)
 
@@ -143,12 +142,11 @@ func TestCheckAndResetWindows_OneTimeDailyCardStillExemptFromMidnightReset(t *te
 	now := base.AddDate(0, 0, 1).Add(2 * time.Hour)
 
 	repo := &dailyMidnightResetRepo{}
-	svc := NewSubscriptionService(groupRepoNoop{}, repo, nil, nil, nil)
+	svc := NewSubscriptionService(repo, nil)
 	svc.now = func() time.Time { return now }
 	sub := &UserSubscription{
 		ID:               1,
 		UserID:           10,
-		GroupID:          20,
 		StartsAt:         startsAt,
 		ExpiresAt:        startsAt.AddDate(0, 0, 1),
 		DailyUsageUSD:    10,

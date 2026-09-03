@@ -81,12 +81,15 @@ func (PaymentOrder) Fields() []ent.Field {
 		field.Int64("plan_id").
 			Optional().
 			Nillable(),
-		field.Int64("subscription_group_id").
+		field.Int64("plan_version_id").
 			Optional().
 			Nillable(),
-		field.Int("subscription_days").
+		field.Int64("fulfilled_subscription_id").
 			Optional().
 			Nillable(),
+		field.JSON("entitlement_snapshot", map[string]any{}).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 		field.String("provider_instance_id").
 			Optional().
 			Nillable().

@@ -54,21 +54,23 @@ type AdminUser struct {
 }
 
 type APIKey struct {
-	ID          int64      `json:"id"`
-	UserID      int64      `json:"user_id"`
-	Key         string     `json:"key"`
-	Name        string     `json:"name"`
-	GroupID     *int64     `json:"group_id"`
-	Status      string     `json:"status"`
-	IPWhitelist []string   `json:"ip_whitelist"`
-	IPBlacklist []string   `json:"ip_blacklist"`
-	LastUsedAt  *time.Time `json:"last_used_at"`
-	LastUsedIP  *string    `json:"last_used_ip"`
-	Quota       float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
-	QuotaUsed   float64    `json:"quota_used"` // Used quota amount in USD
-	ExpiresAt   *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID             int64      `json:"id"`
+	UserID         int64      `json:"user_id"`
+	Key            string     `json:"key"`
+	Name           string     `json:"name"`
+	GroupID        *int64     `json:"group_id"`
+	FundingSource  string     `json:"funding_source"`
+	SubscriptionID *int64     `json:"subscription_id"`
+	Status         string     `json:"status"`
+	IPWhitelist    []string   `json:"ip_whitelist"`
+	IPBlacklist    []string   `json:"ip_blacklist"`
+	LastUsedAt     *time.Time `json:"last_used_at"`
+	LastUsedIP     *string    `json:"last_used_ip"`
+	Quota          float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
+	QuotaUsed      float64    `json:"quota_used"` // Used quota amount in USD
+	ExpiresAt      *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 	// CurrentConcurrency is the real-time active request count for this API key.
 	CurrentConcurrency int `json:"current_concurrency"`
 
@@ -99,11 +101,7 @@ type Group struct {
 	IsExclusive    bool    `json:"is_exclusive"`
 	Status         string  `json:"status"`
 
-	SubscriptionType          string   `json:"subscription_type"`
-	DailyLimitUSD             *float64 `json:"daily_limit_usd"`
-	WeeklyLimitUSD            *float64 `json:"weekly_limit_usd"`
-	MonthlyLimitUSD           *float64 `json:"monthly_limit_usd"`
-	LongContextPricingEnabled bool     `json:"long_context_pricing_enabled"`
+	LongContextPricingEnabled bool `json:"long_context_pricing_enabled"`
 
 	// 图片生成计费配置（仅 antigravity 平台使用）
 	AllowImageGeneration         bool    `json:"allow_image_generation"`
@@ -413,15 +411,14 @@ type RedeemCode struct {
 	CreatedAt time.Time  `json:"created_at"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 
-	GroupID      *int64 `json:"group_id"`
-	ValidityDays int    `json:"validity_days"`
+	PlanVersionID *int64                    `json:"plan_version_id,omitempty"`
+	Plan          *service.SubscriptionPlan `json:"plan,omitempty"`
 
 	// Notes is only populated for admin_balance/admin_concurrency types
 	// so users can see why they were charged or credited
 	Notes *string `json:"notes,omitempty"`
 
-	User  *User  `json:"user,omitempty"`
-	Group *Group `json:"group,omitempty"`
+	User *User `json:"user,omitempty"`
 }
 
 // AdminRedeemCode 是管理员接口使用的 redeem code DTO（包含 notes 等字段）。
@@ -471,10 +468,10 @@ func (f *NullableInt64Field) UnmarshalJSON(data []byte) error {
 }
 
 type BatchUpdateRedeemCodeFields struct {
-	Status    *string            `json:"status,omitempty"`
-	ExpiresAt NullableTimeField  `json:"expires_at,omitempty"`
-	Notes     *string            `json:"notes,omitempty"`
-	GroupID   NullableInt64Field `json:"group_id,omitempty"`
+	Status        *string            `json:"status,omitempty"`
+	ExpiresAt     NullableTimeField  `json:"expires_at,omitempty"`
+	Notes         *string            `json:"notes,omitempty"`
+	PlanVersionID NullableInt64Field `json:"plan_version_id,omitempty"`
 
 	Type  *string  `json:"type,omitempty"`
 	Value *float64 `json:"value,omitempty"`
@@ -646,9 +643,10 @@ type Setting struct {
 }
 
 type UserSubscription struct {
-	ID      int64 `json:"id"`
-	UserID  int64 `json:"user_id"`
-	GroupID int64 `json:"group_id"`
+	ID            int64 `json:"id"`
+	UserID        int64 `json:"user_id"`
+	PlanID        int64 `json:"plan_id"`
+	PlanVersionID int64 `json:"plan_version_id"`
 
 	StartsAt  time.Time `json:"starts_at"`
 	ExpiresAt time.Time `json:"expires_at"`
@@ -658,16 +656,19 @@ type UserSubscription struct {
 	WeeklyWindowStart  *time.Time `json:"weekly_window_start"`
 	MonthlyWindowStart *time.Time `json:"monthly_window_start"`
 
-	DailyUsageUSD   float64 `json:"daily_usage_usd"`
-	WeeklyUsageUSD  float64 `json:"weekly_usage_usd"`
-	MonthlyUsageUSD float64 `json:"monthly_usage_usd"`
+	DailyUsageUSD      float64 `json:"daily_usage_usd"`
+	WeeklyUsageUSD     float64 `json:"weekly_usage_usd"`
+	MonthlyUsageUSD    float64 `json:"monthly_usage_usd"`
+	DailyReservedUSD   float64 `json:"daily_reserved_usd"`
+	WeeklyReservedUSD  float64 `json:"weekly_reserved_usd"`
+	MonthlyReservedUSD float64 `json:"monthly_reserved_usd"`
 
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 
-	User  *User  `json:"user,omitempty"`
-	Group *Group `json:"group,omitempty"`
+	User *User                     `json:"user,omitempty"`
+	Plan *service.SubscriptionPlan `json:"plan,omitempty"`
 }
 
 // AdminUserSubscription 是管理员接口使用的订阅 DTO（包含分配信息/备注等字段）。

@@ -25,7 +25,6 @@ func TestAPIKeyService_RejectsV10AuthSnapshotWithoutModelsListConfig(t *testing.
 				Name:             "openai",
 				Platform:         PlatformOpenAI,
 				Status:           StatusActive,
-				SubscriptionType: SubscriptionTypeStandard,
 				RateMultiplier:   1,
 			},
 		},

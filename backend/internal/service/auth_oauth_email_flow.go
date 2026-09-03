@@ -370,18 +370,17 @@ func (s *AuthService) loadOAuthRegistrationInvitation(ctx context.Context, invit
 			return nil, err
 		}
 		return &RedeemCode{
-			ID:           entity.ID,
-			Code:         entity.Code,
-			Type:         entity.Type,
-			Value:        entity.Value,
-			Status:       entity.Status,
-			UsedBy:       entity.UsedBy,
-			UsedAt:       entity.UsedAt,
-			Notes:        oauthEmailFlowStringValue(entity.Notes),
-			CreatedAt:    entity.CreatedAt,
-			ExpiresAt:    entity.ExpiresAt,
-			GroupID:      entity.GroupID,
-			ValidityDays: entity.ValidityDays,
+			ID:            entity.ID,
+			Code:          entity.Code,
+			Type:          entity.Type,
+			Value:         entity.Value,
+			Status:        entity.Status,
+			UsedBy:        entity.UsedBy,
+			UsedAt:        entity.UsedAt,
+			Notes:         oauthEmailFlowStringValue(entity.Notes),
+			CreatedAt:     entity.CreatedAt,
+			ExpiresAt:     entity.ExpiresAt,
+			PlanVersionID: entity.PlanVersionID,
 		}, nil
 	}
 	return s.redeemRepo.GetByCode(ctx, invitationCode)
@@ -420,8 +419,7 @@ func (s *AuthService) updateOAuthRegistrationInvitation(ctx context.Context, cod
 			SetType(code.Type).
 			SetValue(code.Value).
 			SetStatus(code.Status).
-			SetNotes(code.Notes).
-			SetValidityDays(code.ValidityDays)
+			SetNotes(code.Notes)
 		if code.ExpiresAt != nil {
 			update = update.SetExpiresAt(*code.ExpiresAt)
 		} else {
@@ -437,10 +435,10 @@ func (s *AuthService) updateOAuthRegistrationInvitation(ctx context.Context, cod
 		} else {
 			update = update.ClearUsedAt()
 		}
-		if code.GroupID != nil {
-			update = update.SetGroupID(*code.GroupID)
+		if code.PlanVersionID != nil {
+			update = update.SetPlanVersionID(*code.PlanVersionID)
 		} else {
-			update = update.ClearGroupID()
+			update = update.ClearPlanVersionID()
 		}
 		_, err := update.Save(ctx)
 		return err

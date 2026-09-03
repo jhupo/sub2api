@@ -112,7 +112,6 @@ func provideCleanup(
 	balancePreauthorizationRecoveryWorker *service.BalancePreauthorizationRecoveryWorker,
 	usageBalanceSettlementWorker *service.UsageBalanceSettlementWorker,
 	liveBalanceAdjustmentOutboxWorker *service.LiveBalanceAdjustmentOutboxWorker,
-	subscriptionService *service.SubscriptionService,
 	oauth *service.OAuthService,
 	openaiOAuth *service.OpenAIOAuthService,
 	geminiOAuth *service.GeminiOAuthService,
@@ -281,12 +280,6 @@ func provideCleanup(
 			}},
 			{"SubscriptionExpiryService", func() error {
 				subscriptionExpiry.Stop()
-				return nil
-			}},
-			{"SubscriptionService", func() error {
-				if subscriptionService != nil {
-					subscriptionService.Stop()
-				}
 				return nil
 			}},
 			{"PricingService", func() error {

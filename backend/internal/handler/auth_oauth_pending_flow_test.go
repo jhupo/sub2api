@@ -2189,8 +2189,7 @@ func TestBindOIDCOAuthLoginAppliesFirstBindGrantOnce(t *testing.T) {
 	require.Zero(t, storedUser.TotalRecharged)
 	require.Len(t, defaultSubAssigner.calls, 1)
 	require.Equal(t, int64(existingUser.ID), defaultSubAssigner.calls[0].UserID)
-	require.Equal(t, int64(101), defaultSubAssigner.calls[0].GroupID)
-	require.Equal(t, 30, defaultSubAssigner.calls[0].ValidityDays)
+	require.Equal(t, int64(101), defaultSubAssigner.calls[0].PlanID)
 	require.Equal(t, 1, countProviderGrantRecords(t, client, existingUser.ID, "oidc", "first_bind"))
 
 	secondSession, err := client.PendingAuthSession.Create().
@@ -2930,17 +2929,17 @@ func (r *oauthPendingFlowRedeemCodeRepo) GetByCode(ctx context.Context, code str
 		notes = *entity.Notes
 	}
 	return &service.RedeemCode{
-		ID:           entity.ID,
-		Code:         entity.Code,
-		Type:         entity.Type,
-		Value:        entity.Value,
-		Status:       entity.Status,
-		UsedBy:       entity.UsedBy,
-		UsedAt:       entity.UsedAt,
-		Notes:        notes,
-		CreatedAt:    entity.CreatedAt,
-		GroupID:      entity.GroupID,
-		ValidityDays: entity.ValidityDays,
+		ID:            entity.ID,
+		Code:          entity.Code,
+		Type:          entity.Type,
+		Value:         entity.Value,
+		Status:        entity.Status,
+		UsedBy:        entity.UsedBy,
+		UsedAt:        entity.UsedAt,
+		Notes:         notes,
+		CreatedAt:     entity.CreatedAt,
+		ExpiresAt:     entity.ExpiresAt,
+		PlanVersionID: entity.PlanVersionID,
 	}, nil
 }
 
@@ -2954,7 +2953,8 @@ func (r *oauthPendingFlowRedeemCodeRepo) Update(ctx context.Context, code *servi
 		SetValue(code.Value).
 		SetStatus(code.Status).
 		SetNotes(code.Notes).
-		SetValidityDays(code.ValidityDays)
+		SetNillableExpiresAt(code.ExpiresAt).
+		SetNillablePlanVersionID(code.PlanVersionID)
 	if code.UsedBy != nil {
 		update = update.SetUsedBy(*code.UsedBy)
 	} else {
@@ -2964,11 +2964,6 @@ func (r *oauthPendingFlowRedeemCodeRepo) Update(ctx context.Context, code *servi
 		update = update.SetUsedAt(*code.UsedAt)
 	} else {
 		update = update.ClearUsedAt()
-	}
-	if code.GroupID != nil {
-		update = update.SetGroupID(*code.GroupID)
-	} else {
-		update = update.ClearGroupID()
 	}
 	_, err := update.Save(ctx)
 	return err

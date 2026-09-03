@@ -254,6 +254,7 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		ops.GET("/ingress-rejections/health", h.Admin.Ops.GetIngressRejectHealth)
 		ops.GET("/auth-cache-invalidation/health", h.Admin.Ops.GetAuthCacheInvalidationHealth)
 		ops.GET("/live-balance-outbox/health", h.Admin.Ops.GetLiveBalanceAdjustmentOutboxHealth)
+		ops.GET("/scheduler-freshness/health", h.Admin.Ops.GetSchedulerFreshnessHealth)
 
 		// Upstream errors (independent upstream failures)
 		ops.GET("/upstream-errors", h.Admin.Ops.ListUpstreamErrors)
@@ -679,7 +680,7 @@ func registerSubscriptionRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	}
 
 	// 分组下的订阅列表
-	admin.GET("/groups/:id/subscriptions", h.Admin.Subscription.ListByGroup)
+	admin.GET("/subscription-plans/:id/subscriptions", h.Admin.Subscription.ListByPlan)
 
 	// 用户下的订阅列表
 	admin.GET("/users/:id/subscriptions", h.Admin.Subscription.ListByUser)

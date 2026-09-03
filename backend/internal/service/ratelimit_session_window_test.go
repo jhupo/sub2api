@@ -67,6 +67,9 @@ func (m *sessionWindowMockRepo) GetByID(context.Context, int64) (*Account, error
 func (m *sessionWindowMockRepo) GetByIDs(context.Context, []int64) ([]*Account, error) {
 	panic("unexpected")
 }
+func (m *sessionWindowMockRepo) ReadSchedulerFreshness(context.Context, []int64) (map[int64]SchedulerFreshness, error) {
+	panic("unexpected")
+}
 func (m *sessionWindowMockRepo) ExistsByID(context.Context, int64) (bool, error) {
 	panic("unexpected")
 }

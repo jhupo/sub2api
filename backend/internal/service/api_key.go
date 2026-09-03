@@ -33,6 +33,8 @@ type APIKey struct {
 	Key         string
 	Name        string
 	GroupID     *int64
+	FundingSource string
+	SubscriptionID *int64
 	Status      string
 	IPWhitelist []string
 	IPBlacklist []string
@@ -45,6 +47,7 @@ type APIKey struct {
 	UpdatedAt           time.Time
 	User                *User
 	Group               *Group
+	Subscription        *UserSubscription
 	CurrentConcurrency  int
 
 	// Quota fields
@@ -62,6 +65,15 @@ type APIKey struct {
 	Window5hStart *time.Time // Start of current 5h window
 	Window1dStart *time.Time // Start of current 1d window
 	Window7dStart *time.Time // Start of current 7d window
+}
+
+const (
+	FundingSourceWallet       = "wallet"
+	FundingSourceSubscription = "subscription"
+)
+
+func (k *APIKey) UsesSubscription() bool {
+	return k != nil && k.FundingSource == FundingSourceSubscription
 }
 
 func (k *APIKey) IsActive() bool {

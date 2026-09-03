@@ -61,6 +61,20 @@ func (s *usageLogWindowBatchRepoStub) GetAccountWindowStatsBatch(ctx context.Con
 	return out, nil
 }
 
+func (s *usageLogWindowBatchRepoStub) GetAccountWindowCostsBatch(_ context.Context, accountIDs []int64, _ time.Time) (map[int64]float64, error) {
+	s.batchCalls.Add(1)
+	if s.batchErr != nil {
+		return nil, s.batchErr
+	}
+	out := make(map[int64]float64, len(accountIDs))
+	for _, id := range accountIDs {
+		if stats := s.batchResult[id]; stats != nil {
+			out[id] = stats.StandardCost
+		}
+	}
+	return out, nil
+}
+
 func (s *usageLogWindowBatchRepoStub) GetAccountWindowStats(ctx context.Context, accountID int64, startTime time.Time) (*usagestats.AccountStats, error) {
 	s.singleCalls.Add(1)
 	if s.singleErr != nil {
@@ -103,6 +117,19 @@ func (s *sessionLimitCacheHotpathStub) SetWindowCost(ctx context.Context, accoun
 		s.setData = make(map[int64]float64)
 	}
 	s.setData[accountID] = cost
+	return nil
+}
+
+func (s *sessionLimitCacheHotpathStub) SetWindowCostBatch(_ context.Context, costs map[int64]float64) error {
+	if s.setErr != nil {
+		return s.setErr
+	}
+	if s.setData == nil {
+		s.setData = make(map[int64]float64)
+	}
+	for accountID, cost := range costs {
+		s.setData[accountID] = cost
+	}
 	return nil
 }
 

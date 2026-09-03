@@ -25,12 +25,22 @@ type balancePreauthorizationRecoverer interface {
 	RecoverBalancePreauthorization(ctx context.Context, record BalancePreauthorizationRecord) error
 }
 
+type subscriptionAllowanceRecoverySource interface {
+	ListRecoverableSubscriptionAllowances(context.Context, time.Time, time.Time, int) ([]SubscriptionAllowanceReservation, error)
+}
+
+type subscriptionAllowanceRecoverer interface {
+	RecoverSubscriptionAllowance(context.Context, SubscriptionAllowanceReservation) error
+}
+
 // BalancePreauthorizationRecoveryWorker repairs abandoned holds and interrupted
 // Redis finalization. Multiple instances may run: source selection uses
 // SKIP LOCKED and every recovery mutation is idempotent.
 type BalancePreauthorizationRecoveryWorker struct {
-	source    balancePreauthorizationRecoverySource
-	recoverer balancePreauthorizationRecoverer
+	source                balancePreauthorizationRecoverySource
+	recoverer             balancePreauthorizationRecoverer
+	subscriptionSource    subscriptionAllowanceRecoverySource
+	subscriptionRecoverer subscriptionAllowanceRecoverer
 
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
@@ -42,6 +52,8 @@ func NewBalancePreauthorizationRecoveryWorker(
 	recoverer *BalancePreauthorizationService,
 ) *BalancePreauthorizationRecoveryWorker {
 	worker := &BalancePreauthorizationRecoveryWorker{source: source, recoverer: recoverer}
+	worker.subscriptionSource, _ = source.(subscriptionAllowanceRecoverySource)
+	worker.subscriptionRecoverer = recoverer
 	worker.Start()
 	return worker
 }
@@ -73,12 +85,40 @@ func (w *BalancePreauthorizationRecoveryWorker) run(ctx context.Context) {
 	ticker := time.NewTicker(balancePreauthorizationRecoveryPollInterval)
 	defer ticker.Stop()
 	w.recoverBatch(ctx)
+	w.recoverSubscriptionBatch(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			w.recoverBatch(ctx)
+			w.recoverSubscriptionBatch(ctx)
+		}
+	}
+}
+
+func (w *BalancePreauthorizationRecoveryWorker) recoverSubscriptionBatch(parent context.Context) {
+	if w == nil || w.subscriptionSource == nil || w.subscriptionRecoverer == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, balancePreauthorizationRecoveryBatchTimeout)
+	defer cancel()
+	now := time.Now()
+	records, err := w.subscriptionSource.ListRecoverableSubscriptionAllowances(
+		ctx, now, now.Add(-balancePreauthorizationFinalizationGrace), balancePreauthorizationRecoveryBatchSize,
+	)
+	if err != nil {
+		logger.L().Warn("billing.subscription_allowance_recovery_list_failed", zap.Error(err))
+		return
+	}
+	for i := range records {
+		if err := w.subscriptionRecoverer.RecoverSubscriptionAllowance(ctx, records[i]); err != nil {
+			logger.L().Warn(
+				"billing.subscription_allowance_recovery_failed",
+				zap.String("request_id", records[i].RequestID),
+				zap.Int64("subscription_id", records[i].SubscriptionID),
+				zap.Error(err),
+			)
 		}
 	}
 }

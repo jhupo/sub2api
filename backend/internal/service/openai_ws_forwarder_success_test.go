@@ -1457,10 +1457,7 @@ func TestOpenAIGatewayService_PrewarmReadHonorsParentContext(t *testing.T) {
 		accountID: account.ID,
 		conn:      conn,
 	}
-	payload := map[string]any{
-		"type":  "response.create",
-		"model": "gpt-5.1",
-	}
+	payload := []byte(`{"type":"response.create","model":"gpt-5.1"}`)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
 	defer cancel()

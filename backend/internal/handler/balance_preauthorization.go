@@ -105,6 +105,7 @@ func preauthorizeTokenGatewayRequest(
 		RequestID:                 service.ResolveBalancePreauthorizationRequestID(ctx),
 		APIKeyID:                  apiKey.ID,
 		UserID:                    userID,
+		SubscriptionID:            subscriptionPreauthorizationID(apiKey, subscription),
 		AuthorizationFingerprint:  payloadHash,
 		BillingType:               billingType,
 		BillableInputBytes:        len(body),
@@ -155,6 +156,7 @@ func preauthorizePerRequestGatewayRequest(
 		RequestID:                 service.ResolveBalancePreauthorizationRequestID(ctx),
 		APIKeyID:                  apiKey.ID,
 		UserID:                    userID,
+		SubscriptionID:            subscriptionPreauthorizationID(apiKey, subscription),
 		AuthorizationFingerprint:  payloadHash,
 		BillingType:               billingType,
 		BillableInputBytes:        len(body),
@@ -239,6 +241,7 @@ func preauthorizeFixedGatewayRequest(
 		RequestID:                requestID,
 		APIKeyID:                 apiKey.ID,
 		UserID:                   userID,
+		SubscriptionID:           subscriptionPreauthorizationID(apiKey, subscription),
 		AuthorizationFingerprint: service.HashUsageRequestPayload(body),
 		BillingType:              billingType,
 		EstimateKind:             service.PreauthorizationEstimateFixed,
@@ -273,6 +276,7 @@ func preauthorizeGrokVideoGatewayRequest(
 		RequestID:                service.NewGrokVideoHoldRequestID(),
 		APIKeyID:                 apiKey.ID,
 		UserID:                   userID,
+		SubscriptionID:           subscriptionPreauthorizationID(apiKey, subscription),
 		AuthorizationFingerprint: service.HashUsageRequestPayload(body),
 		BillingType:              billingType,
 		EstimateKind:             service.PreauthorizationEstimatePerRequest,
@@ -320,6 +324,7 @@ func preauthorizeGrokAudioGatewayRequest(
 		RequestID:                service.StableGrokAudioBillingRequestID(""),
 		APIKeyID:                 apiKey.ID,
 		UserID:                   userID,
+		SubscriptionID:           subscriptionPreauthorizationID(apiKey, subscription),
 		AuthorizationFingerprint: service.HashUsageRequestPayload(body),
 		BillingType:              billingType,
 		EstimateKind:             service.PreauthorizationEstimateFixed,
@@ -357,11 +362,22 @@ func preauthorizeGrokRealtimeGatewayRequest(
 		RequestID:                service.StableGrokRealtimeBillingRequestID(""),
 		APIKeyID:                 apiKey.ID,
 		UserID:                   userID,
+		SubscriptionID:           subscriptionPreauthorizationID(apiKey, subscription),
 		AuthorizationFingerprint: fingerprint,
 		BillingType:              billingType,
 		EstimateKind:             service.PreauthorizationEstimateFixed,
 		FixedAmount:              fixedAmount,
 	})
+}
+
+func subscriptionPreauthorizationID(apiKey *service.APIKey, subscription *service.UserSubscription) int64 {
+	if apiKey != nil && apiKey.UsesSubscription() {
+		if apiKey.SubscriptionID == nil {
+			return 0
+		}
+		return *apiKey.SubscriptionID
+	}
+	return 0
 }
 
 func deferBalancePreauthorizationRefund(reqLog *zap.Logger, guard *service.BalancePreauthorizationGuard) {

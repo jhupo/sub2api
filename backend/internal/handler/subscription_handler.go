@@ -11,17 +11,20 @@ import (
 
 // SubscriptionSummaryItem represents a subscription item in summary
 type SubscriptionSummaryItem struct {
-	ID              int64   `json:"id"`
-	GroupID         int64   `json:"group_id"`
-	GroupName       string  `json:"group_name"`
-	Status          string  `json:"status"`
-	DailyUsedUSD    float64 `json:"daily_used_usd,omitempty"`
-	DailyLimitUSD   float64 `json:"daily_limit_usd,omitempty"`
-	WeeklyUsedUSD   float64 `json:"weekly_used_usd,omitempty"`
-	WeeklyLimitUSD  float64 `json:"weekly_limit_usd,omitempty"`
-	MonthlyUsedUSD  float64 `json:"monthly_used_usd,omitempty"`
-	MonthlyLimitUSD float64 `json:"monthly_limit_usd,omitempty"`
-	ExpiresAt       *string `json:"expires_at,omitempty"`
+	ID                 int64   `json:"id"`
+	PlanID             int64   `json:"plan_id"`
+	PlanName           string  `json:"plan_name"`
+	Status             string  `json:"status"`
+	DailyUsedUSD       float64 `json:"daily_used_usd,omitempty"`
+	DailyReservedUSD   float64 `json:"daily_reserved_usd,omitempty"`
+	DailyLimitUSD      float64 `json:"daily_limit_usd,omitempty"`
+	WeeklyUsedUSD      float64 `json:"weekly_used_usd,omitempty"`
+	WeeklyReservedUSD  float64 `json:"weekly_reserved_usd,omitempty"`
+	WeeklyLimitUSD     float64 `json:"weekly_limit_usd,omitempty"`
+	MonthlyUsedUSD     float64 `json:"monthly_used_usd,omitempty"`
+	MonthlyReservedUSD float64 `json:"monthly_reserved_usd,omitempty"`
+	MonthlyLimitUSD    float64 `json:"monthly_limit_usd,omitempty"`
+	ExpiresAt          *string `json:"expires_at,omitempty"`
 }
 
 // SubscriptionProgressInfo represents subscription with progress info
@@ -140,25 +143,27 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 
 	for _, sub := range subscriptions {
 		item := SubscriptionSummaryItem{
-			ID:             sub.ID,
-			GroupID:        sub.GroupID,
-			Status:         sub.Status,
-			DailyUsedUSD:   sub.DailyUsageUSD,
-			WeeklyUsedUSD:  sub.WeeklyUsageUSD,
-			MonthlyUsedUSD: sub.MonthlyUsageUSD,
+			ID:                 sub.ID,
+			PlanID:             sub.PlanID,
+			Status:             sub.Status,
+			DailyUsedUSD:       sub.DailyUsageUSD,
+			DailyReservedUSD:   sub.DailyReservedUSD,
+			WeeklyUsedUSD:      sub.WeeklyUsageUSD,
+			WeeklyReservedUSD:  sub.WeeklyReservedUSD,
+			MonthlyUsedUSD:     sub.MonthlyUsageUSD,
+			MonthlyReservedUSD: sub.MonthlyReservedUSD,
 		}
 
-		// Add group info if preloaded
-		if sub.Group != nil {
-			item.GroupName = sub.Group.Name
-			if sub.Group.DailyLimitUSD != nil {
-				item.DailyLimitUSD = *sub.Group.DailyLimitUSD
+		if sub.Plan != nil {
+			item.PlanName = sub.Plan.Name
+			if sub.Plan.DailyLimitUSD != nil {
+				item.DailyLimitUSD = *sub.Plan.DailyLimitUSD
 			}
-			if sub.Group.WeeklyLimitUSD != nil {
-				item.WeeklyLimitUSD = *sub.Group.WeeklyLimitUSD
+			if sub.Plan.WeeklyLimitUSD != nil {
+				item.WeeklyLimitUSD = *sub.Plan.WeeklyLimitUSD
 			}
-			if sub.Group.MonthlyLimitUSD != nil {
-				item.MonthlyLimitUSD = *sub.Group.MonthlyLimitUSD
+			if sub.Plan.MonthlyLimitUSD != nil {
+				item.MonthlyLimitUSD = *sub.Plan.MonthlyLimitUSD
 			}
 		}
 

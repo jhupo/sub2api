@@ -60,13 +60,13 @@ func startPassthroughHookRecordingServer(
 	return server, serverErr
 }
 
-// TestPassthroughIngressReportsTurnStartedBeforeAfterTurnWithoutBeforeTurn 钉死
-// ws_v2 透传 ingress 与 handler 侧 turn 定价的耦合：透传 relay 不触发
-// BeforeTurn，但会在每个 AfterTurn 前通过 TurnStarted 报告同一 turn 的开始时刻。
+// TestPassthroughIngressFirstTurnUsesPreAdmissionWithoutBeforeTurn 钉死
+// ws_v2 透传 ingress 与 handler 侧首轮定价的耦合：首轮已在建连前完成准入，
+// relay 不重复触发 BeforeTurn，但会在 AfterTurn 前报告同一 turn 的开始时刻。
 //
 // handler 的 recordTurnStart 保存该时刻，AfterTurn 再用 currentOr(turnStart)
-// 作为计费 PricingAt；不触发 BeforeTurn 也意味着透传仍没有 turn 级利润复核。
-func TestPassthroughIngressReportsTurnStartedBeforeAfterTurnWithoutBeforeTurn(t *testing.T) {
+// 作为首轮计费 PricingAt；后续 response.create 仍须执行 BeforeTurn 复核。
+func TestPassthroughIngressFirstTurnUsesPreAdmissionWithoutBeforeTurn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	controlCtx, cancelControl := context.WithCancelCause(context.Background())
 	defer cancelControl(context.Canceled)
@@ -131,7 +131,7 @@ func TestPassthroughIngressReportsTurnStartedBeforeAfterTurnWithoutBeforeTurn(t 
 	gotEvents := append([]hookEvent(nil), hookEvents...)
 	hooksMu.Unlock()
 
-	require.Zero(t, gotBefore, "透传 ingress 不应调用 BeforeTurn")
+	require.Zero(t, gotBefore, "首轮已完成建连准入，不应重复调用 BeforeTurn")
 	require.GreaterOrEqual(t, len(gotEvents), 2, "透传 ingress 应报告 TurnStarted 和 AfterTurn")
 	require.Equal(t, "TurnStarted", gotEvents[0].name)
 	require.Equal(t, expectedTurnStartedAt, gotEvents[0].startedAt, "TurnStarted 必须携带入口冻结的首轮开始时刻")
@@ -161,12 +161,19 @@ func testPassthroughIngressFreezesSubsequentTurnBeforeRequestPolicy(t *testing.T
 		startedAt time.Time
 	}
 	turnStarts := make(chan turnStart, 2)
+	beforeTurnEntered := make(chan time.Time, 1)
 	beforeRequestEntered := make(chan time.Time, 1)
 	releaseBeforeRequest := make(chan struct{})
 	hooks := &OpenAIWSIngressHooks{
 		InitialTurnStartedAt: time.Now(),
 		TurnStarted: func(turn int, startedAt time.Time) {
 			turnStarts <- turnStart{turn: turn, startedAt: startedAt}
+		},
+		BeforeTurn: func(turn int) error {
+			if turn == 2 {
+				beforeTurnEntered <- time.Now()
+			}
+			return nil
 		},
 		BeforeRequest: func(turn int, _ []byte, _ string) error {
 			if turn == 2 {
@@ -209,6 +216,12 @@ func testPassthroughIngressFreezesSubsequentTurnBeforeRequestPolicy(t *testing.T
 	case policyEnteredAt = <-beforeRequestEntered:
 	case <-time.After(time.Second):
 		t.Fatal("second turn did not enter BeforeRequest")
+	}
+	select {
+	case beforeTurnAt := <-beforeTurnEntered:
+		require.False(t, beforeTurnAt.After(policyEnteredAt), "第二轮必须先完成 BeforeTurn 准入再执行请求策略")
+	default:
+		t.Fatal("second turn did not execute BeforeTurn before BeforeRequest")
 	}
 	close(releaseBeforeRequest)
 	require.Equal(t, "response.create", gjson.GetBytes(requirePassthroughUpstreamWrite(t, upstream, 3*time.Second), "type").String())

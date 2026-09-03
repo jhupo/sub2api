@@ -196,25 +196,48 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	return headers, sessionResolution, nil
 }
 
-func (s *OpenAIGatewayService) buildOpenAIWSCreatePayload(reqBody map[string]any, account *Account) map[string]any {
-	// OpenAI WS Mode 协议：response.create 字段与 HTTP /responses 基本一致。
-	// 保留 stream 字段（与 Codex CLI 一致），仅移除 background。
-	payload := make(map[string]any, len(reqBody)+1)
-	for k, v := range reqBody {
-		payload[k] = v
+func (s *OpenAIGatewayService) buildOpenAIWSCreatePayloadRaw(reqBody []byte, account *Account) ([]byte, error) {
+	payload := bytes.TrimSpace(reqBody)
+	if len(payload) == 0 {
+		payload = []byte("{}")
+	}
+	if !gjson.ValidBytes(payload) || !gjson.ParseBytes(payload).IsObject() {
+		return nil, errors.New("openai websocket payload must be a JSON object")
 	}
 
-	delete(payload, "background")
-	if _, exists := payload["stream"]; !exists {
-		payload["stream"] = true
+	if gjson.GetBytes(payload, "background").Exists() {
+		updated, err := sjson.DeleteBytes(payload, "background")
+		if err != nil {
+			return nil, err
+		}
+		payload = updated
 	}
-	payload["type"] = "response.create"
-
-	// OAuth 默认保持 store=false，避免误依赖服务端历史。
+	if !gjson.GetBytes(payload, "stream").Exists() {
+		updated, err := sjson.SetBytes(payload, "stream", true)
+		if err != nil {
+			return nil, err
+		}
+		payload = updated
+	}
+	eventType := gjson.GetBytes(payload, "type")
+	if eventType.Type != gjson.String || eventType.String() != "response.create" {
+		updated, err := sjson.SetBytes(payload, "type", "response.create")
+		if err != nil {
+			return nil, err
+		}
+		payload = updated
+	}
 	if account != nil && account.UsesOpenAICodexProtocol() && !s.isOpenAIWSStoreRecoveryAllowed(account) {
-		payload["store"] = false
+		store := gjson.GetBytes(payload, "store")
+		if store.Type != gjson.False {
+			updated, err := sjson.SetBytes(payload, "store", false)
+			if err != nil {
+				return nil, err
+			}
+			payload = updated
+		}
 	}
-	return payload
+	return payload, nil
 }
 
 func setOpenAIWSTurnMetadata(payload map[string]any, turnMetadata string) {
@@ -244,6 +267,75 @@ func setOpenAIWSTurnMetadata(payload map[string]any, turnMetadata string) {
 	}
 }
 
+func setOpenAIWSTurnMetadataRaw(payload []byte, turnMetadata string) ([]byte, error) {
+	metadata := strings.TrimSpace(turnMetadata)
+	if len(payload) == 0 || metadata == "" {
+		return payload, nil
+	}
+
+	existing := gjson.GetBytes(payload, "client_metadata")
+	var clientMetadata []byte
+	if existing.IsObject() {
+		updated, err := sjson.SetBytes([]byte(existing.Raw), openAIWSTurnMetadataHeader, metadata)
+		if err != nil {
+			return nil, err
+		}
+		clientMetadata = updated
+	} else {
+		encoded, err := json.Marshal(map[string]string{openAIWSTurnMetadataHeader: metadata})
+		if err != nil {
+			return nil, err
+		}
+		clientMetadata = encoded
+	}
+	return sjson.SetRawBytes(payload, "client_metadata", clientMetadata)
+}
+
+func applyOpenAIWSRetryPayloadStrategyRaw(payload []byte, attempt int) ([]byte, string, []string, error) {
+	if len(bytes.TrimSpace(payload)) == 0 {
+		return payload, "empty", nil, nil
+	}
+	if attempt <= 1 || !gjson.GetBytes(payload, "include").Exists() {
+		return payload, "full", nil, nil
+	}
+	updated, err := sjson.DeleteBytes(payload, "include")
+	if err != nil {
+		return nil, "full", nil, err
+	}
+	return updated, "trim_optional_fields", []string{"include"}, nil
+}
+
+func (s *OpenAIGatewayService) prepareOpenAIWSForwardPayloadRaw(
+	rawBody []byte,
+	account *Account,
+	attempt int,
+	turnMetadata string,
+	c *gin.Context,
+) ([]byte, string, []string, error) {
+	payload, err := s.buildOpenAIWSCreatePayloadRaw(rawBody, account)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	payload, strategy, removedKeys, err := applyOpenAIWSRetryPayloadStrategyRaw(payload, attempt)
+	if err != nil {
+		return nil, strategy, removedKeys, err
+	}
+	payload, err = setOpenAIWSTurnMetadataRaw(payload, turnMetadata)
+	if err != nil {
+		return nil, strategy, removedKeys, err
+	}
+	if fpIDs := stagedCodexFingerprintIDs(c, account); fpIDs != nil {
+		updated, changed, fingerprintErr := applyCodexFingerprintClientMetadataRaw(payload, fpIDs)
+		if fingerprintErr != nil {
+			return nil, strategy, removedKeys, fingerprintErr
+		}
+		if changed {
+			payload = updated
+		}
+	}
+	return payload, strategy, removedKeys, nil
+}
+
 func (s *OpenAIGatewayService) isOpenAIWSStoreRecoveryAllowed(account *Account) bool {
 	if account != nil && account.IsOpenAIWSAllowStoreRecoveryEnabled() {
 		return true
@@ -252,24 +344,6 @@ func (s *OpenAIGatewayService) isOpenAIWSStoreRecoveryAllowed(account *Account) 
 		return true
 	}
 	return false
-}
-
-func (s *OpenAIGatewayService) isOpenAIWSStoreDisabledInRequest(reqBody map[string]any, account *Account) bool {
-	if account != nil && account.UsesOpenAICodexProtocol() && !s.isOpenAIWSStoreRecoveryAllowed(account) {
-		return true
-	}
-	if len(reqBody) == 0 {
-		return false
-	}
-	rawStore, ok := reqBody["store"]
-	if !ok {
-		return false
-	}
-	storeEnabled, ok := rawStore.(bool)
-	if !ok {
-		return false
-	}
-	return !storeEnabled
 }
 
 func (s *OpenAIGatewayService) isOpenAIWSStoreDisabledInRequestRaw(reqBody []byte, account *Account) bool {

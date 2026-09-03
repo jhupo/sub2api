@@ -257,14 +257,20 @@ func (s *PaymentService) PrepareRefund(ctx context.Context, oid int64, amt float
 func (s *PaymentService) prepDeduct(ctx context.Context, o *dbent.PaymentOrder, p *RefundPlan, force bool) *RefundResult {
 	if o.OrderType == payment.OrderTypeSubscription {
 		p.DeductionType = payment.DeductionTypeSubscription
-		if o.SubscriptionGroupID != nil && o.SubscriptionDays != nil {
-			p.SubDaysToDeduct = *o.SubscriptionDays
-			sub, err := s.subscriptionSvc.GetActiveSubscription(ctx, o.UserID, *o.SubscriptionGroupID)
-			if err == nil && sub != nil {
+		if o.PlanVersionID != nil && s.configService != nil {
+			if plan, err := s.configService.GetPlanVersion(ctx, *o.PlanVersionID); err == nil {
+				p.SubDaysToDeduct = psComputeValidityDays(plan.ValidityDays, plan.ValidityUnit)
+			}
+		}
+		if o.FulfilledSubscriptionID != nil {
+			sub, err := s.subscriptionSvc.GetByID(ctx, *o.FulfilledSubscriptionID)
+			if err == nil && sub != nil && sub.UserID == o.UserID {
 				p.SubscriptionID = sub.ID
 			} else if !force {
-				return &RefundResult{Success: false, Warning: "cannot find active subscription for deduction, use force", RequireForce: true}
+				return &RefundResult{Success: false, Warning: "cannot find fulfilled subscription for deduction, use force", RequireForce: true}
 			}
+		} else if !force {
+			return &RefundResult{Success: false, Warning: "order has no fulfilled subscription, use force", RequireForce: true}
 		}
 		return nil
 	}

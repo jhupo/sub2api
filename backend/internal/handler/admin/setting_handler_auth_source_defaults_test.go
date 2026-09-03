@@ -496,7 +496,7 @@ func TestDiffSettings_IncludesAuthSourceDefaultsAndForceEmail(t *testing.T) {
 			Email: service.ProviderDefaultGrantSettings{
 				Balance:          12.5,
 				Concurrency:      7,
-				Subscriptions:    []service.DefaultSubscriptionSetting{{GroupID: 21, ValidityDays: 30}},
+				Subscriptions:    []service.DefaultSubscriptionSetting{{PlanID: 21}},
 				GrantOnSignup:    false,
 				GrantOnFirstBind: true,
 			},

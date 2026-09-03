@@ -11,9 +11,9 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/subscriptionplanversion"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 )
 
@@ -173,44 +173,23 @@ func (_u *RedeemCodeUpdate) ClearExpiresAt() *RedeemCodeUpdate {
 	return _u
 }
 
-// SetGroupID sets the "group_id" field.
-func (_u *RedeemCodeUpdate) SetGroupID(v int64) *RedeemCodeUpdate {
-	_u.mutation.SetGroupID(v)
+// SetPlanVersionID sets the "plan_version_id" field.
+func (_u *RedeemCodeUpdate) SetPlanVersionID(v int64) *RedeemCodeUpdate {
+	_u.mutation.SetPlanVersionID(v)
 	return _u
 }
 
-// SetNillableGroupID sets the "group_id" field if the given value is not nil.
-func (_u *RedeemCodeUpdate) SetNillableGroupID(v *int64) *RedeemCodeUpdate {
+// SetNillablePlanVersionID sets the "plan_version_id" field if the given value is not nil.
+func (_u *RedeemCodeUpdate) SetNillablePlanVersionID(v *int64) *RedeemCodeUpdate {
 	if v != nil {
-		_u.SetGroupID(*v)
+		_u.SetPlanVersionID(*v)
 	}
 	return _u
 }
 
-// ClearGroupID clears the value of the "group_id" field.
-func (_u *RedeemCodeUpdate) ClearGroupID() *RedeemCodeUpdate {
-	_u.mutation.ClearGroupID()
-	return _u
-}
-
-// SetValidityDays sets the "validity_days" field.
-func (_u *RedeemCodeUpdate) SetValidityDays(v int) *RedeemCodeUpdate {
-	_u.mutation.ResetValidityDays()
-	_u.mutation.SetValidityDays(v)
-	return _u
-}
-
-// SetNillableValidityDays sets the "validity_days" field if the given value is not nil.
-func (_u *RedeemCodeUpdate) SetNillableValidityDays(v *int) *RedeemCodeUpdate {
-	if v != nil {
-		_u.SetValidityDays(*v)
-	}
-	return _u
-}
-
-// AddValidityDays adds value to the "validity_days" field.
-func (_u *RedeemCodeUpdate) AddValidityDays(v int) *RedeemCodeUpdate {
-	_u.mutation.AddValidityDays(v)
+// ClearPlanVersionID clears the value of the "plan_version_id" field.
+func (_u *RedeemCodeUpdate) ClearPlanVersionID() *RedeemCodeUpdate {
+	_u.mutation.ClearPlanVersionID()
 	return _u
 }
 
@@ -233,9 +212,9 @@ func (_u *RedeemCodeUpdate) SetUser(v *User) *RedeemCodeUpdate {
 	return _u.SetUserID(v.ID)
 }
 
-// SetGroup sets the "group" edge to the Group entity.
-func (_u *RedeemCodeUpdate) SetGroup(v *Group) *RedeemCodeUpdate {
-	return _u.SetGroupID(v.ID)
+// SetPlanVersion sets the "plan_version" edge to the SubscriptionPlanVersion entity.
+func (_u *RedeemCodeUpdate) SetPlanVersion(v *SubscriptionPlanVersion) *RedeemCodeUpdate {
+	return _u.SetPlanVersionID(v.ID)
 }
 
 // Mutation returns the RedeemCodeMutation object of the builder.
@@ -249,9 +228,9 @@ func (_u *RedeemCodeUpdate) ClearUser() *RedeemCodeUpdate {
 	return _u
 }
 
-// ClearGroup clears the "group" edge to the Group entity.
-func (_u *RedeemCodeUpdate) ClearGroup() *RedeemCodeUpdate {
-	_u.mutation.ClearGroup()
+// ClearPlanVersion clears the "plan_version" edge to the SubscriptionPlanVersion entity.
+func (_u *RedeemCodeUpdate) ClearPlanVersion() *RedeemCodeUpdate {
+	_u.mutation.ClearPlanVersion()
 	return _u
 }
 
@@ -347,12 +326,6 @@ func (_u *RedeemCodeUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 	if _u.mutation.ExpiresAtCleared() {
 		_spec.ClearField(redeemcode.FieldExpiresAt, field.TypeTime)
 	}
-	if value, ok := _u.mutation.ValidityDays(); ok {
-		_spec.SetField(redeemcode.FieldValidityDays, field.TypeInt, value)
-	}
-	if value, ok := _u.mutation.AddedValidityDays(); ok {
-		_spec.AddField(redeemcode.FieldValidityDays, field.TypeInt, value)
-	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
@@ -382,28 +355,28 @@ func (_u *RedeemCodeUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 		}
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
-	if _u.mutation.GroupCleared() {
+	if _u.mutation.PlanVersionCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
 			Inverse: true,
-			Table:   redeemcode.GroupTable,
-			Columns: []string{redeemcode.GroupColumn},
+			Table:   redeemcode.PlanVersionTable,
+			Columns: []string{redeemcode.PlanVersionColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(group.FieldID, field.TypeInt64),
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionplanversion.FieldID, field.TypeInt64),
 			},
 		}
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
 	}
-	if nodes := _u.mutation.GroupIDs(); len(nodes) > 0 {
+	if nodes := _u.mutation.PlanVersionIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
 			Inverse: true,
-			Table:   redeemcode.GroupTable,
-			Columns: []string{redeemcode.GroupColumn},
+			Table:   redeemcode.PlanVersionTable,
+			Columns: []string{redeemcode.PlanVersionColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(group.FieldID, field.TypeInt64),
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionplanversion.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -574,44 +547,23 @@ func (_u *RedeemCodeUpdateOne) ClearExpiresAt() *RedeemCodeUpdateOne {
 	return _u
 }
 
-// SetGroupID sets the "group_id" field.
-func (_u *RedeemCodeUpdateOne) SetGroupID(v int64) *RedeemCodeUpdateOne {
-	_u.mutation.SetGroupID(v)
+// SetPlanVersionID sets the "plan_version_id" field.
+func (_u *RedeemCodeUpdateOne) SetPlanVersionID(v int64) *RedeemCodeUpdateOne {
+	_u.mutation.SetPlanVersionID(v)
 	return _u
 }
 
-// SetNillableGroupID sets the "group_id" field if the given value is not nil.
-func (_u *RedeemCodeUpdateOne) SetNillableGroupID(v *int64) *RedeemCodeUpdateOne {
+// SetNillablePlanVersionID sets the "plan_version_id" field if the given value is not nil.
+func (_u *RedeemCodeUpdateOne) SetNillablePlanVersionID(v *int64) *RedeemCodeUpdateOne {
 	if v != nil {
-		_u.SetGroupID(*v)
+		_u.SetPlanVersionID(*v)
 	}
 	return _u
 }
 
-// ClearGroupID clears the value of the "group_id" field.
-func (_u *RedeemCodeUpdateOne) ClearGroupID() *RedeemCodeUpdateOne {
-	_u.mutation.ClearGroupID()
-	return _u
-}
-
-// SetValidityDays sets the "validity_days" field.
-func (_u *RedeemCodeUpdateOne) SetValidityDays(v int) *RedeemCodeUpdateOne {
-	_u.mutation.ResetValidityDays()
-	_u.mutation.SetValidityDays(v)
-	return _u
-}
-
-// SetNillableValidityDays sets the "validity_days" field if the given value is not nil.
-func (_u *RedeemCodeUpdateOne) SetNillableValidityDays(v *int) *RedeemCodeUpdateOne {
-	if v != nil {
-		_u.SetValidityDays(*v)
-	}
-	return _u
-}
-
-// AddValidityDays adds value to the "validity_days" field.
-func (_u *RedeemCodeUpdateOne) AddValidityDays(v int) *RedeemCodeUpdateOne {
-	_u.mutation.AddValidityDays(v)
+// ClearPlanVersionID clears the value of the "plan_version_id" field.
+func (_u *RedeemCodeUpdateOne) ClearPlanVersionID() *RedeemCodeUpdateOne {
+	_u.mutation.ClearPlanVersionID()
 	return _u
 }
 
@@ -634,9 +586,9 @@ func (_u *RedeemCodeUpdateOne) SetUser(v *User) *RedeemCodeUpdateOne {
 	return _u.SetUserID(v.ID)
 }
 
-// SetGroup sets the "group" edge to the Group entity.
-func (_u *RedeemCodeUpdateOne) SetGroup(v *Group) *RedeemCodeUpdateOne {
-	return _u.SetGroupID(v.ID)
+// SetPlanVersion sets the "plan_version" edge to the SubscriptionPlanVersion entity.
+func (_u *RedeemCodeUpdateOne) SetPlanVersion(v *SubscriptionPlanVersion) *RedeemCodeUpdateOne {
+	return _u.SetPlanVersionID(v.ID)
 }
 
 // Mutation returns the RedeemCodeMutation object of the builder.
@@ -650,9 +602,9 @@ func (_u *RedeemCodeUpdateOne) ClearUser() *RedeemCodeUpdateOne {
 	return _u
 }
 
-// ClearGroup clears the "group" edge to the Group entity.
-func (_u *RedeemCodeUpdateOne) ClearGroup() *RedeemCodeUpdateOne {
-	_u.mutation.ClearGroup()
+// ClearPlanVersion clears the "plan_version" edge to the SubscriptionPlanVersion entity.
+func (_u *RedeemCodeUpdateOne) ClearPlanVersion() *RedeemCodeUpdateOne {
+	_u.mutation.ClearPlanVersion()
 	return _u
 }
 
@@ -778,12 +730,6 @@ func (_u *RedeemCodeUpdateOne) sqlSave(ctx context.Context) (_node *RedeemCode, 
 	if _u.mutation.ExpiresAtCleared() {
 		_spec.ClearField(redeemcode.FieldExpiresAt, field.TypeTime)
 	}
-	if value, ok := _u.mutation.ValidityDays(); ok {
-		_spec.SetField(redeemcode.FieldValidityDays, field.TypeInt, value)
-	}
-	if value, ok := _u.mutation.AddedValidityDays(); ok {
-		_spec.AddField(redeemcode.FieldValidityDays, field.TypeInt, value)
-	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
@@ -813,28 +759,28 @@ func (_u *RedeemCodeUpdateOne) sqlSave(ctx context.Context) (_node *RedeemCode, 
 		}
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
-	if _u.mutation.GroupCleared() {
+	if _u.mutation.PlanVersionCleared() {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
 			Inverse: true,
-			Table:   redeemcode.GroupTable,
-			Columns: []string{redeemcode.GroupColumn},
+			Table:   redeemcode.PlanVersionTable,
+			Columns: []string{redeemcode.PlanVersionColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(group.FieldID, field.TypeInt64),
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionplanversion.FieldID, field.TypeInt64),
 			},
 		}
 		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
 	}
-	if nodes := _u.mutation.GroupIDs(); len(nodes) > 0 {
+	if nodes := _u.mutation.PlanVersionIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.M2O,
 			Inverse: true,
-			Table:   redeemcode.GroupTable,
-			Columns: []string{redeemcode.GroupColumn},
+			Table:   redeemcode.PlanVersionTable,
+			Columns: []string{redeemcode.PlanVersionColumn},
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
-				IDSpec: sqlgraph.NewFieldSpec(group.FieldID, field.TypeInt64),
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionplanversion.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {

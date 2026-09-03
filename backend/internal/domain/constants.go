@@ -77,12 +77,6 @@ const (
 	AdjustmentTypeAdminConcurrency = "admin_concurrency" // 管理员调整并发数
 )
 
-// Group subscription type constants
-const (
-	SubscriptionTypeStandard     = "standard"     // 标准计费模式（按余额扣费）
-	SubscriptionTypeSubscription = "subscription" // 订阅模式（按限额控制）
-)
-
 // Subscription status constants
 const (
 	SubscriptionStatusActive    = "active"

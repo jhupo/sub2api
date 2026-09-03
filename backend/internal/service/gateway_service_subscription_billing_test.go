@@ -80,6 +80,13 @@ func TestBuildUsageBillingCommand_SubscriptionAppliesRateMultiplier(t *testing.T
 			if cmd.BalanceCost != tt.wantBalance {
 				t.Errorf("BalanceCost = %v, want %v", cmd.BalanceCost, tt.wantBalance)
 			}
+			if tt.isSubscription {
+				if cmd.SubscriptionID == nil || *cmd.SubscriptionID != subID {
+					t.Fatalf("SubscriptionID = %v, want %d", cmd.SubscriptionID, subID)
+				}
+			} else if cmd.SubscriptionID != nil {
+				t.Fatalf("SubscriptionID = %v, want nil for wallet billing", cmd.SubscriptionID)
+			}
 		})
 	}
 }

@@ -106,13 +106,14 @@ type balancePreauthorizationRepository interface {
 // Pricing and validation happen before any mutation. Once prepare succeeds,
 // every uncertain dependency result is fail-closed and left recoverable in PG.
 type BalancePreauthorizationService struct {
-	cfg             *config.Config
-	settingService  *SettingService
-	costCalculator  balancePreauthorizationCostCalculator
-	snapshotReader  balancePreauthorizationSnapshotReader
-	wallet          balancePreauthorizationWallet
-	watermarkWallet balancePreauthorizationWatermarkedWallet
-	repo            balancePreauthorizationRepository
+	cfg              *config.Config
+	settingService   *SettingService
+	costCalculator   balancePreauthorizationCostCalculator
+	snapshotReader   balancePreauthorizationSnapshotReader
+	wallet           balancePreauthorizationWallet
+	watermarkWallet  balancePreauthorizationWatermarkedWallet
+	repo             balancePreauthorizationRepository
+	subscriptionRepo SubscriptionAllowanceRepository
 }
 
 func (s *BalancePreauthorizationService) cleanupLiveBalanceAttempt(ctx context.Context, userID int64, attemptID string) {
@@ -140,6 +141,7 @@ func NewBalancePreauthorizationService(
 		repo:           repo,
 	}
 	service.snapshotReader, _ = repo.(balancePreauthorizationSnapshotReader)
+	service.subscriptionRepo, _ = repo.(SubscriptionAllowanceRepository)
 	if billingCacheService != nil {
 		service.wallet = billingCacheService.cache
 		service.watermarkWallet, _ = billingCacheService.cache.(balancePreauthorizationWatermarkedWallet)
@@ -192,6 +194,7 @@ type BalancePreauthorizationRequest struct {
 	UserID                    int64
 	AuthorizationFingerprint  string
 	BillingType               int8
+	SubscriptionID            int64
 	BillableInputBytes        int
 	EstimatedInputTokens      int
 	InitialOutputWindowTokens int
@@ -209,6 +212,8 @@ type BalancePreauthorizationResumeRequest struct {
 	RequestID                string
 	APIKeyID                 int64
 	UserID                   int64
+	BillingType              int8
+	SubscriptionID           int64
 	AuthorizationFingerprint string
 	HoldAmount               float64
 }
@@ -216,10 +221,17 @@ type BalancePreauthorizationResumeRequest struct {
 // RequiresPreauthorization lets handlers avoid pricing and hashing work for
 // modes that Preauthorize would immediately skip.
 func (s *BalancePreauthorizationService) RequiresPreauthorization(ctx context.Context, billingType int8) bool {
-	if s == nil || billingType != BillingTypeBalance {
+	if s == nil || (s.cfg != nil && s.cfg.RunMode == config.RunModeSimple) {
 		return false
 	}
-	return (s.cfg == nil || s.cfg.RunMode != config.RunModeSimple) && s.balancePreauthorizationEnabled(ctx)
+	switch billingType {
+	case BillingTypeSubscription:
+		return true
+	case BillingTypeBalance:
+		return s.balancePreauthorizationEnabled(ctx)
+	default:
+		return false
+	}
 }
 
 func (s *BalancePreauthorizationService) balancePreauthorizationEnabled(ctx context.Context) bool {
@@ -232,8 +244,9 @@ func (s *BalancePreauthorizationService) balancePreauthorizationEnabled(ctx cont
 	return true
 }
 
-// Preauthorize returns nil without touching billing state in simple or
-// subscription mode. Balance mode returns a request-owned guard on success.
+// Preauthorize returns a request-owned guard for the selected funding source.
+// Subscription allowance reservations are always enforced; the feature switch
+// controls only wallet preauthorization.
 func (s *BalancePreauthorizationService) Preauthorize(
 	ctx context.Context,
 	request BalancePreauthorizationRequest,
@@ -241,17 +254,17 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	if s == nil {
 		return nil, balancePreauthorizationUnavailable(errors.New("balance preauthorization service is nil"))
 	}
-	if (s.cfg != nil && s.cfg.RunMode == config.RunModeSimple) || !s.balancePreauthorizationEnabled(ctx) {
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		return nil, nil
 	}
-	if request.BillingType == BillingTypeSubscription {
+	if request.BillingType == BillingTypeBalance && !s.balancePreauthorizationEnabled(ctx) {
 		return nil, nil
 	}
 	if err := validateBalancePreauthorizationRequest(&request); err != nil {
 		return nil, balancePreauthorizationUnavailable(err)
 	}
-	if s.costCalculator == nil || s.snapshotReader == nil || s.wallet == nil || s.watermarkWallet == nil || s.repo == nil {
-		return nil, balancePreauthorizationUnavailable(errors.New("balance preauthorization dependency is unavailable"))
+	if s.costCalculator == nil {
+		return nil, balancePreauthorizationUnavailable(errors.New("billing preauthorization pricing is unavailable"))
 	}
 	ctx = nonNilContext(ctx)
 
@@ -263,6 +276,12 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	outputWindow := estimate.OutputWindow
 	requestID := strings.TrimSpace(request.RequestID)
 	fingerprint := strings.TrimSpace(request.AuthorizationFingerprint)
+	if request.BillingType == BillingTypeSubscription {
+		return s.preauthorizeSubscription(ctx, request, estimate)
+	}
+	if s.snapshotReader == nil || s.wallet == nil || s.watermarkWallet == nil || s.repo == nil {
+		return nil, balancePreauthorizationUnavailable(errors.New("balance preauthorization dependency is unavailable"))
+	}
 	record, err := s.repo.PrepareBalancePreauthorization(ctx, &BalancePreauthorizationCommand{
 		RequestID:                requestID,
 		APIKeyID:                 request.APIKeyID,
@@ -313,11 +332,12 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	}
 
 	core := &balancePreauthorizationGuardCore{
-		service:       s,
+		reservation: &walletPreauthorizationReservation{
+			service: s, requestID: requestID, apiKeyID: request.APIKeyID,
+			userID: request.UserID, attemptID: attemptID,
+		},
 		requestID:     requestID,
 		apiKeyID:      request.APIKeyID,
-		userID:        request.UserID,
-		attemptID:     attemptID,
 		holdAmount:    record.HoldAmount,
 		outputWindow:  outputWindow,
 		ownerToken:    1,
@@ -336,11 +356,47 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	return &BalancePreauthorizationGuard{core: core, ownerToken: 1}, nil
 }
 
+func (s *BalancePreauthorizationService) preauthorizeSubscription(
+	ctx context.Context,
+	request BalancePreauthorizationRequest,
+	estimate balancePreauthorizationEstimate,
+) (*BalancePreauthorizationGuard, error) {
+	if s.subscriptionRepo == nil {
+		return nil, balancePreauthorizationUnavailable(errors.New("subscription allowance repository is unavailable"))
+	}
+	cmd := SubscriptionAllowanceCommand{
+		RequestID: strings.TrimSpace(request.RequestID), APIKeyID: request.APIKeyID,
+		UserID: request.UserID, SubscriptionID: request.SubscriptionID,
+		AuthorizationFingerprint: strings.TrimSpace(request.AuthorizationFingerprint),
+		Amount:                   estimate.HoldAmount, AuthorizedAt: time.Now(), ExpiresAt: request.ExpiresAt,
+	}
+	record, err := s.subscriptionRepo.AuthorizeSubscriptionAllowance(ctx, &cmd)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil || record.Status != BillingReservationAuthorized ||
+		QuantizeUsageBillingAmount(record.AuthorizedAmount) != QuantizeUsageBillingAmount(estimate.HoldAmount) ||
+		!record.ExpiresAt.After(time.Now()) {
+		return nil, balancePreauthorizationUnavailable(fmt.Errorf("unexpected subscription reservation state: %v", record))
+	}
+	reservation := &subscriptionPreauthorizationReservation{repo: s.subscriptionRepo, cmd: cmd}
+	core := &balancePreauthorizationGuardCore{
+		reservation: reservation, requestID: cmd.RequestID, apiKeyID: cmd.APIKeyID,
+		holdAmount: record.AuthorizedAmount, outputWindow: estimate.OutputWindow,
+		ownerToken: 1, terminalState: balancePreauthorizationGuardActive,
+	}
+	core.outputHoldTracker = NewBillingOutputHoldTracker(
+		estimate.OutputWindow, estimate.OutputWindow, record.AuthorizedAmount,
+		estimate.OutputUnitPrice, 1,
+	)
+	return &BalancePreauthorizationGuard{core: core, ownerToken: 1}, nil
+}
+
 // Resume reconstructs a guard for an exact active authorization or an identical
 // finalization retry. Settled and refunded rows are explicit outcomes so an
 // async response can distinguish a completed charge from an unsafe conflict.
 func (s *BalancePreauthorizationService) Resume(ctx context.Context, request BalancePreauthorizationResumeRequest) (*BalancePreauthorizationGuard, error) {
-	if s == nil || s.wallet == nil || s.repo == nil {
+	if s == nil {
 		return nil, balancePreauthorizationUnavailable(errors.New("balance preauthorization resume dependency is unavailable"))
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
@@ -350,6 +406,12 @@ func (s *BalancePreauthorizationService) Resume(ctx context.Context, request Bal
 	}
 	request.HoldAmount = QuantizeUsageBillingAmount(request.HoldAmount)
 	ctx = nonNilContext(ctx)
+	if request.BillingType == BillingTypeSubscription {
+		return s.resumeSubscription(ctx, request)
+	}
+	if s.wallet == nil || s.repo == nil {
+		return nil, balancePreauthorizationUnavailable(errors.New("balance preauthorization resume dependency is unavailable"))
+	}
 	record, err := s.repo.PrepareBalancePreauthorization(ctx, &BalancePreauthorizationCommand{
 		RequestID: request.RequestID, APIKeyID: request.APIKeyID, UserID: request.UserID,
 		AuthorizationFingerprint: request.AuthorizationFingerprint, HoldAmount: request.HoldAmount,
@@ -386,8 +448,44 @@ func (s *BalancePreauthorizationService) Resume(ctx context.Context, request Bal
 		return nil, balancePreauthorizationUnavailable(fmt.Errorf("resume balance preauthorization: %w", ErrUsageBillingRequestConflict))
 	}
 	return &BalancePreauthorizationGuard{core: &balancePreauthorizationGuardCore{
-		service: s, requestID: request.RequestID, apiKeyID: request.APIKeyID, userID: request.UserID,
-		attemptID: BalancePreauthorizationAttemptID(request.RequestID, request.APIKeyID), holdAmount: resumedHoldAmount,
+		reservation: &walletPreauthorizationReservation{
+			service: s, requestID: request.RequestID, apiKeyID: request.APIKeyID, userID: request.UserID,
+			attemptID: BalancePreauthorizationAttemptID(request.RequestID, request.APIKeyID),
+		},
+		requestID: request.RequestID, apiKeyID: request.APIKeyID, holdAmount: resumedHoldAmount,
+		ownerToken: 1, terminalState: balancePreauthorizationGuardActive,
+	}, ownerToken: 1}, nil
+}
+
+func (s *BalancePreauthorizationService) resumeSubscription(ctx context.Context, request BalancePreauthorizationResumeRequest) (*BalancePreauthorizationGuard, error) {
+	if s.subscriptionRepo == nil || request.SubscriptionID <= 0 {
+		return nil, balancePreauthorizationUnavailable(errors.New("subscription allowance resume dependency is unavailable"))
+	}
+	cmd := SubscriptionAllowanceCommand{
+		RequestID: request.RequestID, APIKeyID: request.APIKeyID, UserID: request.UserID,
+		SubscriptionID: request.SubscriptionID, AuthorizationFingerprint: request.AuthorizationFingerprint,
+		Amount: request.HoldAmount, AuthorizedAt: time.Now(),
+	}
+	record, err := s.subscriptionRepo.ResumeSubscriptionAllowance(ctx, &cmd)
+	if err != nil {
+		return nil, err
+	}
+	switch record.Status {
+	case BillingReservationCaptured:
+		return nil, ErrBalancePreauthorizationAlreadyFinalized
+	case BillingReservationReleased:
+		return nil, ErrBalancePreauthorizationAlreadyRefunded
+	case BillingReservationAuthorized:
+		if !record.ExpiresAt.After(time.Now()) {
+			return nil, balancePreauthorizationUnavailable(ErrUsageBillingRequestConflict)
+		}
+	default:
+		return nil, balancePreauthorizationUnavailable(ErrUsageBillingRequestConflict)
+	}
+	cmd.ExpiresAt = record.ExpiresAt
+	return &BalancePreauthorizationGuard{core: &balancePreauthorizationGuardCore{
+		reservation: &subscriptionPreauthorizationReservation{repo: s.subscriptionRepo, cmd: cmd},
+		requestID:   request.RequestID, apiKeyID: request.APIKeyID, holdAmount: record.AuthorizedAmount,
 		ownerToken: 1, terminalState: balancePreauthorizationGuardActive,
 	}, ownerToken: 1}, nil
 }
@@ -618,8 +716,11 @@ func validateBalancePreauthorizationRequest(request *BalancePreauthorizationRequ
 		invalidNonnegativeMoney(request.FixedAmount) || (!request.ExpiresAt.IsZero() && !request.ExpiresAt.After(time.Now())) {
 		return ErrInvalidBillingPreauthorizationEstimate
 	}
-	if request.BillingType != BillingTypeBalance {
+	if request.BillingType != BillingTypeBalance && request.BillingType != BillingTypeSubscription {
 		return fmt.Errorf("unsupported billing type %d", request.BillingType)
+	}
+	if request.BillingType == BillingTypeSubscription && request.SubscriptionID <= 0 {
+		return fmt.Errorf("subscription id is required for subscription billing")
 	}
 	return nil
 }

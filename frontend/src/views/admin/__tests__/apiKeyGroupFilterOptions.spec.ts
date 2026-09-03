@@ -6,7 +6,6 @@ const labels = {
   all: 'All',
   exclusive: 'Exclusive',
   public: 'Public',
-  subscription: 'Subscription',
   disabled: 'Disabled',
 }
 
@@ -16,17 +15,16 @@ function g(partial: Partial<AdminGroup>): AdminGroup {
     name: '',
     status: 'active',
     is_exclusive: false,
-    subscription_type: 'standard',
     ...partial,
   } as AdminGroup
 }
 
 describe('buildApiKeyGroupFilterOptions', () => {
-  it('partitions active groups into exclusive/public/subscription with headers', () => {
+  it('partitions active groups into exclusive and public sections', () => {
     const groups = [
-      g({ id: 1, name: 'Excl', is_exclusive: true, subscription_type: 'standard' }),
-      g({ id: 2, name: 'Pub', is_exclusive: false, subscription_type: 'standard' }),
-      g({ id: 3, name: 'Sub', is_exclusive: false, subscription_type: 'subscription' }),
+      g({ id: 1, name: 'Excl', is_exclusive: true }),
+      g({ id: 2, name: 'Pub', is_exclusive: false }),
+      g({ id: 3, name: 'Other public', is_exclusive: false }),
     ]
     expect(buildApiKeyGroupFilterOptions(groups, labels)).toEqual([
       { value: null, label: 'All' },
@@ -34,24 +32,14 @@ describe('buildApiKeyGroupFilterOptions', () => {
       { value: 1, label: 'Excl' },
       { value: -2, label: 'Public', kind: 'group', disabled: true },
       { value: 2, label: 'Pub' },
-      { value: -3, label: 'Subscription', kind: 'group', disabled: true },
-      { value: 3, label: 'Sub' },
+      { value: 3, label: 'Other public' },
     ])
   })
 
-  it('treats subscription_type=subscription as subscription even if is_exclusive', () => {
-    const groups = [g({ id: 9, name: 'X', is_exclusive: true, subscription_type: 'subscription' })]
-    const opts = buildApiKeyGroupFilterOptions(groups, labels)
-    expect(opts).toContainEqual({ value: 9, label: 'X' })
-    expect(opts.find((o) => o.label === 'Subscription')).toBeDefined()
-    expect(opts.find((o) => o.label === 'Exclusive')).toBeUndefined()
-  })
-
   it('skips empty section headers', () => {
-    const groups = [g({ id: 2, name: 'Pub', is_exclusive: false, subscription_type: 'standard' })]
+    const groups = [g({ id: 2, name: 'Pub', is_exclusive: false })]
     const opts = buildApiKeyGroupFilterOptions(groups, labels)
     expect(opts.find((o) => o.label === 'Exclusive')).toBeUndefined()
-    expect(opts.find((o) => o.label === 'Subscription')).toBeUndefined()
     expect(opts).toContainEqual({ value: -2, label: 'Public', kind: 'group', disabled: true })
   })
 
@@ -66,7 +54,7 @@ describe('buildApiKeyGroupFilterOptions', () => {
     // Disabled group appears in Disabled section
     expect(opts).toContainEqual({ value: 2, label: 'Inactive' })
     // Disabled section header present
-    expect(opts).toContainEqual({ value: -4, label: 'Disabled', kind: 'group', disabled: true })
+    expect(opts).toContainEqual({ value: -3, label: 'Disabled', kind: 'group', disabled: true })
     // Not in Exclusive section
     const exclIdx = opts.findIndex((o) => o.value === -1)
     const disabledItemIdx = opts.findIndex((o) => o.value === 2)
@@ -77,7 +65,7 @@ describe('buildApiKeyGroupFilterOptions', () => {
     const groups = [
       g({ id: 1, name: 'E', is_exclusive: true }),
       g({ id: 2, name: 'P', is_exclusive: false }),
-      g({ id: 3, name: 'S', subscription_type: 'subscription' }),
+      g({ id: 3, name: 'P2', is_exclusive: false }),
       g({ id: 4, name: 'D', status: 'inactive' }),
     ]
     const opts = buildApiKeyGroupFilterOptions(groups, labels)

@@ -278,10 +278,10 @@ export default {
         status: 'Status',
         expiresAt: 'Expires At',
         notes: 'Notes',
-        group: 'Group'
+        plan: 'Plan'
       },
       batchNotesPlaceholder: 'Enter the new note, or leave blank to clear it',
-      clearGroup: 'Clear group',
+      planUpdateSubscriptionOnly: 'Only subscription redeem codes can change plans',
       deleteAllUnused: 'Delete All Unused Codes',
       deleteCode: 'Delete Redeem Code',
       deleteCodeConfirm:
@@ -320,17 +320,15 @@ export default {
         admin_balance: 'Balance (Admin)',
         admin_concurrency: 'Concurrency (Admin)'
       },
-      selectGroup: 'Select Group',
-      selectGroupPlaceholder: 'Choose a subscription group',
-      validityDays: 'Validity Days',
+      selectPlan: 'Select Plan',
+      selectPlanPlaceholder: 'Choose the plan version to freeze',
       codeExpiry: 'Code Expiry',
       neverExpires: 'Never expires',
       expiryPresetDays: '{days} days',
       customExpiry: 'Custom',
       customExpiryDays: 'Custom days',
       expiryDaysRequired: 'Please enter a valid expiry day count',
-      groupRequired: 'Please select a subscription group',
-      days: ' days',
+      planRequired: 'Please select a plan',
       status: {
         unused: 'Unused',
         used: 'Used',
@@ -430,7 +428,7 @@ export default {
         eq: '='
       },
       targetingSummaryAll: 'All users',
-      targetingSummaryCustom: 'Custom ({groups} groups)',
+      targetingSummaryCustom: 'Custom ({count} groups)',
       timeImmediate: 'Immediate',
       timeNever: 'Never',
       readStatus: 'Read Status',

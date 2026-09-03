@@ -26,11 +26,9 @@ const (
 type balancePreauthorizationGuardCore struct {
 	mu sync.Mutex
 
-	service           *BalancePreauthorizationService
+	reservation       billingPreauthorizationReservation
 	requestID         string
 	apiKeyID          int64
-	userID            int64
-	attemptID         string
 	holdAmount        float64
 	outputWindow      int
 	outputHoldTracker *BillingOutputHoldTracker
@@ -44,6 +42,42 @@ type balancePreauthorizationGuardCore struct {
 type BalancePreauthorizationGuard struct {
 	core       *balancePreauthorizationGuardCore
 	ownerToken uint64
+}
+
+type billingPreauthorizationReservation interface {
+	TopUp(context.Context, float64) error
+	Capture(context.Context, float64, string) error
+	Release(context.Context) error
+	FundingSource() string
+	SubscriptionID() *int64
+}
+
+type walletPreauthorizationReservation struct {
+	service   *BalancePreauthorizationService
+	requestID string
+	apiKeyID  int64
+	userID    int64
+	attemptID string
+}
+
+func (r *walletPreauthorizationReservation) FundingSource() string  { return FundingSourceWallet }
+func (r *walletPreauthorizationReservation) SubscriptionID() *int64 { return nil }
+
+type subscriptionPreauthorizationReservation struct {
+	repo SubscriptionAllowanceRepository
+	cmd  SubscriptionAllowanceCommand
+}
+
+func (r *subscriptionPreauthorizationReservation) FundingSource() string {
+	return FundingSourceSubscription
+}
+
+func (r *subscriptionPreauthorizationReservation) SubscriptionID() *int64 {
+	if r == nil || r.cmd.SubscriptionID <= 0 {
+		return nil
+	}
+	id := r.cmd.SubscriptionID
+	return &id
 }
 
 func (g *BalancePreauthorizationGuard) TransferToWorker() (*BalancePreauthorizationGuard, bool) {
@@ -101,6 +135,20 @@ func (g *BalancePreauthorizationGuard) ReservedOutputTokens() int {
 		return 0
 	}
 	return g.core.outputWindow
+}
+
+func (g *BalancePreauthorizationGuard) FundingSource() string {
+	if g == nil || g.core == nil || g.core.reservation == nil {
+		return ""
+	}
+	return g.core.reservation.FundingSource()
+}
+
+func (g *BalancePreauthorizationGuard) SubscriptionID() *int64 {
+	if g == nil || g.core == nil || g.core.reservation == nil {
+		return nil
+	}
+	return g.core.reservation.SubscriptionID()
 }
 
 // wrapStreamOutputHoldTopUpFailure 为流式中途补扣失败统一包装错误，供四条流式
@@ -185,29 +233,11 @@ func (g *BalancePreauthorizationGuard) topUpToLocked(ctx context.Context, target
 	if g.core.terminalState != balancePreauthorizationGuardActive || targetHoldAmount <= g.core.holdAmount {
 		return nil
 	}
-	walletCtx, cancel := detachedBalancePreauthorizationWalletContext(ctx)
-	defer cancel()
-	if g.core.service == nil || g.core.service.snapshotReader == nil || g.core.service.watermarkWallet == nil {
-		return balancePreauthorizationUnavailable(errors.New("watermarked live balance wallet is unavailable"))
+	if g.core.reservation == nil {
+		return balancePreauthorizationUnavailable(errors.New("billing reservation is unavailable"))
 	}
-	snapshot, err := g.core.service.snapshotReader.LoadLiveBalanceInitializationSnapshot(walletCtx, g.core.userID, g.core.requestID, g.core.apiKeyID)
-	if err != nil {
-		return balancePreauthorizationUnavailable(fmt.Errorf("load live balance snapshot: %w", err))
-	}
-	result, err := g.core.service.watermarkWallet.TopUpLiveBalanceAtSnapshotWatermark(
-		walletCtx, g.core.userID, g.core.attemptID, snapshot.Watermark, targetHoldAmount,
-	)
-	if err != nil {
-		return balancePreauthorizationUnavailable(err)
-	}
-	if !liveBalanceOperationSucceeded(result, LiveBalanceAttemptAuthorized) {
-		if result.Outcome == LiveBalanceOutcomeInsufficient {
-			return ErrBalanceWithholdingFailed
-		}
-		return balancePreauthorizationUnavailable(fmt.Errorf(
-			"top up live balance returned outcome=%d state=%d",
-			result.Outcome, result.State,
-		))
+	if err := g.core.reservation.TopUp(ctx, targetHoldAmount); err != nil {
+		return err
 	}
 	g.core.holdAmount = targetHoldAmount
 	return nil
@@ -240,50 +270,120 @@ func (g *BalancePreauthorizationGuard) Finalize(ctx context.Context, actual floa
 		return ErrBalancePreauthorizationAlreadyRefunded
 	}
 
-	if err := g.core.service.repo.BeginBalancePreauthorizationFinalization(
-		ctx, g.core.requestID, g.core.apiKeyID, actual, requestFingerprint,
-	); err != nil {
-		return balancePreauthorizationUnavailable(err)
+	if g.core.reservation == nil {
+		return balancePreauthorizationUnavailable(errors.New("billing reservation is unavailable"))
 	}
-	if actual == 0 {
-		if err := g.finalizeZeroCost(ctx); err != nil {
-			return err
-		}
-	} else if err := g.finalizePositiveCost(ctx, actual); err != nil {
+	if err := g.core.reservation.Capture(ctx, actual, requestFingerprint); err != nil {
 		return err
 	}
 	g.core.terminalState = balancePreauthorizationGuardFinalized
 	return nil
 }
 
-func (g *BalancePreauthorizationGuard) finalizeZeroCost(ctx context.Context) error {
-	result, err := g.core.service.wallet.RefundLiveBalance(ctx, g.core.userID, g.core.attemptID)
+func (r *walletPreauthorizationReservation) TopUp(ctx context.Context, target float64) error {
+	if r == nil || r.service == nil || r.service.snapshotReader == nil || r.service.watermarkWallet == nil {
+		return balancePreauthorizationUnavailable(errors.New("watermarked live balance wallet is unavailable"))
+	}
+	walletCtx, cancel := detachedBalancePreauthorizationWalletContext(ctx)
+	defer cancel()
+	snapshot, err := r.service.snapshotReader.LoadLiveBalanceInitializationSnapshot(walletCtx, r.userID, r.requestID, r.apiKeyID)
+	if err != nil {
+		return balancePreauthorizationUnavailable(fmt.Errorf("load live balance snapshot: %w", err))
+	}
+	result, err := r.service.watermarkWallet.TopUpLiveBalanceAtSnapshotWatermark(walletCtx, r.userID, r.attemptID, snapshot.Watermark, target)
 	if err != nil {
 		return balancePreauthorizationUnavailable(err)
 	}
-	if !liveBalanceRefundSucceeded(result) {
-		return balancePreauthorizationUnavailable(fmt.Errorf("refund zero-cost live balance returned outcome=%d state=%d", result.Outcome, result.State))
+	if !liveBalanceOperationSucceeded(result, LiveBalanceAttemptAuthorized) {
+		if result.Outcome == LiveBalanceOutcomeInsufficient {
+			return ErrBalanceWithholdingFailed
+		}
+		return balancePreauthorizationUnavailable(fmt.Errorf("top up live balance returned outcome=%d state=%d", result.Outcome, result.State))
 	}
-	if err := g.core.service.repo.CompleteBalancePreauthorizationRefund(ctx, g.core.requestID, g.core.apiKeyID); err != nil {
-		return balancePreauthorizationUnavailable(err)
-	}
-	g.core.service.cleanupLiveBalanceAttempt(ctx, g.core.userID, g.core.attemptID)
 	return nil
 }
 
-func (g *BalancePreauthorizationGuard) finalizePositiveCost(ctx context.Context, actual float64) error {
-	result, err := g.core.service.wallet.FinalizeLiveBalance(ctx, g.core.userID, g.core.attemptID, actual)
+func (r *walletPreauthorizationReservation) Capture(ctx context.Context, actual float64, requestFingerprint string) error {
+	if r == nil || r.service == nil || r.service.repo == nil || r.service.wallet == nil {
+		return balancePreauthorizationUnavailable(errors.New("live balance reservation is unavailable"))
+	}
+	if err := r.service.repo.BeginBalancePreauthorizationFinalization(ctx, r.requestID, r.apiKeyID, actual, requestFingerprint); err != nil {
+		return balancePreauthorizationUnavailable(err)
+	}
+	if actual == 0 {
+		return r.releaseFinalized(ctx)
+	}
+	result, err := r.service.wallet.FinalizeLiveBalance(ctx, r.userID, r.attemptID, actual)
 	if err != nil {
 		return balancePreauthorizationUnavailable(err)
 	}
 	if !liveBalanceFinalizationSucceeded(result, actual) {
 		return balancePreauthorizationUnavailable(fmt.Errorf("finalize live balance returned outcome=%d state=%d", result.Outcome, result.State))
 	}
-	if err := g.core.service.repo.CompleteBalancePreauthorizationSettlement(ctx, g.core.requestID, g.core.apiKeyID); err != nil {
+	if err := r.service.repo.CompleteBalancePreauthorizationSettlement(ctx, r.requestID, r.apiKeyID); err != nil {
 		return balancePreauthorizationUnavailable(err)
 	}
-	g.core.service.cleanupLiveBalanceAttempt(ctx, g.core.userID, g.core.attemptID)
+	r.service.cleanupLiveBalanceAttempt(ctx, r.userID, r.attemptID)
 	return nil
+}
+
+func (r *walletPreauthorizationReservation) releaseFinalized(ctx context.Context) error {
+	result, err := r.service.wallet.RefundLiveBalance(ctx, r.userID, r.attemptID)
+	if err != nil {
+		return balancePreauthorizationUnavailable(err)
+	}
+	if !liveBalanceRefundSucceeded(result) {
+		return balancePreauthorizationUnavailable(fmt.Errorf("refund zero-cost live balance returned outcome=%d state=%d", result.Outcome, result.State))
+	}
+	if err := r.service.repo.CompleteBalancePreauthorizationRefund(ctx, r.requestID, r.apiKeyID); err != nil {
+		return balancePreauthorizationUnavailable(err)
+	}
+	r.service.cleanupLiveBalanceAttempt(ctx, r.userID, r.attemptID)
+	return nil
+}
+
+func (r *walletPreauthorizationReservation) Release(ctx context.Context) error {
+	if r == nil || r.service == nil || r.service.repo == nil || r.service.wallet == nil {
+		return balancePreauthorizationUnavailable(errors.New("live balance reservation is unavailable"))
+	}
+	if err := r.service.repo.BeginBalancePreauthorizationRefund(ctx, r.requestID, r.apiKeyID); err != nil {
+		return balancePreauthorizationUnavailable(err)
+	}
+	return r.releaseFinalized(ctx)
+}
+
+func (r *subscriptionPreauthorizationReservation) TopUp(ctx context.Context, target float64) error {
+	if r == nil || r.repo == nil {
+		return balancePreauthorizationUnavailable(errors.New("subscription allowance repository is unavailable"))
+	}
+	cmd := r.cmd
+	cmd.Amount = target
+	record, err := r.repo.TopUpSubscriptionAllowance(ctx, &cmd)
+	if err != nil {
+		return err
+	}
+	r.cmd.Amount = record.AuthorizedAmount
+	return nil
+}
+
+func (r *subscriptionPreauthorizationReservation) Capture(ctx context.Context, actual float64, requestFingerprint string) error {
+	if r == nil || r.repo == nil {
+		return balancePreauthorizationUnavailable(errors.New("subscription allowance repository is unavailable"))
+	}
+	cmd := r.cmd
+	cmd.Amount = actual
+	_, err := r.repo.CaptureSubscriptionAllowance(ctx, &cmd, requestFingerprint)
+	return err
+}
+
+func (r *subscriptionPreauthorizationReservation) Release(ctx context.Context) error {
+	if r == nil || r.repo == nil {
+		return balancePreauthorizationUnavailable(errors.New("subscription allowance repository is unavailable"))
+	}
+	cmd := r.cmd
+	cmd.Amount = 0
+	_, err := r.repo.ReleaseSubscriptionAllowance(ctx, &cmd)
+	return err
 }
 
 // Refund is idempotent for the current owner. A stale, transferred handle is a
@@ -304,20 +404,12 @@ func (g *BalancePreauthorizationGuard) Refund(ctx context.Context) error {
 	case balancePreauthorizationGuardFinalized:
 		return ErrBalancePreauthorizationAlreadyFinalized
 	}
-	if err := g.core.service.repo.BeginBalancePreauthorizationRefund(ctx, g.core.requestID, g.core.apiKeyID); err != nil {
-		return balancePreauthorizationUnavailable(err)
+	if g.core.reservation == nil {
+		return balancePreauthorizationUnavailable(errors.New("billing reservation is unavailable"))
 	}
-	result, err := g.core.service.wallet.RefundLiveBalance(ctx, g.core.userID, g.core.attemptID)
-	if err != nil {
-		return balancePreauthorizationUnavailable(err)
+	if err := g.core.reservation.Release(ctx); err != nil {
+		return err
 	}
-	if !liveBalanceRefundSucceeded(result) {
-		return balancePreauthorizationUnavailable(fmt.Errorf("refund live balance returned outcome=%d state=%d", result.Outcome, result.State))
-	}
-	if err := g.core.service.repo.CompleteBalancePreauthorizationRefund(ctx, g.core.requestID, g.core.apiKeyID); err != nil {
-		return balancePreauthorizationUnavailable(err)
-	}
-	g.core.service.cleanupLiveBalanceAttempt(ctx, g.core.userID, g.core.attemptID)
 	g.core.terminalState = balancePreauthorizationGuardRefunded
 	return nil
 }

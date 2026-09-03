@@ -20,11 +20,10 @@ type RedeemCode struct {
 	CreatedAt time.Time
 	ExpiresAt *time.Time
 
-	GroupID      *int64
-	ValidityDays int
+	PlanVersionID *int64
+	Plan          *SubscriptionPlan
 
-	User  *User
-	Group *Group
+	User *User
 }
 
 func (r *RedeemCode) IsUsed() bool {

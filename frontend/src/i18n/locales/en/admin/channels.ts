@@ -661,8 +661,7 @@ export default {
       revokeSubscription: 'Revoke Subscription',
       restoreSubscription: 'Restore Subscription',
       allStatus: 'All Status',
-      allGroups: 'All Groups',
-      allPlatforms: 'All Platforms',
+      allPlans: 'All Plans',
       daily: 'Daily',
       weekly: 'Weekly',
       monthly: 'Monthly',
@@ -689,7 +688,7 @@ export default {
       },
       columns: {
         user: 'User',
-        group: 'Group',
+        plan: 'Plan',
         usage: 'Usage',
         expires: 'Expires',
         status: 'Status',
@@ -697,14 +696,12 @@ export default {
       },
       form: {
         user: 'User',
-        group: 'Subscription Group',
-        validityDays: 'Validity (Days)',
+        plan: 'Plan',
         adjustDays: 'Adjust by (Days)'
       },
       selectUser: 'Select a user',
-      selectGroup: 'Select a subscription group',
-      groupHint: 'Only groups with subscription billing type are shown',
-      validityHint: 'Number of days the subscription will be valid',
+      selectPlan: 'Select a plan',
+      planHint: 'Validity and allowances are frozen from the currently published plan version',
       adjustingFor: 'Adjusting subscription for',
       currentExpiration: 'Current expiration',
       adjustDaysPlaceholder: 'Positive to extend, negative to shorten',
@@ -734,28 +731,27 @@ export default {
       adjustWouldExpire: 'Remaining days after adjustment must be greater than 0',
       adjustOutOfRange: 'Adjustment days must be between -36500 and 36500',
       pleaseSelectUser: 'Please select a user',
-      pleaseSelectGroup: 'Please select a group',
-      validityDaysRequired: 'Please enter a valid number of days (at least 1)',
+      pleaseSelectPlan: 'Please select a plan',
       revokeConfirm:
         "Are you sure you want to revoke the subscription for '{user}'? You can restore it later from the revoked list.",
       restoreConfirm:
         "Restore the subscription for '{user}'? If the original subscription has expired, it will be restored as expired.",
       guide: {
         title: 'Subscription Management Guide',
-        subtitle: 'Subscription mode lets you assign time-based usage quotas to users, with daily/weekly/monthly limits. Follow these steps to get started.',
+        subtitle: 'Plans provide time-based usage allowances with daily, weekly, and monthly limits. Follow these steps to get started.',
         showGuide: 'Usage Guide',
         step1: {
-          title: 'Create a Subscription Group',
-          line1: 'Go to "Group Management" page, click "Create Group"',
-          line2: 'Set billing type to "Subscription", configure daily/weekly/monthly quota limits',
-          line3: 'Save the group and ensure its status is "Active"',
-          link: 'Go to Group Management'
+          title: 'Create a Plan',
+          line1: 'Go to "Plan Management" and click "Add Plan"',
+          line2: 'Configure validity and daily/weekly/monthly allowance limits',
+          line3: 'Publish the plan; later allowance changes create a new version without changing existing subscriptions',
+          link: 'Go to Plan Management'
         },
         step2: {
           title: 'Assign Subscription to User',
           line1: 'Click the "Assign Subscription" button in the top right',
           line2: 'Search for a user by email and select them',
-          line3: 'Choose a subscription group, set validity days, then click "Assign"'
+          line3: 'Choose a plan, then click "Assign"'
         },
         step3: {
           title: 'Manage Existing Subscriptions'

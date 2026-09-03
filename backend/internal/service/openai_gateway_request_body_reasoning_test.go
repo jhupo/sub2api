@@ -140,6 +140,39 @@ func TestTrimOpenAIEncryptedReasoningItems_Compaction(t *testing.T) {
 	}
 }
 
+func TestTrimOpenAIEncryptedReasoningItemsRawPreservesUnrelatedJSONValues(t *testing.T) {
+	body := []byte(`{"sequence":900719925474099312345,"input":[` +
+		`{"type":"reasoning","id":"rs_1","encrypted_content":"ENC","content":null,"summary":[{"type":"summary_text","text":"keep"}]},` +
+		`{"type":"compaction","id":"cmp_1","encrypted_content":"CMP"},` +
+		`{"type":"message","role":"user","content":"continue","opaque":900719925474099312346}` +
+		`]}`)
+
+	sanitized, changed, err := trimOpenAIEncryptedReasoningItemsRaw(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "900719925474099312345", gjson.GetBytes(sanitized, "sequence").Raw)
+	require.Equal(t, int64(2), gjson.GetBytes(sanitized, "input.#").Int())
+	require.Equal(t, "reasoning", gjson.GetBytes(sanitized, "input.0.type").String())
+	require.False(t, gjson.GetBytes(sanitized, "input.0.encrypted_content").Exists())
+	require.False(t, gjson.GetBytes(sanitized, "input.0.content").Exists())
+	require.Equal(t, "keep", gjson.GetBytes(sanitized, "input.0.summary.0.text").String())
+	require.Equal(t, "900719925474099312346", gjson.GetBytes(sanitized, "input.1.opaque").Raw)
+}
+
+func TestTrimOpenAIEncryptedReasoningItemsRawHandlesSingleObjectInput(t *testing.T) {
+	body := []byte(`{"input":{"type":"reasoning","id":"rs_1","encrypted_content":"ENC"},"keep":true}`)
+
+	sanitized, changed, err := trimOpenAIEncryptedReasoningItemsRaw(body)
+
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "reasoning", gjson.GetBytes(sanitized, "input.type").String())
+	require.Equal(t, "rs_1", gjson.GetBytes(sanitized, "input.id").String())
+	require.False(t, gjson.GetBytes(sanitized, "input.encrypted_content").Exists())
+	require.True(t, gjson.GetBytes(sanitized, "keep").Bool())
+}
+
 func TestSanitizeOpenAICrossModeFailoverReasoning_DropsWholeEncryptedItem(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.1","input":[` +
 		`{"type":"message","role":"user","content":"hi"},` +

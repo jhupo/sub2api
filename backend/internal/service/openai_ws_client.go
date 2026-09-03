@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -278,6 +279,12 @@ func (c *coderOpenAIWSClientConn) WriteJSON(ctx context.Context, value any) erro
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if raw, ok := value.(json.RawMessage); ok {
+		if !json.Valid(raw) {
+			return errors.New("openai websocket payload is invalid JSON")
+		}
+		return c.conn.Write(ctx, coderws.MessageText, raw)
 	}
 	return wsjson.Write(ctx, c.conn, value)
 }

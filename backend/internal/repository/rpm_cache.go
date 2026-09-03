@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -38,6 +39,13 @@ const (
 // RPMCacheImpl RPM 计数器缓存 Redis 实现
 type RPMCacheImpl struct {
 	rdb *redis.Client
+
+	// Redis TIME is authoritative, but querying it for every RPM operation adds
+	// a network round trip to the request hot path. Cache only the minute suffix
+	// for one second so bursts share the lookup while rollover drift stays bounded.
+	timeMu             sync.Mutex
+	cachedMinuteSuffix string
+	cachedUntil        time.Time
 }
 
 // NewRPMCache 创建 RPM 计数器缓存
@@ -48,23 +56,34 @@ func NewRPMCache(rdb *redis.Client) service.RPMCache {
 // currentMinuteKey 获取当前分钟的完整 Redis key
 // 使用 rdb.Time() 获取 Redis 服务端时间，避免多实例时钟偏差
 func (c *RPMCacheImpl) currentMinuteKey(ctx context.Context, accountID int64) (string, error) {
-	serverTime, err := c.rdb.Time(ctx).Result()
+	minuteSuffix, err := c.currentMinuteSuffix(ctx)
 	if err != nil {
 		return "", fmt.Errorf("redis TIME: %w", err)
 	}
-	minuteTS := serverTime.Unix() / 60
-	return fmt.Sprintf("%s%d:%d", rpmKeyPrefix, accountID, minuteTS), nil
+	return fmt.Sprintf("%s%d:%s", rpmKeyPrefix, accountID, minuteSuffix), nil
 }
 
 // currentMinuteSuffix 获取当前分钟时间戳后缀（供批量操作使用）
 // 使用 rdb.Time() 获取 Redis 服务端时间
 func (c *RPMCacheImpl) currentMinuteSuffix(ctx context.Context) (string, error) {
+	now := time.Now()
+	c.timeMu.Lock()
+	defer c.timeMu.Unlock()
+	if c.cachedMinuteSuffix != "" && now.Before(c.cachedUntil) {
+		return c.cachedMinuteSuffix, nil
+	}
 	serverTime, err := c.rdb.Time(ctx).Result()
 	if err != nil {
 		return "", fmt.Errorf("redis TIME: %w", err)
 	}
-	minuteTS := serverTime.Unix() / 60
-	return strconv.FormatInt(minuteTS, 10), nil
+	suffix := strconv.FormatInt(serverTime.Unix()/60, 10)
+	if c.cachedMinuteSuffix == "" || suffix >= c.cachedMinuteSuffix {
+		c.cachedMinuteSuffix = suffix
+		// Start the cache window after Redis responds. A slow TIME request must
+		// not make the freshly loaded value expire immediately.
+		c.cachedUntil = time.Now().Add(time.Second)
+	}
+	return c.cachedMinuteSuffix, nil
 }
 
 // IncrementRPM 原子递增并返回当前分钟的计数

@@ -30,8 +30,8 @@ func TestUserSubscriptionGetByIDForUpdateLocksRow(t *testing.T) {
 
 	mock.ExpectQuery("locked subscription").WillReturnRows(
 		sqlmock.NewRows(usersubscription.Columns).AddRow(
-			int64(7), now, now, nil, int64(11), int64(13), now, now.AddDate(0, 0, 30), "active",
-			nil, nil, nil, 0.0, 0.0, 0.0, nil, now, "renewal",
+			int64(7), now, now, nil, int64(11), int64(13), int64(14), now, now.AddDate(0, 0, 30), "active",
+			nil, nil, nil, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, nil, now, "renewal",
 		),
 	)
 

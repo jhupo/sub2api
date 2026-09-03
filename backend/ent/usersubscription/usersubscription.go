@@ -23,8 +23,10 @@ const (
 	FieldDeletedAt = "deleted_at"
 	// FieldUserID holds the string denoting the user_id field in the database.
 	FieldUserID = "user_id"
-	// FieldGroupID holds the string denoting the group_id field in the database.
-	FieldGroupID = "group_id"
+	// FieldPlanID holds the string denoting the plan_id field in the database.
+	FieldPlanID = "plan_id"
+	// FieldPlanVersionID holds the string denoting the plan_version_id field in the database.
+	FieldPlanVersionID = "plan_version_id"
 	// FieldStartsAt holds the string denoting the starts_at field in the database.
 	FieldStartsAt = "starts_at"
 	// FieldExpiresAt holds the string denoting the expires_at field in the database.
@@ -43,6 +45,12 @@ const (
 	FieldWeeklyUsageUsd = "weekly_usage_usd"
 	// FieldMonthlyUsageUsd holds the string denoting the monthly_usage_usd field in the database.
 	FieldMonthlyUsageUsd = "monthly_usage_usd"
+	// FieldDailyReservedUsd holds the string denoting the daily_reserved_usd field in the database.
+	FieldDailyReservedUsd = "daily_reserved_usd"
+	// FieldWeeklyReservedUsd holds the string denoting the weekly_reserved_usd field in the database.
+	FieldWeeklyReservedUsd = "weekly_reserved_usd"
+	// FieldMonthlyReservedUsd holds the string denoting the monthly_reserved_usd field in the database.
+	FieldMonthlyReservedUsd = "monthly_reserved_usd"
 	// FieldAssignedBy holds the string denoting the assigned_by field in the database.
 	FieldAssignedBy = "assigned_by"
 	// FieldAssignedAt holds the string denoting the assigned_at field in the database.
@@ -51,12 +59,16 @@ const (
 	FieldNotes = "notes"
 	// EdgeUser holds the string denoting the user edge name in mutations.
 	EdgeUser = "user"
-	// EdgeGroup holds the string denoting the group edge name in mutations.
-	EdgeGroup = "group"
+	// EdgePlan holds the string denoting the plan edge name in mutations.
+	EdgePlan = "plan"
+	// EdgePlanVersion holds the string denoting the plan_version edge name in mutations.
+	EdgePlanVersion = "plan_version"
 	// EdgeAssignedByUser holds the string denoting the assigned_by_user edge name in mutations.
 	EdgeAssignedByUser = "assigned_by_user"
 	// EdgeUsageLogs holds the string denoting the usage_logs edge name in mutations.
 	EdgeUsageLogs = "usage_logs"
+	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
+	EdgeAPIKeys = "api_keys"
 	// Table holds the table name of the usersubscription in the database.
 	Table = "user_subscriptions"
 	// UserTable is the table that holds the user relation/edge.
@@ -66,13 +78,20 @@ const (
 	UserInverseTable = "users"
 	// UserColumn is the table column denoting the user relation/edge.
 	UserColumn = "user_id"
-	// GroupTable is the table that holds the group relation/edge.
-	GroupTable = "user_subscriptions"
-	// GroupInverseTable is the table name for the Group entity.
-	// It exists in this package in order to avoid circular dependency with the "group" package.
-	GroupInverseTable = "groups"
-	// GroupColumn is the table column denoting the group relation/edge.
-	GroupColumn = "group_id"
+	// PlanTable is the table that holds the plan relation/edge.
+	PlanTable = "user_subscriptions"
+	// PlanInverseTable is the table name for the SubscriptionPlan entity.
+	// It exists in this package in order to avoid circular dependency with the "subscriptionplan" package.
+	PlanInverseTable = "subscription_plans"
+	// PlanColumn is the table column denoting the plan relation/edge.
+	PlanColumn = "plan_id"
+	// PlanVersionTable is the table that holds the plan_version relation/edge.
+	PlanVersionTable = "user_subscriptions"
+	// PlanVersionInverseTable is the table name for the SubscriptionPlanVersion entity.
+	// It exists in this package in order to avoid circular dependency with the "subscriptionplanversion" package.
+	PlanVersionInverseTable = "subscription_plan_versions"
+	// PlanVersionColumn is the table column denoting the plan_version relation/edge.
+	PlanVersionColumn = "plan_version_id"
 	// AssignedByUserTable is the table that holds the assigned_by_user relation/edge.
 	AssignedByUserTable = "user_subscriptions"
 	// AssignedByUserInverseTable is the table name for the User entity.
@@ -87,6 +106,13 @@ const (
 	UsageLogsInverseTable = "usage_logs"
 	// UsageLogsColumn is the table column denoting the usage_logs relation/edge.
 	UsageLogsColumn = "subscription_id"
+	// APIKeysTable is the table that holds the api_keys relation/edge.
+	APIKeysTable = "api_keys"
+	// APIKeysInverseTable is the table name for the APIKey entity.
+	// It exists in this package in order to avoid circular dependency with the "apikey" package.
+	APIKeysInverseTable = "api_keys"
+	// APIKeysColumn is the table column denoting the api_keys relation/edge.
+	APIKeysColumn = "subscription_id"
 )
 
 // Columns holds all SQL columns for usersubscription fields.
@@ -96,7 +122,8 @@ var Columns = []string{
 	FieldUpdatedAt,
 	FieldDeletedAt,
 	FieldUserID,
-	FieldGroupID,
+	FieldPlanID,
+	FieldPlanVersionID,
 	FieldStartsAt,
 	FieldExpiresAt,
 	FieldStatus,
@@ -106,6 +133,9 @@ var Columns = []string{
 	FieldDailyUsageUsd,
 	FieldWeeklyUsageUsd,
 	FieldMonthlyUsageUsd,
+	FieldDailyReservedUsd,
+	FieldWeeklyReservedUsd,
+	FieldMonthlyReservedUsd,
 	FieldAssignedBy,
 	FieldAssignedAt,
 	FieldNotes,
@@ -145,6 +175,12 @@ var (
 	DefaultWeeklyUsageUsd float64
 	// DefaultMonthlyUsageUsd holds the default value on creation for the "monthly_usage_usd" field.
 	DefaultMonthlyUsageUsd float64
+	// DefaultDailyReservedUsd holds the default value on creation for the "daily_reserved_usd" field.
+	DefaultDailyReservedUsd float64
+	// DefaultWeeklyReservedUsd holds the default value on creation for the "weekly_reserved_usd" field.
+	DefaultWeeklyReservedUsd float64
+	// DefaultMonthlyReservedUsd holds the default value on creation for the "monthly_reserved_usd" field.
+	DefaultMonthlyReservedUsd float64
 	// DefaultAssignedAt holds the default value on creation for the "assigned_at" field.
 	DefaultAssignedAt func() time.Time
 )
@@ -177,9 +213,14 @@ func ByUserID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUserID, opts...).ToFunc()
 }
 
-// ByGroupID orders the results by the group_id field.
-func ByGroupID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldGroupID, opts...).ToFunc()
+// ByPlanID orders the results by the plan_id field.
+func ByPlanID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPlanID, opts...).ToFunc()
+}
+
+// ByPlanVersionID orders the results by the plan_version_id field.
+func ByPlanVersionID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPlanVersionID, opts...).ToFunc()
 }
 
 // ByStartsAt orders the results by the starts_at field.
@@ -227,6 +268,21 @@ func ByMonthlyUsageUsd(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldMonthlyUsageUsd, opts...).ToFunc()
 }
 
+// ByDailyReservedUsd orders the results by the daily_reserved_usd field.
+func ByDailyReservedUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDailyReservedUsd, opts...).ToFunc()
+}
+
+// ByWeeklyReservedUsd orders the results by the weekly_reserved_usd field.
+func ByWeeklyReservedUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldWeeklyReservedUsd, opts...).ToFunc()
+}
+
+// ByMonthlyReservedUsd orders the results by the monthly_reserved_usd field.
+func ByMonthlyReservedUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldMonthlyReservedUsd, opts...).ToFunc()
+}
+
 // ByAssignedBy orders the results by the assigned_by field.
 func ByAssignedBy(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAssignedBy, opts...).ToFunc()
@@ -249,10 +305,17 @@ func ByUserField(field string, opts ...sql.OrderTermOption) OrderOption {
 	}
 }
 
-// ByGroupField orders the results by group field.
-func ByGroupField(field string, opts ...sql.OrderTermOption) OrderOption {
+// ByPlanField orders the results by plan field.
+func ByPlanField(field string, opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
-		sqlgraph.OrderByNeighborTerms(s, newGroupStep(), sql.OrderByField(field, opts...))
+		sqlgraph.OrderByNeighborTerms(s, newPlanStep(), sql.OrderByField(field, opts...))
+	}
+}
+
+// ByPlanVersionField orders the results by plan_version field.
+func ByPlanVersionField(field string, opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newPlanVersionStep(), sql.OrderByField(field, opts...))
 	}
 }
 
@@ -276,6 +339,20 @@ func ByUsageLogs(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 		sqlgraph.OrderByNeighborTerms(s, newUsageLogsStep(), append([]sql.OrderTerm{term}, terms...)...)
 	}
 }
+
+// ByAPIKeysCount orders the results by api_keys count.
+func ByAPIKeysCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newAPIKeysStep(), opts...)
+	}
+}
+
+// ByAPIKeys orders the results by api_keys terms.
+func ByAPIKeys(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newAPIKeysStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
 func newUserStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
@@ -283,11 +360,18 @@ func newUserStep() *sqlgraph.Step {
 		sqlgraph.Edge(sqlgraph.M2O, true, UserTable, UserColumn),
 	)
 }
-func newGroupStep() *sqlgraph.Step {
+func newPlanStep() *sqlgraph.Step {
 	return sqlgraph.NewStep(
 		sqlgraph.From(Table, FieldID),
-		sqlgraph.To(GroupInverseTable, FieldID),
-		sqlgraph.Edge(sqlgraph.M2O, true, GroupTable, GroupColumn),
+		sqlgraph.To(PlanInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2O, true, PlanTable, PlanColumn),
+	)
+}
+func newPlanVersionStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(PlanVersionInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2O, true, PlanVersionTable, PlanVersionColumn),
 	)
 }
 func newAssignedByUserStep() *sqlgraph.Step {
@@ -302,5 +386,12 @@ func newUsageLogsStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(UsageLogsInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.O2M, false, UsageLogsTable, UsageLogsColumn),
+	)
+}
+func newAPIKeysStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(APIKeysInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, APIKeysTable, APIKeysColumn),
 	)
 }

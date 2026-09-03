@@ -1,11 +1,16 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 )
 
@@ -113,4 +118,41 @@ func TestCoderOpenAIWSClientDialer_ProxyTransportTLSHandshakeTimeout(t *testing.
 
 func TestCoderOpenAIWSClientConn_DoesNotSupportIdlePingWithoutReader(t *testing.T) {
 	require.False(t, (&coderOpenAIWSClientConn{}).SupportsIdlePingWithoutReader())
+}
+
+func TestCoderOpenAIWSClientConn_WriteJSONRawMessageIsStrict(t *testing.T) {
+	received := make(chan []byte, 1)
+	serverErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, nil)
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		_, payload, err := conn.Read(r.Context())
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		received <- payload
+	}))
+	defer server.Close()
+
+	conn, _, err := coderws.Dial(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+	client := &coderOpenAIWSClientConn{conn: conn}
+
+	require.Error(t, client.WriteJSON(context.Background(), json.RawMessage(`{"model":`)))
+	require.NoError(t, client.WriteJSON(context.Background(), json.RawMessage(`{"opaque":9007199254740993}`)))
+
+	select {
+	case payload := <-received:
+		require.JSONEq(t, `{"opaque":9007199254740993}`, string(payload))
+	case err := <-serverErr:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for raw websocket payload")
+	}
 }

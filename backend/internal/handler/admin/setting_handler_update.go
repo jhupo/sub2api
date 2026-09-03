@@ -1408,8 +1408,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	defaultSubscriptions := make([]service.DefaultSubscriptionSetting, 0, len(req.DefaultSubscriptions))
 	for _, sub := range req.DefaultSubscriptions {
 		defaultSubscriptions = append(defaultSubscriptions, service.DefaultSubscriptionSetting{
-			GroupID:      sub.GroupID,
-			ValidityDays: sub.ValidityDays,
+			PlanID: sub.PlanID,
 		})
 	}
 
@@ -2127,8 +2126,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	updatedDefaultSubscriptions := make([]dto.DefaultSubscriptionSetting, 0, len(updatedSettings.DefaultSubscriptions))
 	for _, sub := range updatedSettings.DefaultSubscriptions {
 		updatedDefaultSubscriptions = append(updatedDefaultSubscriptions, dto.DefaultSubscriptionSetting{
-			GroupID:      sub.GroupID,
-			ValidityDays: sub.ValidityDays,
+			PlanID: sub.PlanID,
 		})
 	}
 

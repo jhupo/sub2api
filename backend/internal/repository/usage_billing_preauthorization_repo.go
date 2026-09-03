@@ -127,23 +127,46 @@ func (r *usageBillingRepository) BindGrokVideoPendingBilling(
 	if err != nil {
 		return err
 	}
-	var boundRequestID string
-	err = r.db.QueryRowContext(ctx, `
-		UPDATE billing_balance_settlements
-		SET async_task_id = $1,
-			async_metadata = $5::jsonb,
-			updated_at = NOW()
-		WHERE request_id = $2
-			AND api_key_id = $3
-			AND user_id = $4
-			AND status = $6
-			AND expires_at > NOW()
-			AND (
-				async_task_id IS NULL
-				OR (async_task_id = $1 AND async_metadata = $5::jsonb)
-			)
-		RETURNING request_id
-	`, taskID, pending.PreauthorizationRequestID, binding.APIKeyID, binding.UserID, string(metadata), service.BalanceSettlementAuthorized).Scan(&boundRequestID)
+	var (
+		boundRequestID string
+		query          string
+		status         any
+	)
+	switch pending.FundingSource {
+	case service.FundingSourceWallet:
+		query = `
+			UPDATE billing_balance_settlements
+			SET async_task_id = $1, async_metadata = $5::jsonb, updated_at = NOW()
+			WHERE request_id = $2 AND api_key_id = $3 AND user_id = $4
+				AND status = $6 AND expires_at > NOW() AND $7::bigint IS NULL
+				AND (async_task_id IS NULL OR (async_task_id = $1 AND async_metadata = $5::jsonb))
+			RETURNING request_id`
+		status = service.BalanceSettlementAuthorized
+	case service.FundingSourceSubscription:
+		if pending.SubscriptionID == nil || *pending.SubscriptionID <= 0 {
+			return service.ErrInvalidBillingPreauthorizationEstimate
+		}
+		query = `
+			UPDATE billing_reservations
+			SET async_task_id = $1, async_metadata = $5::jsonb, updated_at = NOW()
+			WHERE request_id = $2 AND api_key_id = $3 AND user_id = $4
+				AND funding_source = $8 AND subscription_id = $7 AND status = $6 AND expires_at > NOW()
+				AND (async_task_id IS NULL OR (async_task_id = $1 AND async_metadata = $5::jsonb))
+			RETURNING request_id`
+		status = service.BillingReservationAuthorized
+	default:
+		return service.ErrInvalidBillingPreauthorizationEstimate
+	}
+	var subscriptionID any
+	if pending.SubscriptionID != nil {
+		subscriptionID = *pending.SubscriptionID
+	}
+	args := []any{taskID, pending.PreauthorizationRequestID, binding.APIKeyID, binding.UserID,
+		string(metadata), status, subscriptionID}
+	if pending.FundingSource == service.FundingSourceSubscription {
+		args = append(args, service.FundingSourceSubscription)
+	}
+	err = r.db.QueryRowContext(ctx, query, args...).Scan(&boundRequestID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return service.ErrUsageBillingRequestConflict
 	}
@@ -162,32 +185,72 @@ func (r *usageBillingRepository) LoadGrokVideoPendingBilling(
 	if taskID == "" || userID <= 0 || apiKeyID <= 0 {
 		return nil, service.ErrInvalidBillingPreauthorizationEstimate
 	}
-	var (
-		metadata                 []byte
-		requestID, authorization string
-		holdAmount               float64
-	)
-	err := r.db.QueryRowContext(ctx, `
-		SELECT async_metadata, request_id, authorization_fingerprint, hold_usd
-		FROM billing_balance_settlements
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT async_metadata, request_id, authorization_fingerprint, hold_amount,
+			funding_source, subscription_id
+		FROM (
+			SELECT async_metadata, request_id, authorization_fingerprint,
+				hold_usd AS hold_amount, $4::varchar AS funding_source,
+				NULL::bigint AS subscription_id, async_task_id, api_key_id, user_id
+			FROM billing_balance_settlements
+			UNION ALL
+			SELECT async_metadata, request_id, authorization_fingerprint,
+				authorized_amount AS hold_amount, funding_source,
+				subscription_id, async_task_id, api_key_id, user_id
+			FROM billing_reservations
+		) reservations
 		WHERE async_task_id = $1 AND api_key_id = $2 AND user_id = $3
-	`, taskID, apiKeyID, userID).Scan(&metadata, &requestID, &authorization, &holdAmount)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
+	`, taskID, apiKeyID, userID, service.FundingSourceWallet)
 	if err != nil {
 		return nil, err
 	}
-	var pending service.GrokVideoPendingBilling
-	if err := json.Unmarshal(metadata, &pending); err != nil {
+	defer rows.Close()
+	var (
+		metadata, foundMetadata             []byte
+		requestID, authorization, source    string
+		foundRequestID, foundAuthorization  string
+		foundSource                         string
+		holdAmount, foundHoldAmount         float64
+		subscriptionID, foundSubscriptionID sql.NullInt64
+		matches                             int
+	)
+	for rows.Next() {
+		if err := rows.Scan(&metadata, &requestID, &authorization, &holdAmount, &source, &subscriptionID); err != nil {
+			return nil, err
+		}
+		matches++
+		foundMetadata = append(foundMetadata[:0], metadata...)
+		foundRequestID, foundAuthorization, foundHoldAmount = requestID, authorization, holdAmount
+		foundSource, foundSubscriptionID = source, subscriptionID
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	holdAmount = service.QuantizeUsageBillingAmount(holdAmount)
-	if pending.PreauthorizationRequestID != requestID ||
-		pending.AuthorizationFingerprint != authorization ||
-		service.QuantizeUsageBillingAmount(pending.PreauthorizationHoldAmount) != holdAmount ||
-		!service.IsGrokVideoHoldRequestID(requestID) {
+	if matches == 0 {
+		return nil, nil
+	}
+	if matches != 1 {
+		return nil, service.ErrUsageBillingRequestConflict
+	}
+	var pending service.GrokVideoPendingBilling
+	if err := json.Unmarshal(foundMetadata, &pending); err != nil {
+		return nil, err
+	}
+	foundHoldAmount = service.QuantizeUsageBillingAmount(foundHoldAmount)
+	if pending.PreauthorizationRequestID != foundRequestID ||
+		pending.AuthorizationFingerprint != foundAuthorization ||
+		service.QuantizeUsageBillingAmount(pending.PreauthorizationHoldAmount) != foundHoldAmount ||
+		pending.FundingSource != foundSource ||
+		valueOrZeroInt64(pending.SubscriptionID) != foundSubscriptionID.Int64 ||
+		!service.IsGrokVideoHoldRequestID(foundRequestID) {
 		return nil, service.ErrUsageBillingRequestConflict
 	}
 	return &pending, nil
+}
+
+func valueOrZeroInt64(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }

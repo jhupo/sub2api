@@ -35,6 +35,10 @@ func (s *schedulerCacheRecorder) GetSnapshot(ctx context.Context, bucket service
 	return nil, false, nil
 }
 
+func (s *schedulerCacheRecorder) GetSnapshotVersion(context.Context, service.SchedulerBucket) (string, error) {
+	return "", nil
+}
+
 func (s *schedulerCacheRecorder) CaptureBucketWriteToken(ctx context.Context, bucket service.SchedulerBucket) (service.SchedulerBucketWriteToken, error) {
 	return service.SchedulerBucketWriteToken{Bucket: bucket, Epoch: 1}, nil
 }

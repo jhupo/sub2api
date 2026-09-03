@@ -215,7 +215,7 @@ func TestGrokSTTTopUpFailureDoesNotCommitBufferedSuccess(t *testing.T) {
 		Billing: config.BillingConfig{BalancePreauthorizationEnabled: true},
 	}
 	cache := &grokVoicePreauthorizationCacheStub{}
-	billingCache := service.NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	billingCache := service.NewBillingCacheService(cache, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(billingCache.Stop)
 	repo := &grokVoicePreauthorizationRepoStub{}
 	billing := service.NewBillingService(cfg, nil)

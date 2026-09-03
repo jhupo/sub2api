@@ -11,6 +11,8 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const liveBalanceOutboxClaimLockKey int64 = 0x535542324f555442
+
 type liveBalanceAdjustmentOutboxRepository struct {
 	db *sql.DB
 }
@@ -36,19 +38,36 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 		leaseSeconds = 30
 	}
 
-	rows, err := r.db.QueryContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	rollback := func() { _ = tx.Rollback() }
+	var acquired bool
+	if err := tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock($1::bigint)`, liveBalanceOutboxClaimLockKey).Scan(&acquired); err != nil {
+		rollback()
+		return nil, err
+	}
+	if !acquired {
+		rollback()
+		return []service.LiveBalanceAdjustmentEvent{}, nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `
 		WITH candidates AS (
 			SELECT candidate.id
 			FROM live_balance_adjustment_outbox AS candidate
 			WHERE candidate.delivered_at IS NULL
 				AND candidate.available_at <= NOW()
 				AND (candidate.claimed_at IS NULL OR candidate.claimed_at < NOW() - ($3 * INTERVAL '1 second'))
-				AND NOT EXISTS (
-					SELECT 1
-					FROM live_balance_adjustment_outbox AS predecessor
-					WHERE predecessor.user_id = candidate.user_id
-						AND predecessor.delivered_at IS NULL
-						AND predecessor.id < candidate.id
+				AND (
+					candidate.predecessor_id = 0
+					OR NOT EXISTS (
+						SELECT 1
+						FROM live_balance_adjustment_outbox AS predecessor
+						WHERE predecessor.id = candidate.predecessor_id
+							AND predecessor.delivered_at IS NULL
+					)
 				)
 			ORDER BY candidate.available_at, candidate.id
 			LIMIT $2
@@ -63,9 +82,9 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 		RETURNING o.id, o.user_id, o.predecessor_id, o.delta::text, o.attempts, o.created_at
 	`, workerID, limit, leaseSeconds)
 	if err != nil {
+		rollback()
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
 
 	events := make([]service.LiveBalanceAdjustmentEvent, 0, limit)
 	for rows.Next() {
@@ -79,22 +98,36 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 			&event.Attempts,
 			&event.CreatedAt,
 		); err != nil {
+			_ = rows.Close()
+			rollback()
 			return nil, err
 		}
 		delta, err := decimal.NewFromString(deltaText)
 		if err != nil {
+			_ = rows.Close()
+			rollback()
 			return nil, fmt.Errorf("parse live balance adjustment %d: %w", event.ID, err)
 		}
 		deltaUnits := delta.Shift(liveBalanceMoneyScale)
 		if !deltaUnits.Equal(deltaUnits.Truncate(0)) || deltaUnits.IsZero() ||
 			deltaUnits.GreaterThan(decimal.NewFromInt(maxExactLuaInteger)) ||
 			deltaUnits.LessThan(decimal.NewFromInt(-maxExactLuaInteger)) {
+			_ = rows.Close()
+			rollback()
 			return nil, fmt.Errorf("live balance adjustment %d exceeds exact Redis money range", event.ID)
 		}
 		event.DeltaUnits = deltaUnits.IntPart()
 		events = append(events, event)
 	}
+	if err := rows.Close(); err != nil {
+		rollback()
+		return nil, err
+	}
 	if err := rows.Err(); err != nil {
+		rollback()
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return events, nil

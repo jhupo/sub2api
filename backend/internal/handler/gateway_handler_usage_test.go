@@ -30,8 +30,7 @@ func TestUsageUnrestrictedIncludesWeeklyWindowStart(t *testing.T) {
 		c,
 		context.Background(),
 		&service.APIKey{Group: &service.Group{
-			Name:             "Weekly plan",
-			SubscriptionType: service.SubscriptionTypeSubscription,
+			Name: "Weekly plan",
 		}},
 		middleware.AuthSubject{},
 		nil,

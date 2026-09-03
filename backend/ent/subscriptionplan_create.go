@@ -12,6 +12,8 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
+	"github.com/Wei-Shaw/sub2api/ent/subscriptionplanversion"
+	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 )
 
 // SubscriptionPlanCreate is the builder for creating a SubscriptionPlan entity.
@@ -20,12 +22,6 @@ type SubscriptionPlanCreate struct {
 	mutation *SubscriptionPlanMutation
 	hooks    []Hook
 	conflict []sql.ConflictOption
-}
-
-// SetGroupID sets the "group_id" field.
-func (_c *SubscriptionPlanCreate) SetGroupID(v int64) *SubscriptionPlanCreate {
-	_c.mutation.SetGroupID(v)
-	return _c
 }
 
 // SetName sets the "name" field.
@@ -48,64 +44,16 @@ func (_c *SubscriptionPlanCreate) SetNillableDescription(v *string) *Subscriptio
 	return _c
 }
 
-// SetPrice sets the "price" field.
-func (_c *SubscriptionPlanCreate) SetPrice(v float64) *SubscriptionPlanCreate {
-	_c.mutation.SetPrice(v)
+// SetPublishedVersionID sets the "published_version_id" field.
+func (_c *SubscriptionPlanCreate) SetPublishedVersionID(v int64) *SubscriptionPlanCreate {
+	_c.mutation.SetPublishedVersionID(v)
 	return _c
 }
 
-// SetOriginalPrice sets the "original_price" field.
-func (_c *SubscriptionPlanCreate) SetOriginalPrice(v float64) *SubscriptionPlanCreate {
-	_c.mutation.SetOriginalPrice(v)
-	return _c
-}
-
-// SetNillableOriginalPrice sets the "original_price" field if the given value is not nil.
-func (_c *SubscriptionPlanCreate) SetNillableOriginalPrice(v *float64) *SubscriptionPlanCreate {
+// SetNillablePublishedVersionID sets the "published_version_id" field if the given value is not nil.
+func (_c *SubscriptionPlanCreate) SetNillablePublishedVersionID(v *int64) *SubscriptionPlanCreate {
 	if v != nil {
-		_c.SetOriginalPrice(*v)
-	}
-	return _c
-}
-
-// SetCurrency sets the "currency" field.
-func (_c *SubscriptionPlanCreate) SetCurrency(v string) *SubscriptionPlanCreate {
-	_c.mutation.SetCurrency(v)
-	return _c
-}
-
-// SetNillableCurrency sets the "currency" field if the given value is not nil.
-func (_c *SubscriptionPlanCreate) SetNillableCurrency(v *string) *SubscriptionPlanCreate {
-	if v != nil {
-		_c.SetCurrency(*v)
-	}
-	return _c
-}
-
-// SetValidityDays sets the "validity_days" field.
-func (_c *SubscriptionPlanCreate) SetValidityDays(v int) *SubscriptionPlanCreate {
-	_c.mutation.SetValidityDays(v)
-	return _c
-}
-
-// SetNillableValidityDays sets the "validity_days" field if the given value is not nil.
-func (_c *SubscriptionPlanCreate) SetNillableValidityDays(v *int) *SubscriptionPlanCreate {
-	if v != nil {
-		_c.SetValidityDays(*v)
-	}
-	return _c
-}
-
-// SetValidityUnit sets the "validity_unit" field.
-func (_c *SubscriptionPlanCreate) SetValidityUnit(v string) *SubscriptionPlanCreate {
-	_c.mutation.SetValidityUnit(v)
-	return _c
-}
-
-// SetNillableValidityUnit sets the "validity_unit" field if the given value is not nil.
-func (_c *SubscriptionPlanCreate) SetNillableValidityUnit(v *string) *SubscriptionPlanCreate {
-	if v != nil {
-		_c.SetValidityUnit(*v)
+		_c.SetPublishedVersionID(*v)
 	}
 	return _c
 }
@@ -194,6 +142,36 @@ func (_c *SubscriptionPlanCreate) SetNillableUpdatedAt(v *time.Time) *Subscripti
 	return _c
 }
 
+// AddVersionIDs adds the "versions" edge to the SubscriptionPlanVersion entity by IDs.
+func (_c *SubscriptionPlanCreate) AddVersionIDs(ids ...int64) *SubscriptionPlanCreate {
+	_c.mutation.AddVersionIDs(ids...)
+	return _c
+}
+
+// AddVersions adds the "versions" edges to the SubscriptionPlanVersion entity.
+func (_c *SubscriptionPlanCreate) AddVersions(v ...*SubscriptionPlanVersion) *SubscriptionPlanCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddVersionIDs(ids...)
+}
+
+// AddSubscriptionIDs adds the "subscriptions" edge to the UserSubscription entity by IDs.
+func (_c *SubscriptionPlanCreate) AddSubscriptionIDs(ids ...int64) *SubscriptionPlanCreate {
+	_c.mutation.AddSubscriptionIDs(ids...)
+	return _c
+}
+
+// AddSubscriptions adds the "subscriptions" edges to the UserSubscription entity.
+func (_c *SubscriptionPlanCreate) AddSubscriptions(v ...*UserSubscription) *SubscriptionPlanCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddSubscriptionIDs(ids...)
+}
+
 // Mutation returns the SubscriptionPlanMutation object of the builder.
 func (_c *SubscriptionPlanCreate) Mutation() *SubscriptionPlanMutation {
 	return _c.mutation
@@ -233,18 +211,6 @@ func (_c *SubscriptionPlanCreate) defaults() {
 		v := subscriptionplan.DefaultDescription
 		_c.mutation.SetDescription(v)
 	}
-	if _, ok := _c.mutation.Currency(); !ok {
-		v := subscriptionplan.DefaultCurrency
-		_c.mutation.SetCurrency(v)
-	}
-	if _, ok := _c.mutation.ValidityDays(); !ok {
-		v := subscriptionplan.DefaultValidityDays
-		_c.mutation.SetValidityDays(v)
-	}
-	if _, ok := _c.mutation.ValidityUnit(); !ok {
-		v := subscriptionplan.DefaultValidityUnit
-		_c.mutation.SetValidityUnit(v)
-	}
 	if _, ok := _c.mutation.Features(); !ok {
 		v := subscriptionplan.DefaultFeatures
 		_c.mutation.SetFeatures(v)
@@ -273,9 +239,6 @@ func (_c *SubscriptionPlanCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *SubscriptionPlanCreate) check() error {
-	if _, ok := _c.mutation.GroupID(); !ok {
-		return &ValidationError{Name: "group_id", err: errors.New(`ent: missing required field "SubscriptionPlan.group_id"`)}
-	}
 	if _, ok := _c.mutation.Name(); !ok {
 		return &ValidationError{Name: "name", err: errors.New(`ent: missing required field "SubscriptionPlan.name"`)}
 	}
@@ -286,28 +249,6 @@ func (_c *SubscriptionPlanCreate) check() error {
 	}
 	if _, ok := _c.mutation.Description(); !ok {
 		return &ValidationError{Name: "description", err: errors.New(`ent: missing required field "SubscriptionPlan.description"`)}
-	}
-	if _, ok := _c.mutation.Price(); !ok {
-		return &ValidationError{Name: "price", err: errors.New(`ent: missing required field "SubscriptionPlan.price"`)}
-	}
-	if _, ok := _c.mutation.Currency(); !ok {
-		return &ValidationError{Name: "currency", err: errors.New(`ent: missing required field "SubscriptionPlan.currency"`)}
-	}
-	if v, ok := _c.mutation.Currency(); ok {
-		if err := subscriptionplan.CurrencyValidator(v); err != nil {
-			return &ValidationError{Name: "currency", err: fmt.Errorf(`ent: validator failed for field "SubscriptionPlan.currency": %w`, err)}
-		}
-	}
-	if _, ok := _c.mutation.ValidityDays(); !ok {
-		return &ValidationError{Name: "validity_days", err: errors.New(`ent: missing required field "SubscriptionPlan.validity_days"`)}
-	}
-	if _, ok := _c.mutation.ValidityUnit(); !ok {
-		return &ValidationError{Name: "validity_unit", err: errors.New(`ent: missing required field "SubscriptionPlan.validity_unit"`)}
-	}
-	if v, ok := _c.mutation.ValidityUnit(); ok {
-		if err := subscriptionplan.ValidityUnitValidator(v); err != nil {
-			return &ValidationError{Name: "validity_unit", err: fmt.Errorf(`ent: validator failed for field "SubscriptionPlan.validity_unit": %w`, err)}
-		}
 	}
 	if _, ok := _c.mutation.Features(); !ok {
 		return &ValidationError{Name: "features", err: errors.New(`ent: missing required field "SubscriptionPlan.features"`)}
@@ -359,10 +300,6 @@ func (_c *SubscriptionPlanCreate) createSpec() (*SubscriptionPlan, *sqlgraph.Cre
 		_spec = sqlgraph.NewCreateSpec(subscriptionplan.Table, sqlgraph.NewFieldSpec(subscriptionplan.FieldID, field.TypeInt64))
 	)
 	_spec.OnConflict = _c.conflict
-	if value, ok := _c.mutation.GroupID(); ok {
-		_spec.SetField(subscriptionplan.FieldGroupID, field.TypeInt64, value)
-		_node.GroupID = value
-	}
 	if value, ok := _c.mutation.Name(); ok {
 		_spec.SetField(subscriptionplan.FieldName, field.TypeString, value)
 		_node.Name = value
@@ -371,25 +308,9 @@ func (_c *SubscriptionPlanCreate) createSpec() (*SubscriptionPlan, *sqlgraph.Cre
 		_spec.SetField(subscriptionplan.FieldDescription, field.TypeString, value)
 		_node.Description = value
 	}
-	if value, ok := _c.mutation.Price(); ok {
-		_spec.SetField(subscriptionplan.FieldPrice, field.TypeFloat64, value)
-		_node.Price = value
-	}
-	if value, ok := _c.mutation.OriginalPrice(); ok {
-		_spec.SetField(subscriptionplan.FieldOriginalPrice, field.TypeFloat64, value)
-		_node.OriginalPrice = &value
-	}
-	if value, ok := _c.mutation.Currency(); ok {
-		_spec.SetField(subscriptionplan.FieldCurrency, field.TypeString, value)
-		_node.Currency = value
-	}
-	if value, ok := _c.mutation.ValidityDays(); ok {
-		_spec.SetField(subscriptionplan.FieldValidityDays, field.TypeInt, value)
-		_node.ValidityDays = value
-	}
-	if value, ok := _c.mutation.ValidityUnit(); ok {
-		_spec.SetField(subscriptionplan.FieldValidityUnit, field.TypeString, value)
-		_node.ValidityUnit = value
+	if value, ok := _c.mutation.PublishedVersionID(); ok {
+		_spec.SetField(subscriptionplan.FieldPublishedVersionID, field.TypeInt64, value)
+		_node.PublishedVersionID = &value
 	}
 	if value, ok := _c.mutation.Features(); ok {
 		_spec.SetField(subscriptionplan.FieldFeatures, field.TypeString, value)
@@ -415,6 +336,38 @@ func (_c *SubscriptionPlanCreate) createSpec() (*SubscriptionPlan, *sqlgraph.Cre
 		_spec.SetField(subscriptionplan.FieldUpdatedAt, field.TypeTime, value)
 		_node.UpdatedAt = value
 	}
+	if nodes := _c.mutation.VersionsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   subscriptionplan.VersionsTable,
+			Columns: []string{subscriptionplan.VersionsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionplanversion.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.SubscriptionsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   subscriptionplan.SubscriptionsTable,
+			Columns: []string{subscriptionplan.SubscriptionsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(usersubscription.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
 	return _node, _spec
 }
 
@@ -422,7 +375,7 @@ func (_c *SubscriptionPlanCreate) createSpec() (*SubscriptionPlan, *sqlgraph.Cre
 // of the `INSERT` statement. For example:
 //
 //	client.SubscriptionPlan.Create().
-//		SetGroupID(v).
+//		SetName(v).
 //		OnConflict(
 //			// Update the row with the new values
 //			// the was proposed for insertion.
@@ -431,7 +384,7 @@ func (_c *SubscriptionPlanCreate) createSpec() (*SubscriptionPlan, *sqlgraph.Cre
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.SubscriptionPlanUpsert) {
-//			SetGroupID(v+v).
+//			SetName(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *SubscriptionPlanCreate) OnConflict(opts ...sql.ConflictOption) *SubscriptionPlanUpsertOne {
@@ -467,24 +420,6 @@ type (
 	}
 )
 
-// SetGroupID sets the "group_id" field.
-func (u *SubscriptionPlanUpsert) SetGroupID(v int64) *SubscriptionPlanUpsert {
-	u.Set(subscriptionplan.FieldGroupID, v)
-	return u
-}
-
-// UpdateGroupID sets the "group_id" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsert) UpdateGroupID() *SubscriptionPlanUpsert {
-	u.SetExcluded(subscriptionplan.FieldGroupID)
-	return u
-}
-
-// AddGroupID adds v to the "group_id" field.
-func (u *SubscriptionPlanUpsert) AddGroupID(v int64) *SubscriptionPlanUpsert {
-	u.Add(subscriptionplan.FieldGroupID, v)
-	return u
-}
-
 // SetName sets the "name" field.
 func (u *SubscriptionPlanUpsert) SetName(v string) *SubscriptionPlanUpsert {
 	u.Set(subscriptionplan.FieldName, v)
@@ -509,87 +444,27 @@ func (u *SubscriptionPlanUpsert) UpdateDescription() *SubscriptionPlanUpsert {
 	return u
 }
 
-// SetPrice sets the "price" field.
-func (u *SubscriptionPlanUpsert) SetPrice(v float64) *SubscriptionPlanUpsert {
-	u.Set(subscriptionplan.FieldPrice, v)
+// SetPublishedVersionID sets the "published_version_id" field.
+func (u *SubscriptionPlanUpsert) SetPublishedVersionID(v int64) *SubscriptionPlanUpsert {
+	u.Set(subscriptionplan.FieldPublishedVersionID, v)
 	return u
 }
 
-// UpdatePrice sets the "price" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsert) UpdatePrice() *SubscriptionPlanUpsert {
-	u.SetExcluded(subscriptionplan.FieldPrice)
+// UpdatePublishedVersionID sets the "published_version_id" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsert) UpdatePublishedVersionID() *SubscriptionPlanUpsert {
+	u.SetExcluded(subscriptionplan.FieldPublishedVersionID)
 	return u
 }
 
-// AddPrice adds v to the "price" field.
-func (u *SubscriptionPlanUpsert) AddPrice(v float64) *SubscriptionPlanUpsert {
-	u.Add(subscriptionplan.FieldPrice, v)
+// AddPublishedVersionID adds v to the "published_version_id" field.
+func (u *SubscriptionPlanUpsert) AddPublishedVersionID(v int64) *SubscriptionPlanUpsert {
+	u.Add(subscriptionplan.FieldPublishedVersionID, v)
 	return u
 }
 
-// SetOriginalPrice sets the "original_price" field.
-func (u *SubscriptionPlanUpsert) SetOriginalPrice(v float64) *SubscriptionPlanUpsert {
-	u.Set(subscriptionplan.FieldOriginalPrice, v)
-	return u
-}
-
-// UpdateOriginalPrice sets the "original_price" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsert) UpdateOriginalPrice() *SubscriptionPlanUpsert {
-	u.SetExcluded(subscriptionplan.FieldOriginalPrice)
-	return u
-}
-
-// AddOriginalPrice adds v to the "original_price" field.
-func (u *SubscriptionPlanUpsert) AddOriginalPrice(v float64) *SubscriptionPlanUpsert {
-	u.Add(subscriptionplan.FieldOriginalPrice, v)
-	return u
-}
-
-// ClearOriginalPrice clears the value of the "original_price" field.
-func (u *SubscriptionPlanUpsert) ClearOriginalPrice() *SubscriptionPlanUpsert {
-	u.SetNull(subscriptionplan.FieldOriginalPrice)
-	return u
-}
-
-// SetCurrency sets the "currency" field.
-func (u *SubscriptionPlanUpsert) SetCurrency(v string) *SubscriptionPlanUpsert {
-	u.Set(subscriptionplan.FieldCurrency, v)
-	return u
-}
-
-// UpdateCurrency sets the "currency" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsert) UpdateCurrency() *SubscriptionPlanUpsert {
-	u.SetExcluded(subscriptionplan.FieldCurrency)
-	return u
-}
-
-// SetValidityDays sets the "validity_days" field.
-func (u *SubscriptionPlanUpsert) SetValidityDays(v int) *SubscriptionPlanUpsert {
-	u.Set(subscriptionplan.FieldValidityDays, v)
-	return u
-}
-
-// UpdateValidityDays sets the "validity_days" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsert) UpdateValidityDays() *SubscriptionPlanUpsert {
-	u.SetExcluded(subscriptionplan.FieldValidityDays)
-	return u
-}
-
-// AddValidityDays adds v to the "validity_days" field.
-func (u *SubscriptionPlanUpsert) AddValidityDays(v int) *SubscriptionPlanUpsert {
-	u.Add(subscriptionplan.FieldValidityDays, v)
-	return u
-}
-
-// SetValidityUnit sets the "validity_unit" field.
-func (u *SubscriptionPlanUpsert) SetValidityUnit(v string) *SubscriptionPlanUpsert {
-	u.Set(subscriptionplan.FieldValidityUnit, v)
-	return u
-}
-
-// UpdateValidityUnit sets the "validity_unit" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsert) UpdateValidityUnit() *SubscriptionPlanUpsert {
-	u.SetExcluded(subscriptionplan.FieldValidityUnit)
+// ClearPublishedVersionID clears the value of the "published_version_id" field.
+func (u *SubscriptionPlanUpsert) ClearPublishedVersionID() *SubscriptionPlanUpsert {
+	u.SetNull(subscriptionplan.FieldPublishedVersionID)
 	return u
 }
 
@@ -704,27 +579,6 @@ func (u *SubscriptionPlanUpsertOne) Update(set func(*SubscriptionPlanUpsert)) *S
 	return u
 }
 
-// SetGroupID sets the "group_id" field.
-func (u *SubscriptionPlanUpsertOne) SetGroupID(v int64) *SubscriptionPlanUpsertOne {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.SetGroupID(v)
-	})
-}
-
-// AddGroupID adds v to the "group_id" field.
-func (u *SubscriptionPlanUpsertOne) AddGroupID(v int64) *SubscriptionPlanUpsertOne {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.AddGroupID(v)
-	})
-}
-
-// UpdateGroupID sets the "group_id" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsertOne) UpdateGroupID() *SubscriptionPlanUpsertOne {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.UpdateGroupID()
-	})
-}
-
 // SetName sets the "name" field.
 func (u *SubscriptionPlanUpsertOne) SetName(v string) *SubscriptionPlanUpsertOne {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
@@ -753,101 +607,31 @@ func (u *SubscriptionPlanUpsertOne) UpdateDescription() *SubscriptionPlanUpsertO
 	})
 }
 
-// SetPrice sets the "price" field.
-func (u *SubscriptionPlanUpsertOne) SetPrice(v float64) *SubscriptionPlanUpsertOne {
+// SetPublishedVersionID sets the "published_version_id" field.
+func (u *SubscriptionPlanUpsertOne) SetPublishedVersionID(v int64) *SubscriptionPlanUpsertOne {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.SetPrice(v)
+		s.SetPublishedVersionID(v)
 	})
 }
 
-// AddPrice adds v to the "price" field.
-func (u *SubscriptionPlanUpsertOne) AddPrice(v float64) *SubscriptionPlanUpsertOne {
+// AddPublishedVersionID adds v to the "published_version_id" field.
+func (u *SubscriptionPlanUpsertOne) AddPublishedVersionID(v int64) *SubscriptionPlanUpsertOne {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.AddPrice(v)
+		s.AddPublishedVersionID(v)
 	})
 }
 
-// UpdatePrice sets the "price" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsertOne) UpdatePrice() *SubscriptionPlanUpsertOne {
+// UpdatePublishedVersionID sets the "published_version_id" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsertOne) UpdatePublishedVersionID() *SubscriptionPlanUpsertOne {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.UpdatePrice()
+		s.UpdatePublishedVersionID()
 	})
 }
 
-// SetOriginalPrice sets the "original_price" field.
-func (u *SubscriptionPlanUpsertOne) SetOriginalPrice(v float64) *SubscriptionPlanUpsertOne {
+// ClearPublishedVersionID clears the value of the "published_version_id" field.
+func (u *SubscriptionPlanUpsertOne) ClearPublishedVersionID() *SubscriptionPlanUpsertOne {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.SetOriginalPrice(v)
-	})
-}
-
-// AddOriginalPrice adds v to the "original_price" field.
-func (u *SubscriptionPlanUpsertOne) AddOriginalPrice(v float64) *SubscriptionPlanUpsertOne {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.AddOriginalPrice(v)
-	})
-}
-
-// UpdateOriginalPrice sets the "original_price" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsertOne) UpdateOriginalPrice() *SubscriptionPlanUpsertOne {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.UpdateOriginalPrice()
-	})
-}
-
-// ClearOriginalPrice clears the value of the "original_price" field.
-func (u *SubscriptionPlanUpsertOne) ClearOriginalPrice() *SubscriptionPlanUpsertOne {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.ClearOriginalPrice()
-	})
-}
-
-// SetCurrency sets the "currency" field.
-func (u *SubscriptionPlanUpsertOne) SetCurrency(v string) *SubscriptionPlanUpsertOne {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.SetCurrency(v)
-	})
-}
-
-// UpdateCurrency sets the "currency" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsertOne) UpdateCurrency() *SubscriptionPlanUpsertOne {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.UpdateCurrency()
-	})
-}
-
-// SetValidityDays sets the "validity_days" field.
-func (u *SubscriptionPlanUpsertOne) SetValidityDays(v int) *SubscriptionPlanUpsertOne {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.SetValidityDays(v)
-	})
-}
-
-// AddValidityDays adds v to the "validity_days" field.
-func (u *SubscriptionPlanUpsertOne) AddValidityDays(v int) *SubscriptionPlanUpsertOne {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.AddValidityDays(v)
-	})
-}
-
-// UpdateValidityDays sets the "validity_days" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsertOne) UpdateValidityDays() *SubscriptionPlanUpsertOne {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.UpdateValidityDays()
-	})
-}
-
-// SetValidityUnit sets the "validity_unit" field.
-func (u *SubscriptionPlanUpsertOne) SetValidityUnit(v string) *SubscriptionPlanUpsertOne {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.SetValidityUnit(v)
-	})
-}
-
-// UpdateValidityUnit sets the "validity_unit" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsertOne) UpdateValidityUnit() *SubscriptionPlanUpsertOne {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.UpdateValidityUnit()
+		s.ClearPublishedVersionID()
 	})
 }
 
@@ -1063,7 +847,7 @@ func (_c *SubscriptionPlanCreateBulk) ExecX(ctx context.Context) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.SubscriptionPlanUpsert) {
-//			SetGroupID(v+v).
+//			SetName(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *SubscriptionPlanCreateBulk) OnConflict(opts ...sql.ConflictOption) *SubscriptionPlanUpsertBulk {
@@ -1139,27 +923,6 @@ func (u *SubscriptionPlanUpsertBulk) Update(set func(*SubscriptionPlanUpsert)) *
 	return u
 }
 
-// SetGroupID sets the "group_id" field.
-func (u *SubscriptionPlanUpsertBulk) SetGroupID(v int64) *SubscriptionPlanUpsertBulk {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.SetGroupID(v)
-	})
-}
-
-// AddGroupID adds v to the "group_id" field.
-func (u *SubscriptionPlanUpsertBulk) AddGroupID(v int64) *SubscriptionPlanUpsertBulk {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.AddGroupID(v)
-	})
-}
-
-// UpdateGroupID sets the "group_id" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsertBulk) UpdateGroupID() *SubscriptionPlanUpsertBulk {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.UpdateGroupID()
-	})
-}
-
 // SetName sets the "name" field.
 func (u *SubscriptionPlanUpsertBulk) SetName(v string) *SubscriptionPlanUpsertBulk {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
@@ -1188,101 +951,31 @@ func (u *SubscriptionPlanUpsertBulk) UpdateDescription() *SubscriptionPlanUpsert
 	})
 }
 
-// SetPrice sets the "price" field.
-func (u *SubscriptionPlanUpsertBulk) SetPrice(v float64) *SubscriptionPlanUpsertBulk {
+// SetPublishedVersionID sets the "published_version_id" field.
+func (u *SubscriptionPlanUpsertBulk) SetPublishedVersionID(v int64) *SubscriptionPlanUpsertBulk {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.SetPrice(v)
+		s.SetPublishedVersionID(v)
 	})
 }
 
-// AddPrice adds v to the "price" field.
-func (u *SubscriptionPlanUpsertBulk) AddPrice(v float64) *SubscriptionPlanUpsertBulk {
+// AddPublishedVersionID adds v to the "published_version_id" field.
+func (u *SubscriptionPlanUpsertBulk) AddPublishedVersionID(v int64) *SubscriptionPlanUpsertBulk {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.AddPrice(v)
+		s.AddPublishedVersionID(v)
 	})
 }
 
-// UpdatePrice sets the "price" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsertBulk) UpdatePrice() *SubscriptionPlanUpsertBulk {
+// UpdatePublishedVersionID sets the "published_version_id" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsertBulk) UpdatePublishedVersionID() *SubscriptionPlanUpsertBulk {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.UpdatePrice()
+		s.UpdatePublishedVersionID()
 	})
 }
 
-// SetOriginalPrice sets the "original_price" field.
-func (u *SubscriptionPlanUpsertBulk) SetOriginalPrice(v float64) *SubscriptionPlanUpsertBulk {
+// ClearPublishedVersionID clears the value of the "published_version_id" field.
+func (u *SubscriptionPlanUpsertBulk) ClearPublishedVersionID() *SubscriptionPlanUpsertBulk {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.SetOriginalPrice(v)
-	})
-}
-
-// AddOriginalPrice adds v to the "original_price" field.
-func (u *SubscriptionPlanUpsertBulk) AddOriginalPrice(v float64) *SubscriptionPlanUpsertBulk {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.AddOriginalPrice(v)
-	})
-}
-
-// UpdateOriginalPrice sets the "original_price" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsertBulk) UpdateOriginalPrice() *SubscriptionPlanUpsertBulk {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.UpdateOriginalPrice()
-	})
-}
-
-// ClearOriginalPrice clears the value of the "original_price" field.
-func (u *SubscriptionPlanUpsertBulk) ClearOriginalPrice() *SubscriptionPlanUpsertBulk {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.ClearOriginalPrice()
-	})
-}
-
-// SetCurrency sets the "currency" field.
-func (u *SubscriptionPlanUpsertBulk) SetCurrency(v string) *SubscriptionPlanUpsertBulk {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.SetCurrency(v)
-	})
-}
-
-// UpdateCurrency sets the "currency" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsertBulk) UpdateCurrency() *SubscriptionPlanUpsertBulk {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.UpdateCurrency()
-	})
-}
-
-// SetValidityDays sets the "validity_days" field.
-func (u *SubscriptionPlanUpsertBulk) SetValidityDays(v int) *SubscriptionPlanUpsertBulk {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.SetValidityDays(v)
-	})
-}
-
-// AddValidityDays adds v to the "validity_days" field.
-func (u *SubscriptionPlanUpsertBulk) AddValidityDays(v int) *SubscriptionPlanUpsertBulk {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.AddValidityDays(v)
-	})
-}
-
-// UpdateValidityDays sets the "validity_days" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsertBulk) UpdateValidityDays() *SubscriptionPlanUpsertBulk {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.UpdateValidityDays()
-	})
-}
-
-// SetValidityUnit sets the "validity_unit" field.
-func (u *SubscriptionPlanUpsertBulk) SetValidityUnit(v string) *SubscriptionPlanUpsertBulk {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.SetValidityUnit(v)
-	})
-}
-
-// UpdateValidityUnit sets the "validity_unit" field to the value that was provided on create.
-func (u *SubscriptionPlanUpsertBulk) UpdateValidityUnit() *SubscriptionPlanUpsertBulk {
-	return u.Update(func(s *SubscriptionPlanUpsert) {
-		s.UpdateValidityUnit()
+		s.ClearPublishedVersionID()
 	})
 }
 

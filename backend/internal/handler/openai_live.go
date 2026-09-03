@@ -20,6 +20,8 @@ import (
 )
 
 func (h *OpenAIGatewayHandler) Live(c *gin.Context) {
+	c.Request = c.Request.WithContext(h.gatewayService.PrepareSchedulerRequestContext(c.Request.Context()))
+
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
@@ -162,8 +164,8 @@ func liveCallIdentity(
 	subscription *service.UserSubscription,
 ) service.LiveCallIdentity {
 	var subscriptionID *int64
-	if subscription != nil {
-		value := subscription.ID
+	if apiKey != nil && apiKey.UsesSubscription() && apiKey.SubscriptionID != nil {
+		value := *apiKey.SubscriptionID
 		subscriptionID = &value
 	}
 	return service.LiveCallIdentity{

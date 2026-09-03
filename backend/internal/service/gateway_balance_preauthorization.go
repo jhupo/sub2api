@@ -27,7 +27,11 @@ func ResolveBalancePreauthorizationRequestID(ctx context.Context) string {
 // BalancePreauthorizationBillingType mirrors the billing-mode decision in both
 // gateway usage recorders.
 func BalancePreauthorizationBillingType(apiKey *APIKey, subscription *UserSubscription) int8 {
-	if subscription != nil && apiKey != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType() {
+	// The persisted API key funding source is authoritative. Do not downgrade a
+	// subscription key to wallet preauthorization merely because a caller failed
+	// to attach the subscription object; that would reserve and later charge the
+	// user's wallet for a subscription-funded request.
+	if apiKey != nil && apiKey.UsesSubscription() {
 		return BillingTypeSubscription
 	}
 	return BillingTypeBalance

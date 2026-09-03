@@ -172,7 +172,11 @@ func (r *usageBillingRepository) applyBatchImageBalanceHold(
 }
 
 func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
-	if cmd.SubscriptionCost > 0 && cmd.SubscriptionID != nil {
+	if cmd.SubscriptionPreauthorized {
+		if err := beginUsageBillingSubscriptionFinalization(ctx, tx, cmd); err != nil {
+			return err
+		}
+	} else if cmd.SubscriptionCost > 0 && cmd.SubscriptionID != nil {
 		if err := incrementUsageBillingSubscription(ctx, tx, *cmd.SubscriptionID, cmd.SubscriptionCost); err != nil {
 			return err
 		}
@@ -212,6 +216,30 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	return nil
+}
+
+func beginUsageBillingSubscriptionFinalization(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) error {
+	if cmd.SubscriptionID == nil {
+		return service.ErrUsageBillingRequestConflict
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE billing_reservations
+		SET status = $6,
+			captured_amount = CASE WHEN status = $6 THEN captured_amount ELSE $3 END,
+			request_fingerprint = CASE WHEN status = $6 THEN request_fingerprint ELSE $4 END,
+			updated_at = CASE WHEN status = $6 THEN updated_at ELSE NOW() END
+		WHERE request_id = $1 AND api_key_id = $2
+			AND funding_source = 'subscription' AND subscription_id = $5
+			AND (
+				(status = $7 AND $3 <= authorized_amount)
+				OR (status = $6 AND captured_amount = $3 AND request_fingerprint = $4)
+			)
+	`, cmd.RequestID, cmd.APIKeyID, cmd.SubscriptionCost, cmd.RequestFingerprint,
+		*cmd.SubscriptionID, service.BillingReservationFinalizing, service.BillingReservationAuthorized)
+	if err != nil {
+		return err
+	}
+	return requireOneBillingRow(result, service.ErrUsageBillingRequestConflict)
 }
 
 // beginUsageBillingBalanceFinalization durably fixes the actual charge before
@@ -285,11 +313,8 @@ func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscrip
 			weekly_usage_usd = us.weekly_usage_usd + $1,
 			monthly_usage_usd = us.monthly_usage_usd + $1,
 			updated_at = NOW()
-		FROM groups g
 		WHERE us.id = $2
 			AND us.deleted_at IS NULL
-			AND us.group_id = g.id
-			AND g.deleted_at IS NULL
 	`
 	res, err := tx.ExecContext(ctx, updateSQL, costUSD, subscriptionID)
 	if err != nil {

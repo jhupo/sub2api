@@ -15,8 +15,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -29,6 +31,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
+	"golang.org/x/sync/singleflight"
 
 	entsql "entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqljson"
@@ -49,6 +52,18 @@ type accountRepository struct {
 	// Used to proactively sync account snapshot to cache when status changes,
 	// ensuring sticky sessions can promptly detect unavailable accounts.
 	schedulerCache service.SchedulerCache
+
+	freshnessMu    sync.Mutex
+	freshnessCache map[int64]schedulerFreshnessCacheEntry
+	freshnessSF    singleflight.Group
+}
+
+const schedulerFreshnessCacheTTL = time.Second
+
+type schedulerFreshnessCacheEntry struct {
+	value     service.SchedulerFreshness
+	found     bool
+	expiresAt time.Time
 }
 
 var schedulerNeutralExtraKeyPrefixes = []string{
@@ -120,7 +135,12 @@ func NewAdminAccountRepository(client *dbent.Client, sqlDB *sql.DB, schedulerCac
 // newAccountRepositoryWithSQL 是内部构造函数，支持依赖注入 SQL 执行器。
 // 这种设计便于单元测试时注入 mock 对象。
 func newAccountRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor, schedulerCache service.SchedulerCache) *accountRepository {
-	return &accountRepository{client: client, sql: sqlq, schedulerCache: schedulerCache}
+	return &accountRepository{
+		client:         client,
+		sql:            sqlq,
+		schedulerCache: schedulerCache,
+		freshnessCache: make(map[int64]schedulerFreshnessCacheEntry),
+	}
 }
 
 func (r *accountRepository) Create(ctx context.Context, account *service.Account) error {
@@ -270,6 +290,141 @@ func (r *accountRepository) GetByID(ctx context.Context, id int64) (*service.Acc
 		return nil, service.ErrAccountNotFound
 	}
 	return &accounts[0], nil
+}
+
+func (r *accountRepository) ReadSchedulerFreshness(ctx context.Context, ids []int64) (map[int64]service.SchedulerFreshness, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if r == nil || r.sql == nil {
+		return nil, errors.New("account freshness database is unavailable")
+	}
+
+	uniqueIDs := make([]int64, 0, len(ids))
+	seen := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+	if len(uniqueIDs) == 0 {
+		return map[int64]service.SchedulerFreshness{}, nil
+	}
+
+	result := make(map[int64]service.SchedulerFreshness, len(uniqueIDs))
+	missing := make([]int64, 0, len(uniqueIDs))
+	now := time.Now()
+	r.freshnessMu.Lock()
+	if r.freshnessCache == nil {
+		r.freshnessCache = make(map[int64]schedulerFreshnessCacheEntry)
+	}
+	for _, id := range uniqueIDs {
+		entry, ok := r.freshnessCache[id]
+		if ok && now.Before(entry.expiresAt) {
+			if entry.found {
+				result[id] = entry.value
+			}
+			continue
+		}
+		delete(r.freshnessCache, id)
+		missing = append(missing, id)
+	}
+	r.freshnessMu.Unlock()
+	if len(missing) == 0 {
+		return result, nil
+	}
+
+	sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
+	keyParts := make([]string, len(missing))
+	for i, id := range missing {
+		keyParts[i] = strconv.FormatInt(id, 10)
+	}
+	resultCh := r.freshnessSF.DoChan(strings.Join(keyParts, ","), func() (any, error) {
+		queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		loaded, err := r.readSchedulerFreshnessDB(queryCtx, missing)
+		if err != nil {
+			return nil, err
+		}
+		expiresAt := time.Now().Add(schedulerFreshnessCacheTTL)
+		r.freshnessMu.Lock()
+		for _, id := range missing {
+			value, found := loaded[id]
+			r.freshnessCache[id] = schedulerFreshnessCacheEntry{value: value, found: found, expiresAt: expiresAt}
+		}
+		r.freshnessMu.Unlock()
+		return loaded, nil
+	})
+
+	select {
+	case flight := <-resultCh:
+		if flight.Err != nil {
+			return nil, flight.Err
+		}
+		loaded, ok := flight.Val.(map[int64]service.SchedulerFreshness)
+		if !ok {
+			return nil, errors.New("invalid scheduler freshness result")
+		}
+		for id, value := range loaded {
+			result[id] = value
+		}
+		return result, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (r *accountRepository) readSchedulerFreshnessDB(ctx context.Context, ids []int64) (map[int64]service.SchedulerFreshness, error) {
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT
+			a.id, a.platform, a.type, a.status, a.schedulable,
+			a.expires_at, a.auto_pause_on_expired,
+			a.rate_limited_at, a.rate_limit_reset_at, a.overload_until,
+			a.temp_unschedulable_until, COALESCE(a.temp_unschedulable_reason, ''),
+			a.parent_account_id, COALESCE(a.extra->>'privacy_mode', ''),
+			COALESCE(array_agg(ag.group_id) FILTER (WHERE ag.group_id IS NOT NULL), '{}'::bigint[])
+		FROM accounts a
+		LEFT JOIN account_groups ag ON ag.account_id = a.id
+		WHERE a.id = ANY($1) AND a.deleted_at IS NULL
+		GROUP BY a.id
+	`, pq.Array(ids))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	freshness := make(map[int64]service.SchedulerFreshness, len(ids))
+	for rows.Next() {
+		var (
+			value  service.SchedulerFreshness
+			parent sql.NullInt64
+			groups pq.Int64Array
+		)
+		if err := rows.Scan(
+			&value.ID, &value.Platform, &value.Type, &value.Status, &value.Schedulable,
+			&value.ExpiresAt, &value.AutoPauseOnExpired,
+			&value.RateLimitedAt, &value.RateLimitResetAt, &value.OverloadUntil,
+			&value.TempUnschedulableUntil, &value.TempUnschedulableReason,
+			&parent, &value.PrivacyMode, &groups,
+		); err != nil {
+			return nil, err
+		}
+		if parent.Valid {
+			parentID := parent.Int64
+			value.ParentAccountID = &parentID
+		}
+		value.GroupIDs = append([]int64(nil), groups...)
+		freshness[value.ID] = value
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return freshness, nil
 }
 
 func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*service.Account, error) {

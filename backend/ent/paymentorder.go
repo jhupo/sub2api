@@ -51,10 +51,12 @@ type PaymentOrder struct {
 	OrderType string `json:"order_type,omitempty"`
 	// PlanID holds the value of the "plan_id" field.
 	PlanID *int64 `json:"plan_id,omitempty"`
-	// SubscriptionGroupID holds the value of the "subscription_group_id" field.
-	SubscriptionGroupID *int64 `json:"subscription_group_id,omitempty"`
-	// SubscriptionDays holds the value of the "subscription_days" field.
-	SubscriptionDays *int `json:"subscription_days,omitempty"`
+	// PlanVersionID holds the value of the "plan_version_id" field.
+	PlanVersionID *int64 `json:"plan_version_id,omitempty"`
+	// FulfilledSubscriptionID holds the value of the "fulfilled_subscription_id" field.
+	FulfilledSubscriptionID *int64 `json:"fulfilled_subscription_id,omitempty"`
+	// EntitlementSnapshot holds the value of the "entitlement_snapshot" field.
+	EntitlementSnapshot map[string]interface{} `json:"entitlement_snapshot,omitempty"`
 	// ProviderInstanceID holds the value of the "provider_instance_id" field.
 	ProviderInstanceID *string `json:"provider_instance_id,omitempty"`
 	// ProviderKey holds the value of the "provider_key" field.
@@ -128,13 +130,13 @@ func (*PaymentOrder) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case paymentorder.FieldProviderSnapshot:
+		case paymentorder.FieldEntitlementSnapshot, paymentorder.FieldProviderSnapshot:
 			values[i] = new([]byte)
 		case paymentorder.FieldForceRefund:
 			values[i] = new(sql.NullBool)
 		case paymentorder.FieldAmount, paymentorder.FieldPayAmount, paymentorder.FieldFeeRate, paymentorder.FieldRefundAmount:
 			values[i] = new(sql.NullFloat64)
-		case paymentorder.FieldID, paymentorder.FieldUserID, paymentorder.FieldPlanID, paymentorder.FieldSubscriptionGroupID, paymentorder.FieldSubscriptionDays:
+		case paymentorder.FieldID, paymentorder.FieldUserID, paymentorder.FieldPlanID, paymentorder.FieldPlanVersionID, paymentorder.FieldFulfilledSubscriptionID:
 			values[i] = new(sql.NullInt64)
 		case paymentorder.FieldUserEmail, paymentorder.FieldUserName, paymentorder.FieldUserNotes, paymentorder.FieldRechargeCode, paymentorder.FieldOutTradeNo, paymentorder.FieldPaymentType, paymentorder.FieldPaymentTradeNo, paymentorder.FieldPayURL, paymentorder.FieldQrCode, paymentorder.FieldQrCodeImg, paymentorder.FieldOrderType, paymentorder.FieldProviderInstanceID, paymentorder.FieldProviderKey, paymentorder.FieldStatus, paymentorder.FieldRefundReason, paymentorder.FieldRefundRequestReason, paymentorder.FieldRefundRequestedBy, paymentorder.FieldFailedReason, paymentorder.FieldClientIP, paymentorder.FieldSrcHost, paymentorder.FieldSrcURL:
 			values[i] = new(sql.NullString)
@@ -262,19 +264,27 @@ func (_m *PaymentOrder) assignValues(columns []string, values []any) error {
 				_m.PlanID = new(int64)
 				*_m.PlanID = value.Int64
 			}
-		case paymentorder.FieldSubscriptionGroupID:
+		case paymentorder.FieldPlanVersionID:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field subscription_group_id", values[i])
+				return fmt.Errorf("unexpected type %T for field plan_version_id", values[i])
 			} else if value.Valid {
-				_m.SubscriptionGroupID = new(int64)
-				*_m.SubscriptionGroupID = value.Int64
+				_m.PlanVersionID = new(int64)
+				*_m.PlanVersionID = value.Int64
 			}
-		case paymentorder.FieldSubscriptionDays:
+		case paymentorder.FieldFulfilledSubscriptionID:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field subscription_days", values[i])
+				return fmt.Errorf("unexpected type %T for field fulfilled_subscription_id", values[i])
 			} else if value.Valid {
-				_m.SubscriptionDays = new(int)
-				*_m.SubscriptionDays = int(value.Int64)
+				_m.FulfilledSubscriptionID = new(int64)
+				*_m.FulfilledSubscriptionID = value.Int64
+			}
+		case paymentorder.FieldEntitlementSnapshot:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field entitlement_snapshot", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.EntitlementSnapshot); err != nil {
+					return fmt.Errorf("unmarshal field entitlement_snapshot: %w", err)
+				}
 			}
 		case paymentorder.FieldProviderInstanceID:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -515,15 +525,18 @@ func (_m *PaymentOrder) String() string {
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
-	if v := _m.SubscriptionGroupID; v != nil {
-		builder.WriteString("subscription_group_id=")
+	if v := _m.PlanVersionID; v != nil {
+		builder.WriteString("plan_version_id=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
-	if v := _m.SubscriptionDays; v != nil {
-		builder.WriteString("subscription_days=")
+	if v := _m.FulfilledSubscriptionID; v != nil {
+		builder.WriteString("fulfilled_subscription_id=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("entitlement_snapshot=")
+	builder.WriteString(fmt.Sprintf("%v", _m.EntitlementSnapshot))
 	builder.WriteString(", ")
 	if v := _m.ProviderInstanceID; v != nil {
 		builder.WriteString("provider_instance_id=")

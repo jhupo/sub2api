@@ -24,7 +24,7 @@ func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarm(
 	ctx context.Context,
 	lease *openAIWSConnLease,
 	decision OpenAIWSProtocolDecision,
-	payload map[string]any,
+	payload []byte,
 	previousResponseID string,
 	reqBody map[string]any,
 	account *Account,
@@ -71,14 +71,12 @@ func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarm(
 	prewarmStart := time.Now()
 	logOpenAIWSModeInfo("prewarm_start account_id=%d conn_id=%s", account.ID, connID)
 
-	prewarmPayload := make(map[string]any, len(payload)+1)
-	for k, v := range payload {
-		prewarmPayload[k] = v
+	prewarmPayloadJSON, err := sjson.SetBytes(payload, "generate", false)
+	if err != nil {
+		return wrapOpenAIWSFallback("prewarm_payload", err)
 	}
-	prewarmPayload["generate"] = false
-	prewarmPayloadJSON := payloadAsJSONBytes(prewarmPayload)
 
-	if err := lease.WriteJSONWithContextTimeout(ctx, prewarmPayload, s.openAIWSWriteTimeout()); err != nil {
+	if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(prewarmPayloadJSON), s.openAIWSWriteTimeout()); err != nil {
 		lease.MarkBroken()
 		logOpenAIWSModeInfo(
 			"prewarm_write_fail account_id=%d conn_id=%s cause=%s",
@@ -179,21 +177,6 @@ func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarm(
 		time.Since(prewarmStart).Milliseconds(),
 	)
 	return nil
-}
-
-func payloadAsJSON(payload map[string]any) string {
-	return string(payloadAsJSONBytes(payload))
-}
-
-func payloadAsJSONBytes(payload map[string]any) []byte {
-	if len(payload) == 0 {
-		return []byte("{}")
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return []byte("{}")
-	}
-	return body
 }
 
 func isOpenAIWSTerminalEvent(eventType string) bool {
@@ -529,6 +512,7 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	if s == nil {
 		return 0, nil, "", nil
 	}
+	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 	responseID := strings.TrimSpace(previousResponseID)
 	if responseID == "" {
 		return 0, nil, "", nil
@@ -587,44 +571,15 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	if vetoed, _ := openAIProfitControlVetoReason(ctx, account); vetoed {
 		return 0, nil, "", nil
 	}
-	if s.schedulerSnapshot != nil && s.accountRepo != nil {
-		latest, latestErr := s.accountRepo.GetByID(ctx, account.ID)
-		if latestErr != nil || latest == nil {
-			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-			return 0, nil, "", nil
-		}
-		if shouldClearStickySession(latest, requestedModel) || !latest.IsOpenAI() || !latest.IsSchedulable() {
-			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-			return 0, nil, "", nil
-		}
-		if !s.openAIAccountMatchesSchedulingGroup(latest, groupID) {
-			return 0, nil, "", nil
-		}
-		if s.openAIGroupRequiresPrivacySet(ctx, groupID) && !latest.IsPrivacySet() {
-			return 0, nil, "", nil
-		}
-		if !parentHealthyForShadow(latest, s.parentAccountLookup(ctx)) {
-			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-			return 0, nil, "", nil
-		}
-		if requestedModel != "" && !latest.IsModelSupported(requestedModel) {
-			return 0, nil, "", nil
-		}
-		if !latest.SupportsOpenAIEndpointCapability(requiredCapability) {
-			return 0, nil, "", nil
-		}
-		if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, latest); paused {
-			return 0, nil, "", nil
-		}
-		// 利润门对最新账号状态复检一次，语义同上：跳过复用、不删绑定。
-		if vetoed, _ := openAIProfitControlVetoReason(ctx, latest); vetoed {
-			return 0, nil, "", nil
-		}
-		if s.isOpenAIAccountRequestRuntimeBlocked(latest, requestedModel) {
-			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
-			return 0, nil, "", nil
-		}
-		account = latest
+	if !s.openAIAccountMatchesSchedulingGroup(account, groupID) {
+		return 0, nil, "", nil
+	}
+	if s.openAIGroupRequiresPrivacySet(ctx, groupID) && !account.IsPrivacySet() {
+		return 0, nil, "", nil
+	}
+	if s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) {
+		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+		return 0, nil, "", nil
 	}
 	if requireCompact && openAICompactSupportTier(account) == 0 {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)

@@ -7,6 +7,7 @@ import (
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/schema"
+	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
 	"entgo.io/ent/schema/index"
 )
@@ -30,27 +31,15 @@ func (SubscriptionPlan) Annotations() []schema.Annotation {
 
 func (SubscriptionPlan) Fields() []ent.Field {
 	return []ent.Field{
-		field.Int64("group_id"),
 		field.String("name").
 			MaxLen(100).
 			NotEmpty(),
 		field.String("description").
 			SchemaType(map[string]string{dialect.Postgres: "text"}).
 			Default(""),
-		field.Float("price").
-			SchemaType(map[string]string{dialect.Postgres: "decimal(20,3)"}),
-		field.Float("original_price").
-			SchemaType(map[string]string{dialect.Postgres: "decimal(20,3)"}).
+		field.Int64("published_version_id").
 			Optional().
 			Nillable(),
-		field.String("currency").
-			MaxLen(3).
-			Default(""),
-		field.Int("validity_days").
-			Default(30),
-		field.String("validity_unit").
-			MaxLen(10).
-			Default("day"),
 		field.String("features").
 			SchemaType(map[string]string{dialect.Postgres: "text"}).
 			Default(""),
@@ -72,9 +61,16 @@ func (SubscriptionPlan) Fields() []ent.Field {
 	}
 }
 
+func (SubscriptionPlan) Edges() []ent.Edge {
+	return []ent.Edge{
+		edge.To("versions", SubscriptionPlanVersion.Type),
+		edge.To("subscriptions", UserSubscription.Type),
+	}
+}
+
 func (SubscriptionPlan) Indexes() []ent.Index {
 	return []ent.Index{
-		index.Fields("group_id"),
 		index.Fields("for_sale"),
+		index.Fields("published_version_id"),
 	}
 }

@@ -172,10 +172,11 @@ func TestBindAndLoadGrokVideoPendingBillingUseExactAuthorizedHold(t *testing.T) 
 	pending := service.GrokVideoPendingBilling{
 		Model: "grok-imagine-video", PreauthorizationRequestID: "grok-video:hold:request-1",
 		AuthorizationFingerprint: "authorization", PreauthorizationHoldAmount: 0.5,
+		FundingSource: service.FundingSourceWallet,
 	}
-	metadata := `{"model":"grok-imagine-video","preauthorization_request_id":"grok-video:hold:request-1","authorization_fingerprint":"authorization","preauthorization_hold_amount":0.5}`
+	metadata := `{"model":"grok-imagine-video","preauthorization_request_id":"grok-video:hold:request-1","authorization_fingerprint":"authorization","preauthorization_hold_amount":0.5,"funding_source":"wallet"}`
 	mock.ExpectQuery(`(?s)UPDATE billing_balance_settlements.*async_task_id = \$1.*async_metadata = \$5::jsonb.*status = \$6.*expires_at > NOW\(\).*RETURNING request_id`).
-		WithArgs("task-1", "grok-video:hold:request-1", int64(7), int64(42), metadata, int16(1)).
+		WithArgs("task-1", "grok-video:hold:request-1", int64(7), int64(42), metadata, int16(1), nil).
 		WillReturnRows(sqlmock.NewRows([]string{"request_id"}).AddRow("grok-video:hold:request-1"))
 
 	repo := &usageBillingRepository{db: db}
@@ -183,10 +184,10 @@ func TestBindAndLoadGrokVideoPendingBillingUseExactAuthorizedHold(t *testing.T) 
 		TaskID: " task-1 ", APIKeyID: 7, UserID: 42, Pending: pending,
 	}))
 
-	mock.ExpectQuery(`(?s)SELECT async_metadata, request_id, authorization_fingerprint, hold_usd.*async_task_id = \$1 AND api_key_id = \$2 AND user_id = \$3`).
-		WithArgs("task-1", int64(7), int64(42)).
-		WillReturnRows(sqlmock.NewRows([]string{"async_metadata", "request_id", "authorization_fingerprint", "hold_usd"}).
-			AddRow([]byte(metadata), "grok-video:hold:request-1", "authorization", "0.50"))
+	mock.ExpectQuery(`(?s)SELECT async_metadata, request_id, authorization_fingerprint, hold_amount.*async_task_id = \$1 AND api_key_id = \$2 AND user_id = \$3`).
+		WithArgs("task-1", int64(7), int64(42), service.FundingSourceWallet).
+		WillReturnRows(sqlmock.NewRows([]string{"async_metadata", "request_id", "authorization_fingerprint", "hold_amount", "funding_source", "subscription_id"}).
+			AddRow([]byte(metadata), "grok-video:hold:request-1", "authorization", "0.50", service.FundingSourceWallet, nil))
 	loaded, err := repo.LoadGrokVideoPendingBilling(context.Background(), "task-1", 42, 7)
 	require.NoError(t, err)
 	require.Equal(t, pending, *loaded)
@@ -197,11 +198,11 @@ func TestLoadGrokVideoPendingBillingRejectsMetadataIdentityMismatch(t *testing.T
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	metadata := `{"preauthorization_request_id":"grok-video:hold:other","authorization_fingerprint":"authorization","preauthorization_hold_amount":0.5}`
-	mock.ExpectQuery(`(?s)SELECT async_metadata, request_id, authorization_fingerprint, hold_usd`).
-		WithArgs("task-1", int64(7), int64(42)).
-		WillReturnRows(sqlmock.NewRows([]string{"async_metadata", "request_id", "authorization_fingerprint", "hold_usd"}).
-			AddRow([]byte(metadata), "grok-video:hold:request-1", "authorization", "0.50"))
+	metadata := `{"preauthorization_request_id":"grok-video:hold:other","authorization_fingerprint":"authorization","preauthorization_hold_amount":0.5,"funding_source":"wallet"}`
+	mock.ExpectQuery(`(?s)SELECT async_metadata, request_id, authorization_fingerprint, hold_amount`).
+		WithArgs("task-1", int64(7), int64(42), service.FundingSourceWallet).
+		WillReturnRows(sqlmock.NewRows([]string{"async_metadata", "request_id", "authorization_fingerprint", "hold_amount", "funding_source", "subscription_id"}).
+			AddRow([]byte(metadata), "grok-video:hold:request-1", "authorization", "0.50", service.FundingSourceWallet, nil))
 
 	repo := &usageBillingRepository{db: db}
 	_, err = repo.LoadGrokVideoPendingBilling(context.Background(), "task-1", 42, 7)

@@ -1046,14 +1046,13 @@ func TestOpenAIGatewayService_Forward_WSv2PreviousResponseNotFoundRecoversByDrop
 			_ = conn.Close()
 		}()
 
-		var req map[string]any
-		if err := conn.ReadJSON(&req); err != nil {
+		_, reqRaw, err := conn.ReadMessage()
+		if err != nil {
 			t.Errorf("read ws request failed: %v", err)
 			return
 		}
-		reqRaw, _ := json.Marshal(req)
 		wsRequestMu.Lock()
-		wsRequestPayloads = append(wsRequestPayloads, reqRaw)
+		wsRequestPayloads = append(wsRequestPayloads, append([]byte(nil), reqRaw...))
 		wsRequestMu.Unlock()
 		if attempt == 1 {
 			_ = conn.WriteJSON(map[string]any{
@@ -1127,7 +1126,7 @@ func TestOpenAIGatewayService_Forward_WSv2PreviousResponseNotFoundRecoversByDrop
 		},
 	}
 
-	body := []byte(`{"model":"gpt-5.3-codex","stream":false,"previous_response_id":"resp_prev_missing","input":[{"type":"input_text","text":"hello"}]}`)
+	body := []byte(`{"model":"gpt-5.3-codex","stream":false,"previous_response_id":"resp_prev_missing","sequence":900719925474099312345,"input":[{"type":"input_text","text":"hello"}]}`)
 	result, err := svc.Forward(context.Background(), c, account, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1143,6 +1142,7 @@ func TestOpenAIGatewayService_Forward_WSv2PreviousResponseNotFoundRecoversByDrop
 	require.Len(t, requests, 2)
 	require.True(t, gjson.GetBytes(requests[0], "previous_response_id").Exists(), "首轮请求应保留 previous_response_id")
 	require.False(t, gjson.GetBytes(requests[1], "previous_response_id").Exists(), "恢复重试应移除 previous_response_id")
+	require.Equal(t, "900719925474099312345", gjson.GetBytes(requests[1], "sequence").Raw, "恢复重试不得改写无关数值")
 }
 
 func TestOpenAIGatewayService_Forward_WSv2PreviousResponseNotFoundSkipsRecoveryForFunctionCallOutput(t *testing.T) {

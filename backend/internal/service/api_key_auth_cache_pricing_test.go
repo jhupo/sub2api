@@ -48,3 +48,28 @@ func TestAPIKeyAuthSnapshotGroupPricingRoundtrip(t *testing.T) {
 	require.InDelta(t, inputPrice, resolved.BasePricing.InputPricePerToken, 1e-12)
 	require.InDelta(t, outputPrice, resolved.BasePricing.OutputPricePerToken, 1e-12)
 }
+
+func TestAPIKeyAuthSnapshotFundingRoundtrip(t *testing.T) {
+	subscriptionID := int64(91)
+	groupID := int64(50)
+	apiKey := &APIKey{
+		ID: 82, UserID: 40, GroupID: &groupID, Key: "sk-subscription-roundtrip",
+		FundingSource: FundingSourceSubscription, SubscriptionID: &subscriptionID,
+		Status: StatusActive, User: &User{ID: 40, Status: StatusActive},
+		Group: &Group{ID: groupID, Platform: PlatformOpenAI, Status: StatusActive},
+	}
+	svc := &APIKeyService{}
+
+	payload, err := json.Marshal(&APIKeyAuthCacheEntry{Snapshot: svc.snapshotFromAPIKey(context.Background(), apiKey)})
+	require.NoError(t, err)
+	var cached APIKeyAuthCacheEntry
+	require.NoError(t, json.Unmarshal(payload, &cached))
+
+	materialized, used, err := svc.applyAuthCacheEntry(apiKey.Key, &cached)
+	require.NoError(t, err)
+	require.True(t, used)
+	require.Equal(t, FundingSourceSubscription, materialized.FundingSource)
+	require.NotNil(t, materialized.SubscriptionID)
+	require.Equal(t, subscriptionID, *materialized.SubscriptionID)
+	require.True(t, materialized.UsesSubscription())
+}

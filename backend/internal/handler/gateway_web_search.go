@@ -29,6 +29,8 @@ const (
 )
 
 func (h *GatewayHandler) WebSearch(c *gin.Context) {
+	c.Request = c.Request.WithContext(h.gatewayService.PrepareSchedulerRequestContext(c.Request.Context()))
+
 	isXSearch := c.GetBool("grok_x_search_endpoint")
 	var req grokStandaloneSearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

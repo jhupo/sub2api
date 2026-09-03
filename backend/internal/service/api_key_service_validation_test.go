@@ -44,3 +44,9 @@ func TestValidateUpdateAPIKeyRequestNumericLimits(t *testing.T) {
 		require.Error(t, validateUpdateAPIKeyRequest(req))
 	}
 }
+
+func TestNormalizeFundingSource(t *testing.T) {
+	require.Equal(t, FundingSourceWallet, normalizeFundingSource(""))
+	require.Equal(t, FundingSourceWallet, normalizeFundingSource("  WALLET "))
+	require.Equal(t, FundingSourceSubscription, normalizeFundingSource(" Subscription "))
+}

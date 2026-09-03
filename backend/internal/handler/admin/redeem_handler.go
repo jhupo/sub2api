@@ -37,8 +37,7 @@ type GenerateRedeemCodesRequest struct {
 	Count         int        `json:"count" binding:"required,min=1,max=1000"`
 	Type          string     `json:"type" binding:"required,oneof=balance concurrency subscription invitation"`
 	Value         float64    `json:"value"`
-	GroupID       *int64     `json:"group_id"`      // 订阅类型必填
-	ValidityDays  int        `json:"validity_days"` // 订阅类型使用，正数增加/负数退款扣减
+	PlanVersionID *int64     `json:"plan_version_id"`
 	ExpiresAt     *time.Time `json:"expires_at"`
 	ExpiresInDays *int       `json:"expires_in_days" binding:"omitempty,min=1,max=3650"`
 }
@@ -52,8 +51,7 @@ type CreateAndRedeemCodeRequest struct {
 	Type          string     `json:"type" binding:"omitempty,oneof=balance concurrency subscription invitation"` // 不传时默认 balance（向后兼容）
 	Value         float64    `json:"value" binding:"required"`
 	UserID        int64      `json:"user_id" binding:"required,gt=0"`
-	GroupID       *int64     `json:"group_id"`      // subscription 类型必填
-	ValidityDays  int        `json:"validity_days"` // subscription 类型：正数增加，负数退款扣减
+	PlanVersionID *int64     `json:"plan_version_id"`
 	Notes         string     `json:"notes"`
 	ExpiresAt     *time.Time `json:"expires_at"`
 	ExpiresInDays *int       `json:"expires_in_days" binding:"omitempty,min=1,max=3650"`
@@ -148,12 +146,11 @@ func (h *RedeemHandler) Generate(c *gin.Context) {
 	// Preserve this response exactly so an idempotent replay returns the same codes.
 	executeAdminIdempotentJSONWithResponseStorage(c, "admin.redeem_codes.generate", req, service.DefaultWriteIdempotencyTTL(), redeemGenerationStoredResponseLimit, true, func(ctx context.Context) (any, error) {
 		codes, execErr := h.adminService.GenerateRedeemCodes(ctx, &service.GenerateRedeemCodesInput{
-			Count:        req.Count,
-			Type:         req.Type,
-			Value:        req.Value,
-			GroupID:      req.GroupID,
-			ValidityDays: req.ValidityDays,
-			ExpiresAt:    expiresAt,
+			Count:         req.Count,
+			Type:          req.Type,
+			Value:         req.Value,
+			PlanVersionID: req.PlanVersionID,
+			ExpiresAt:     expiresAt,
 		})
 		if execErr != nil {
 			return nil, execErr
@@ -188,12 +185,8 @@ func (h *RedeemHandler) CreateAndRedeem(c *gin.Context) {
 	}
 
 	if req.Type == "subscription" {
-		if req.GroupID == nil {
-			response.BadRequest(c, "group_id is required for subscription type")
-			return
-		}
-		if req.ValidityDays == 0 {
-			response.BadRequest(c, "validity_days must not be zero for subscription type")
+		if req.PlanVersionID == nil {
+			response.BadRequest(c, "plan_version_id is required for subscription type")
 			return
 		}
 	}
@@ -214,14 +207,13 @@ func (h *RedeemHandler) CreateAndRedeem(c *gin.Context) {
 		}
 
 		createErr := h.redeemService.CreateCode(ctx, &service.RedeemCode{
-			Code:         req.Code,
-			Type:         req.Type,
-			Value:        req.Value,
-			Status:       service.StatusUnused,
-			Notes:        req.Notes,
-			GroupID:      req.GroupID,
-			ValidityDays: req.ValidityDays,
-			ExpiresAt:    expiresAt,
+			Code:          req.Code,
+			Type:          req.Type,
+			Value:         req.Value,
+			Status:        service.StatusUnused,
+			Notes:         req.Notes,
+			PlanVersionID: req.PlanVersionID,
+			ExpiresAt:     expiresAt,
 		})
 		if createErr != nil {
 			// Unique code race: if code now exists, use idempotent semantics by used_by.
@@ -350,8 +342,8 @@ func redeemBatchUpdateFieldsFromDTO(in dto.BatchUpdateRedeemCodeFields) service.
 	if in.ExpiresAt.Set {
 		out.ExpiresAt = service.NullableTimeUpdate{Set: true, Value: in.ExpiresAt.Value}
 	}
-	if in.GroupID.Set {
-		out.GroupID = service.NullableInt64Update{Set: true, Value: in.GroupID.Value}
+	if in.PlanVersionID.Set {
+		out.PlanVersionID = service.NullableInt64Update{Set: true, Value: in.PlanVersionID.Value}
 	}
 	return out
 }
