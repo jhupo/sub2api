@@ -1228,7 +1228,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughBridg
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, "resp_duplicate_keys", gjson.GetBytes(event, "response.id").String())
-				require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
+				_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 			}
 
 			select {

@@ -39,7 +39,13 @@ func TestAdminService_CreateCompositeGroupCopiesAccountsFromConcreteGroups(t *te
 			return nil
 		},
 	}
-	svc := &adminServiceImpl{groupRepo: groupRepo}
+	accountRepo := &accountRepoStubForBulkUpdate{
+		getByIDsAccounts: []*Account{
+			{ID: 101, Platform: PlatformOpenAI},
+			{ID: 202, Platform: PlatformGemini},
+		},
+	}
+	svc := &adminServiceImpl{accountRepo: accountRepo, groupRepo: groupRepo}
 
 	group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
 		Name:                        "Composite",
@@ -74,7 +80,7 @@ func TestAdminService_UpdateCompositeGroupCopiesAccountsFromConcreteGroups(t *te
 		getByIDByID: map[int64]*Group{
 			10: {ID: 10, Platform: PlatformOpenAI},
 			20: {ID: 20, Platform: PlatformGrok},
-			99: {ID: 99, Platform: PlatformComposite, RateMultiplier: 1, SubscriptionType: SubscriptionTypeStandard},
+			99: {ID: 99, Platform: PlatformComposite, RateMultiplier: 1},
 		},
 		deleteAccountGroupsByGroupIDFn: func(groupID int64) (int64, error) {
 			clearedGroupID = groupID
@@ -90,7 +96,13 @@ func TestAdminService_UpdateCompositeGroupCopiesAccountsFromConcreteGroups(t *te
 			return nil
 		},
 	}
-	svc := &adminServiceImpl{groupRepo: groupRepo}
+	accountRepo := &accountRepoStubForBulkUpdate{
+		getByIDsAccounts: []*Account{
+			{ID: 301, Platform: PlatformOpenAI},
+			{ID: 302, Platform: PlatformGrok},
+		},
+	}
+	svc := &adminServiceImpl{accountRepo: accountRepo, groupRepo: groupRepo}
 	maxReasoningEffort := "low"
 	maxReasoningEffortOverLimit := ReasoningEffortOverLimitDeny
 	reasoningEffortMappings := []ReasoningEffortMapping{{From: "max", To: "high"}}

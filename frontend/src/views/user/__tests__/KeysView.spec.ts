@@ -16,6 +16,7 @@ const {
   copyToClipboard,
   isCurrentStep,
   nextStep,
+  fetchActiveSubscriptions,
 } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   getPublicSettings: vi.fn(),
@@ -27,6 +28,7 @@ const {
   copyToClipboard: vi.fn(),
   isCurrentStep: vi.fn(),
   nextStep: vi.fn(),
+  fetchActiveSubscriptions: vi.fn(),
 }))
 
 const messages: Record<string, string> = {
@@ -46,6 +48,7 @@ const messages: Record<string, string> = {
   'keys.currentConcurrency': 'Current Concurrency',
   'keys.lastUsedAt': 'Last Used',
   'keys.lastUsedIP': 'Last Used IP',
+  'keys.payment': 'Payment',
   'keys.rateLimitColumn': 'Rate Limit',
   'keys.searchPlaceholder': 'Search name or key...',
   'keys.status.active': 'Active',
@@ -86,6 +89,13 @@ vi.mock('@/stores/onboarding', () => ({
   useOnboardingStore: () => ({
     isCurrentStep,
     nextStep,
+  }),
+}))
+
+vi.mock('@/stores/subscriptions', () => ({
+  useSubscriptionStore: () => ({
+    activeSubscriptions: [],
+    fetchActiveSubscriptions,
   }),
 }))
 
@@ -270,6 +280,7 @@ describe('user KeysView column settings', () => {
     copyToClipboard.mockReset()
     isCurrentStep.mockReset()
     nextStep.mockReset()
+    fetchActiveSubscriptions.mockReset().mockResolvedValue(undefined)
 
     listKeys.mockResolvedValue({
       items: [createApiKey()],
@@ -292,6 +303,7 @@ describe('user KeysView column settings', () => {
       'name',
       'key',
       'group',
+      'funding_source',
       'current_concurrency',
       'usage',
       'expires_at',
@@ -358,6 +370,7 @@ describe('user KeysView column settings', () => {
     expect(visibleColumnKeys(wrapper)).toEqual([
       'name',
       'key',
+      'funding_source',
       'current_concurrency',
       'usage',
       'rate_limit',
@@ -384,6 +397,7 @@ describe('user KeysView column settings', () => {
     expect(columnMenuText).toContain('Current Concurrency')
     expect(columnMenuText).toContain('Rate Limit')
     expect(columnMenuText).toContain('Last Used IP')
+    expect(columnMenuText).toContain('Payment')
     expect(columnMenuText).not.toContain('Name')
     expect(columnMenuText).not.toContain('Actions')
   })

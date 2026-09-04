@@ -13,7 +13,6 @@ export interface GeminiTokenInfo {
   project_id?: string
   oauth_type?: string
   tier_id?: string
-  extra?: Record<string, unknown>
   [key: string]: unknown
 }
 
@@ -135,11 +134,6 @@ export function useGeminiOAuth() {
     }
   }
 
-  const buildExtraInfo = (tokenInfo: GeminiTokenInfo): Record<string, unknown> | undefined => {
-    if (!tokenInfo.extra || typeof tokenInfo.extra !== 'object') return undefined
-    return tokenInfo.extra
-  }
-
   const getCapabilities = async (): Promise<GeminiOAuthCapabilities | null> => {
     try {
       return await adminAPI.gemini.getCapabilities()
@@ -159,7 +153,6 @@ export function useGeminiOAuth() {
     generateAuthUrl,
     exchangeAuthCode,
     buildCredentials,
-    buildExtraInfo,
     getCapabilities
   }
 }

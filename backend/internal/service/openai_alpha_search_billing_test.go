@@ -86,7 +86,6 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesWebSearchPricePerCall(t *testi
 			Name:                  "openai",
 			Platform:              PlatformOpenAI,
 			Status:                StatusActive,
-			SubscriptionType:      SubscriptionTypeStandard,
 			RateMultiplier:        1,
 			WebSearchPricePerCall: float64Ptr(0.008),
 		},

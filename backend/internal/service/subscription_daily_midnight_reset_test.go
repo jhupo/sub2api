@@ -131,7 +131,7 @@ func TestNormalizeExpiredWindows_DailyUsageClearsAfterMidnight(t *testing.T) {
 	normalizeExpiredWindowsAt(subs, now)
 
 	require.Zero(t, subs[0].DailyUsageUSD, "跨 0 点后展示的日用量应清零")
-	require.Nil(t, subs[0].DailyWindowStart)
+	require.Equal(t, base.AddDate(0, 0, 1), *subs[0].DailyWindowStart)
 }
 
 // 日卡（一次性日额度）不受 0 点语义影响：跨 0 点不重置。

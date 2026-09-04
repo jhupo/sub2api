@@ -46,9 +46,6 @@ func cloneGroupForDuplicateTest(group *Group) *Group {
 		return nil
 	}
 	cloned := *group
-	cloned.DailyLimitUSD = cloneGroupValuePointer(group.DailyLimitUSD)
-	cloned.WeeklyLimitUSD = cloneGroupValuePointer(group.WeeklyLimitUSD)
-	cloned.MonthlyLimitUSD = cloneGroupValuePointer(group.MonthlyLimitUSD)
 	cloned.ImagePrice1K = cloneGroupValuePointer(group.ImagePrice1K)
 	cloned.ImagePrice2K = cloneGroupValuePointer(group.ImagePrice2K)
 	cloned.ImagePrice4K = cloneGroupValuePointer(group.ImagePrice4K)
@@ -133,11 +130,6 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 		IsExclusive:                  true,
 		Status:                       StatusActive,
 		Hydrated:                     true,
-		SubscriptionType:             SubscriptionTypeSubscription,
-		DailyLimitUSD:                groupDuplicateTestPointer(11.0),
-		WeeklyLimitUSD:               groupDuplicateTestPointer(22.0),
-		MonthlyLimitUSD:              groupDuplicateTestPointer(33.0),
-		DefaultValidityDays:          91,
 		AllowImageGeneration:         true,
 		AllowBatchImageGeneration:    true,
 		ImageRateIndependent:         true,
@@ -208,7 +200,6 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 	require.Equal(t, source.Platform, duplicate.Platform)
 	require.Equal(t, source.RateMultiplier, duplicate.RateMultiplier)
 	require.Equal(t, source.PeakRateMultiplier, duplicate.PeakRateMultiplier)
-	require.Equal(t, source.DefaultValidityDays, duplicate.DefaultValidityDays)
 	require.Equal(t, source.ImagePrice4K, duplicate.ImagePrice4K)
 	require.Equal(t, source.VideoModelPrices, duplicate.VideoModelPrices)
 	require.Equal(t, source.WebSearchPricePerCall, duplicate.WebSearchPricePerCall)
@@ -237,14 +228,12 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 	duplicate.MessagesDispatchModelConfig.ExactModelMappings["claude-special"] = "changed"
 	duplicate.ModelsListConfig.Models[0] = "changed"
 	duplicate.ReasoningEffortMappings[0].To = "changed"
-	*duplicate.DailyLimitUSD = 999
 	require.Equal(t, int64(13), source.ModelRouting["gpt-*"][0])
 	require.Equal(t, 0.14, source.VideoModelPrices[VideoPriceFamilyGrokImagineVideo15][VideoBillingResolution720P])
 	require.Equal(t, "claude", source.SupportedModelScopes[0])
 	require.Equal(t, "gpt-special", source.MessagesDispatchModelConfig.ExactModelMappings["claude-special"])
 	require.Equal(t, "gpt-5.4", source.ModelsListConfig.Models[0])
 	require.Equal(t, "xhigh", source.ReasoningEffortMappings[0].To)
-	require.Equal(t, 11.0, *source.DailyLimitUSD)
 }
 
 func TestDuplicateGroupRecoversSameOperationAndScopesByAdmin(t *testing.T) {

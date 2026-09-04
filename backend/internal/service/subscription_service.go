@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"entgo.io/ent/dialect"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -246,7 +247,11 @@ func lockSubscriptionAssignment(ctx context.Context, userID, planVersionID int64
 	if tx == nil {
 		return nil
 	}
-	if _, err := tx.Client().ExecContext(ctx,
+	client := tx.Client()
+	if client.Driver().Dialect() != dialect.Postgres {
+		return nil
+	}
+	if _, err := client.ExecContext(ctx,
 		"SELECT pg_advisory_xact_lock($1::bigint, $2::bigint)", userID, planVersionID); err != nil {
 		return fmt.Errorf("lock subscription assignment: %w", err)
 	}
@@ -448,16 +453,19 @@ func (s *SubscriptionService) CheckAndResetWindows(ctx context.Context, sub *Use
 		if err := s.userSubRepo.ResetDailyUsage(ctx, sub.ID, sub.DailyWindowStart, start); err != nil {
 			return err
 		}
+		sub.DailyWindowStart, sub.DailyUsageUSD, sub.DailyReservedUSD = &start, 0, 0
 	}
 	if start, ok := sub.automaticWindowStartAt(sub.WeeklyWindowStart, 7*24*time.Hour, now); ok {
 		if err := s.userSubRepo.ResetWeeklyUsage(ctx, sub.ID, sub.WeeklyWindowStart, start); err != nil {
 			return err
 		}
+		sub.WeeklyWindowStart, sub.WeeklyUsageUSD, sub.WeeklyReservedUSD = &start, 0, 0
 	}
 	if start, ok := sub.automaticWindowStartAt(sub.MonthlyWindowStart, 30*24*time.Hour, now); ok {
 		if err := s.userSubRepo.ResetMonthlyUsage(ctx, sub.ID, sub.MonthlyWindowStart, start); err != nil {
 			return err
 		}
+		sub.MonthlyWindowStart, sub.MonthlyUsageUSD, sub.MonthlyReservedUSD = &start, 0, 0
 	}
 	return nil
 }
@@ -502,12 +510,15 @@ func subscriptionWindowAllows(committed, reserved float64, limit *float64, addit
 }
 
 func (s *SubscriptionService) ValidateAndCheckLimits(sub *UserSubscription) (bool, error) {
-	if err := s.ValidateSubscription(context.Background(), sub); err != nil {
+	now := s.currentTime()
+	if err := validateSubscriptionAt(sub, now); err != nil {
 		return false, err
 	}
-	now := s.currentTime()
-	needsMaintenance := !sub.IsWindowActivated() || sub.NeedsDailyResetAt(now) || sub.NeedsWeeklyResetAt(now) || sub.NeedsMonthlyResetAt(now)
-	if needsMaintenance {
+	transition, err := sub.AllowanceWindowTransitionAt(now)
+	if err != nil {
+		return false, err
+	}
+	if transition.ResetDaily || transition.ResetWeekly || transition.ResetMonthly {
 		return true, nil
 	}
 	return false, s.CheckUsageLimits(context.Background(), sub, 0)
@@ -599,6 +610,15 @@ func (s *SubscriptionService) GetUserSubscriptionsWithProgress(ctx context.Conte
 }
 
 func (s *SubscriptionService) ValidateSubscription(ctx context.Context, sub *UserSubscription) error {
+	now := s.currentTime()
+	err := validateSubscriptionAt(sub, now)
+	if errors.Is(err, ErrSubscriptionExpired) && sub != nil && sub.Status != SubscriptionStatusExpired && !now.Before(sub.ExpiresAt) && s.userSubRepo != nil {
+		_ = s.userSubRepo.UpdateStatus(ctx, sub.ID, SubscriptionStatusExpired)
+	}
+	return err
+}
+
+func validateSubscriptionAt(sub *UserSubscription, now time.Time) error {
 	if sub == nil || sub.DeletedAt != nil {
 		return ErrSubscriptionNotFound
 	}
@@ -608,12 +628,10 @@ func (s *SubscriptionService) ValidateSubscription(ctx context.Context, sub *Use
 	if sub.Status == SubscriptionStatusSuspended {
 		return ErrSubscriptionSuspended
 	}
-	now := s.currentTime()
 	if now.Before(sub.StartsAt) {
 		return ErrSubscriptionNotStarted
 	}
 	if !now.Before(sub.ExpiresAt) {
-		_ = s.userSubRepo.UpdateStatus(ctx, sub.ID, SubscriptionStatusExpired)
 		return ErrSubscriptionExpired
 	}
 	return nil

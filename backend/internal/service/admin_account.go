@@ -125,9 +125,6 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	"antigravity_force_token_refresh":        {},
 	"antigravity_force_token_refresh_at":     {},
 	"antigravity_force_token_refresh_reason": {},
-	"drive_storage_limit":                    {},
-	"drive_storage_usage":                    {},
-	"drive_tier_updated_at":                  {},
 	// Codex fingerprint convergence uses a per-account random seed, never copied from another account.
 	codexFingerprintSeedExtraKey:           {},
 	"codex_primary_used_percent":           {},
@@ -509,6 +506,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err != nil {
 		return nil, err
 	}
+	if err := s.validateAccountGroupBindings(ctx, account, groupIDs); err != nil {
+		return nil, err
+	}
 	if err := s.accountRepo.Create(ctx, account); err != nil {
 		return nil, err
 	}
@@ -516,6 +516,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	// 绑定分组
 	if len(groupIDs) > 0 {
 		if err := s.accountRepo.BindGroups(ctx, account.ID, groupIDs); err != nil {
+			if deleteErr := s.accountRepo.Delete(context.WithoutCancel(ctx), account.ID); deleteErr != nil {
+				slog.Error("create_account_bind_groups_rollback_failed", "account_id", account.ID, "delete_err", deleteErr)
+			}
 			return nil, err
 		}
 	}
@@ -793,9 +796,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		account.AutoPauseOnExpired = *input.AutoPauseOnExpired
 	}
 
-	// 先验证分组是否存在（在任何写操作之前）
+	// 在任何写操作之前验证分组存在性与平台兼容性。
 	if input.GroupIDs != nil {
-		if err := s.validateGroupIDsExist(ctx, *input.GroupIDs); err != nil {
+		if err := s.validateAccountGroupBindings(ctx, account, *input.GroupIDs); err != nil {
 			return nil, err
 		}
 
@@ -925,11 +928,6 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if len(input.AccountIDs) == 0 {
 		return result, nil
 	}
-	if input.GroupIDs != nil {
-		if err := s.validateGroupIDsExist(ctx, *input.GroupIDs); err != nil {
-			return nil, err
-		}
-	}
 	openAISettings, err := normalizeBulkOpenAISettings(input)
 	if err != nil {
 		return nil, err
@@ -939,7 +937,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || input.GroupIDs != nil || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -950,6 +948,27 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	for _, account := range cachedTargets {
 		if account != nil {
 			targetsByID[account.ID] = account
+		}
+	}
+	if input.GroupIDs != nil {
+		groups, err := s.loadGroupsForAccountBinding(ctx, *input.GroupIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, accountID := range input.AccountIDs {
+			account, ok := targetsByID[accountID]
+			if !ok {
+				return nil, ErrAccountNotFound
+			}
+			effective := *account
+			effective.Extra = maps.Clone(account.Extra)
+			if effective.Extra == nil {
+				effective.Extra = make(map[string]any)
+			}
+			maps.Copy(effective.Extra, input.Extra)
+			if err := validateAccountGroupSet(&effective, groups); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if openAISettings.any() {
@@ -1386,6 +1405,9 @@ func (s *adminServiceImpl) CreateShadow(ctx context.Context, parentID int64, opt
 			openAILongContextBillingEnabledKey: parent.IsOpenAILongContextBillingEnabled(),
 		},
 	}
+	if err := s.validateAccountGroupBindings(ctx, shadow, groupIDs); err != nil {
+		return nil, err
+	}
 
 	// 5. 持久化（Create 填充 shadow.ID）。并发竞态:预查(步骤2)放行后另一请求抢先建成,本次会撞
 	// 一母一影唯一索引。复查确认确为"已存在"竞态时返回结构化 409 而非裸 500——外审 A/P1。
@@ -1513,6 +1535,95 @@ func (s *adminServiceImpl) validateGroupIDsExist(ctx context.Context, groupIDs [
 	for _, groupID := range groupIDs {
 		if _, err := s.groupRepo.GetByID(ctx, groupID); err != nil {
 			return fmt.Errorf("get group: %w", err)
+		}
+	}
+	return nil
+}
+
+func accountCanBindToGroup(account *Account, group *Group) bool {
+	if account == nil || group == nil {
+		return false
+	}
+	if account.Platform == group.Platform || group.Platform == PlatformComposite {
+		return true
+	}
+	return account.Platform == PlatformAntigravity &&
+		account.IsMixedSchedulingEnabled() &&
+		(group.Platform == PlatformAnthropic || group.Platform == PlatformGemini)
+}
+
+func (s *adminServiceImpl) loadGroupsForAccountBinding(ctx context.Context, groupIDs []int64) ([]*Group, error) {
+	if len(groupIDs) == 0 {
+		return nil, nil
+	}
+	if s.groupRepo == nil {
+		return nil, errors.New("group repository not configured")
+	}
+	groups := make([]*Group, 0, len(groupIDs))
+	for _, groupID := range groupIDs {
+		group, err := s.groupRepo.GetByID(ctx, groupID)
+		if err != nil {
+			return nil, fmt.Errorf("get group %d: %w", groupID, err)
+		}
+		groups = append(groups, group)
+	}
+	return groups, nil
+}
+
+func validateAccountGroupSet(account *Account, groups []*Group) error {
+	for _, group := range groups {
+		if accountCanBindToGroup(account, group) {
+			continue
+		}
+		return infraerrors.Newf(
+			http.StatusBadRequest,
+			"ACCOUNT_GROUP_PLATFORM_MISMATCH",
+			"%s account cannot bind to %s group %q",
+			account.Platform,
+			group.Platform,
+			group.Name,
+		)
+	}
+	return nil
+}
+
+func (s *adminServiceImpl) validateAccountGroupBindings(ctx context.Context, account *Account, groupIDs []int64) error {
+	groups, err := s.loadGroupsForAccountBinding(ctx, groupIDs)
+	if err != nil {
+		return err
+	}
+	return validateAccountGroupSet(account, groups)
+}
+
+func (s *adminServiceImpl) validateAccountIDsForGroup(ctx context.Context, accountIDs []int64, group *Group) error {
+	if len(accountIDs) == 0 || group == nil {
+		return nil
+	}
+	accounts, err := s.accountRepo.GetByIDs(ctx, accountIDs)
+	if err != nil {
+		return fmt.Errorf("get accounts for group binding: %w", err)
+	}
+	accountsByID := make(map[int64]*Account, len(accounts))
+	for _, account := range accounts {
+		if account == nil {
+			continue
+		}
+		accountsByID[account.ID] = account
+		if !accountCanBindToGroup(account, group) {
+			return infraerrors.Newf(
+				http.StatusBadRequest,
+				"ACCOUNT_GROUP_PLATFORM_MISMATCH",
+				"%s account %d cannot bind to %s group %q",
+				account.Platform,
+				account.ID,
+				group.Platform,
+				group.Name,
+			)
+		}
+	}
+	for _, accountID := range accountIDs {
+		if _, ok := accountsByID[accountID]; !ok {
+			return ErrAccountNotFound
 		}
 	}
 	return nil

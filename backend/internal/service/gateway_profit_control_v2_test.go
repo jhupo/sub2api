@@ -20,7 +20,6 @@ func gatewayProfitTestGroup(id int64, platform string) *Group {
 		Status:               StatusActive,
 		Hydrated:             true,
 		RateMultiplier:       0.5,
-		SubscriptionType:     SubscriptionTypeStandard,
 		ProfitControlEnabled: true,
 		ProfitMinMargin:      0,
 		ProfitSafetyBuffer:   0,
@@ -78,12 +77,11 @@ func TestGatewayProfitControlInstallsForFivePlatformsOnlyOnTokenRequests(t *test
 
 func TestGatewayProfitControlCompositeBillingUsesScheduledMemberConfig(t *testing.T) {
 	billingGroup := &Group{
-		ID:               201,
-		Platform:         PlatformComposite,
-		Status:           StatusActive,
-		Hydrated:         true,
-		RateMultiplier:   0.4,
-		SubscriptionType: SubscriptionTypeStandard,
+		ID:             201,
+		Platform:       PlatformComposite,
+		Status:         StatusActive,
+		Hydrated:       true,
+		RateMultiplier: 0.4,
 	}
 	memberGroup := gatewayProfitTestGroup(202, PlatformAnthropic)
 	memberGroup.RateMultiplier = 99
@@ -111,12 +109,11 @@ func TestGatewayProfitControlCompositeBillingUsesScheduledMemberConfig(t *testin
 
 func TestGatewayProfitControlGroupLoadFailureClearsForeignGate(t *testing.T) {
 	billingGroup := &Group{
-		ID:               211,
-		Platform:         PlatformComposite,
-		Status:           StatusActive,
-		Hydrated:         true,
-		RateMultiplier:   0.4,
-		SubscriptionType: SubscriptionTypeStandard,
+		ID:             211,
+		Platform:       PlatformComposite,
+		Status:         StatusActive,
+		Hydrated:       true,
+		RateMultiplier: 0.4,
 	}
 	targetGroupID := int64(212)
 	ctx := gatewayProfitTestContext(billingGroup)
@@ -306,6 +303,10 @@ func (c *gatewayProfitSnapshotCache) GetAccount(context.Context, int64) (*Accoun
 	return c.account, c.err
 }
 
+func (c *gatewayProfitSnapshotCache) SetAccount(context.Context, *Account) error {
+	return nil
+}
+
 type gatewayProfitAccountRepo struct {
 	AccountRepository
 	account *Account
@@ -362,7 +363,8 @@ func TestGatewayProfitControlTerminalRefreshFallsBackFromCacheToDatabase(t *test
 	})
 
 	latest, vetoed, reason := profitControlVetoLatest(ctx, &selected, snapshot)
-	require.Same(t, &replacement, latest)
+	require.NotSame(t, &replacement, latest, "database fallback must isolate the repository object")
+	require.Equal(t, replacement, *latest)
 	require.True(t, vetoed, "缓存读取失败时必须继续从数据库重读，不能直接使用选号旧对象")
 	require.Equal(t, openAIProfitFilterReasonThreshold, reason)
 }

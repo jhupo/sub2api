@@ -79,15 +79,10 @@ func mustCreateGroup(t *testing.T, client *dbent.Client, g *service.Group) *serv
 	if g.Status == "" {
 		g.Status = service.StatusActive
 	}
-	if g.SubscriptionType == "" {
-		g.SubscriptionType = service.SubscriptionTypeStandard
-	}
-
 	create := client.Group.Create().
 		SetName(g.Name).
 		SetPlatform(g.Platform).
 		SetStatus(g.Status).
-		SetSubscriptionType(g.SubscriptionType).
 		SetRateMultiplier(g.RateMultiplier).
 		SetIsExclusive(g.IsExclusive).
 		SetForceOpenaiFast(g.ForceOpenAIFast).
@@ -97,15 +92,6 @@ func mustCreateGroup(t *testing.T, client *dbent.Client, g *service.Group) *serv
 		SetProfitSafetyBuffer(g.ProfitSafetyBuffer)
 	if g.Description != "" {
 		create.SetDescription(g.Description)
-	}
-	if g.DailyLimitUSD != nil {
-		create.SetDailyLimitUsd(*g.DailyLimitUSD)
-	}
-	if g.WeeklyLimitUSD != nil {
-		create.SetWeeklyLimitUsd(*g.WeeklyLimitUSD)
-	}
-	if g.MonthlyLimitUSD != nil {
-		create.SetMonthlyLimitUsd(*g.MonthlyLimitUSD)
 	}
 	if !g.CreatedAt.IsZero() {
 		create.SetCreatedAt(g.CreatedAt)
@@ -121,6 +107,60 @@ func mustCreateGroup(t *testing.T, client *dbent.Client, g *service.Group) *serv
 	g.CreatedAt = created.CreatedAt
 	g.UpdatedAt = created.UpdatedAt
 	return g
+}
+
+func mustCreateSubscriptionPlan(t *testing.T, client *dbent.Client, p *service.SubscriptionPlan) *service.SubscriptionPlan {
+	t.Helper()
+	ctx := context.Background()
+
+	if p.Name == "" {
+		p.Name = "plan-" + time.Now().Format("150405.000000")
+	}
+	if p.Price == 0 {
+		p.Price = 10
+	}
+	if p.ValidityDays == 0 {
+		p.ValidityDays = 30
+	}
+	if p.ValidityUnit == "" {
+		p.ValidityUnit = "day"
+	}
+
+	plan, err := client.SubscriptionPlan.Create().
+		SetName(p.Name).
+		SetDescription(p.Description).
+		SetFeatures(p.Features).
+		SetProductName(p.ProductName).
+		SetForSale(p.ForSale).
+		SetSortOrder(p.SortOrder).
+		Save(ctx)
+	require.NoError(t, err, "create subscription plan")
+
+	version, err := client.SubscriptionPlanVersion.Create().
+		SetPlanID(plan.ID).
+		SetVersion(1).
+		SetPrice(p.Price).
+		SetNillableOriginalPrice(p.OriginalPrice).
+		SetCurrency(p.Currency).
+		SetValidityDays(p.ValidityDays).
+		SetValidityUnit(p.ValidityUnit).
+		SetNillableDailyLimitUsd(p.DailyLimitUSD).
+		SetNillableWeeklyLimitUsd(p.WeeklyLimitUSD).
+		SetNillableMonthlyLimitUsd(p.MonthlyLimitUSD).
+		Save(ctx)
+	require.NoError(t, err, "create subscription plan version")
+
+	plan, err = client.SubscriptionPlan.UpdateOneID(plan.ID).
+		SetPublishedVersionID(version.ID).
+		Save(ctx)
+	require.NoError(t, err, "publish subscription plan version")
+
+	p.ID = plan.ID
+	p.PublishedVersionID = version.ID
+	p.Version = version.Version
+	p.CreatedAt = plan.CreatedAt
+	p.UpdatedAt = plan.UpdatedAt
+	return p
 }
 
 func mustCreateProxy(t *testing.T, client *dbent.Client, p *service.Proxy) *service.Proxy {
@@ -349,15 +389,13 @@ func mustCreateRedeemCode(t *testing.T, client *dbent.Client, c *service.RedeemC
 		SetValue(c.Value).
 		SetStatus(c.Status).
 		SetNotes(c.Notes).
-		SetValidityDays(c.ValidityDays)
+		SetNillableExpiresAt(c.ExpiresAt).
+		SetNillablePlanVersionID(c.PlanVersionID)
 	if c.UsedBy != nil {
 		create.SetUsedBy(*c.UsedBy)
 	}
 	if c.UsedAt != nil {
 		create.SetUsedAt(*c.UsedAt)
-	}
-	if c.GroupID != nil {
-		create.SetGroupID(*c.GroupID)
 	}
 	if !c.CreatedAt.IsZero() {
 		create.SetCreatedAt(c.CreatedAt)
@@ -397,7 +435,8 @@ func mustCreateSubscription(t *testing.T, client *dbent.Client, s *service.UserS
 
 	create := client.UserSubscription.Create().
 		SetUserID(s.UserID).
-		SetGroupID(s.GroupID).
+		SetPlanID(s.PlanID).
+		SetPlanVersionID(s.PlanVersionID).
 		SetStartsAt(s.StartsAt).
 		SetExpiresAt(s.ExpiresAt).
 		SetStatus(s.Status).
@@ -405,7 +444,13 @@ func mustCreateSubscription(t *testing.T, client *dbent.Client, s *service.UserS
 		SetNotes(s.Notes).
 		SetDailyUsageUsd(s.DailyUsageUSD).
 		SetWeeklyUsageUsd(s.WeeklyUsageUSD).
-		SetMonthlyUsageUsd(s.MonthlyUsageUSD)
+		SetMonthlyUsageUsd(s.MonthlyUsageUSD).
+		SetDailyReservedUsd(s.DailyReservedUSD).
+		SetWeeklyReservedUsd(s.WeeklyReservedUSD).
+		SetMonthlyReservedUsd(s.MonthlyReservedUSD).
+		SetNillableDailyWindowStart(s.DailyWindowStart).
+		SetNillableWeeklyWindowStart(s.WeeklyWindowStart).
+		SetNillableMonthlyWindowStart(s.MonthlyWindowStart)
 
 	if s.AssignedBy != nil {
 		create.SetAssignedBy(*s.AssignedBy)

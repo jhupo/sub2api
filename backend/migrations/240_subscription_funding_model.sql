@@ -785,6 +785,43 @@ WHERE po.plan_id = sp.id
       OR COALESCE(po.entitlement_snapshot ->> 'plan_version_id', '') <> spv.id::TEXT
   );
 
+-- Collapse pre-versioned fulfillment evidence into the new durable assignment
+-- link. Historical workers could commit the entitlement before updating the
+-- order; exact order notes and success/assignment audits are authoritative
+-- evidence that replay must not extend the entitlement again.
+WITH recovered_assignments AS (
+    SELECT po.id AS order_id,
+           (
+               SELECT us.id
+               FROM user_subscriptions us
+               WHERE us.user_id = po.user_id
+                 AND us.plan_version_id = po.plan_version_id
+                 AND (
+                     EXISTS (
+                         SELECT 1
+                         FROM regexp_split_to_table(replace(COALESCE(us.notes, ''), E'\r\n', E'\n'), E'\n') AS note_line
+                         WHERE btrim(note_line) = 'payment order ' || po.id::TEXT
+                     )
+                     OR EXISTS (
+                         SELECT 1
+                         FROM payment_audit_logs pal
+                         WHERE pal.order_id = po.id::TEXT
+                           AND pal.action IN ('SUBSCRIPTION_ASSIGNED', 'SUBSCRIPTION_SUCCESS')
+                     )
+                 )
+               ORDER BY (us.deleted_at IS NULL) DESC, us.updated_at DESC, us.id DESC
+               LIMIT 1
+           ) AS subscription_id
+    FROM payment_orders po
+    WHERE po.order_type = 'subscription'
+      AND po.fulfilled_subscription_id IS NULL
+)
+UPDATE payment_orders po
+SET fulfilled_subscription_id = recovered_assignments.subscription_id
+FROM recovered_assignments
+WHERE po.id = recovered_assignments.order_id
+  AND recovered_assignments.subscription_id IS NOT NULL;
+
 DO $$
 BEGIN
     IF EXISTS (

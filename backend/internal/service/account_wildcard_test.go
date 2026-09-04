@@ -537,7 +537,7 @@ func TestAccountGetModelMapping_AntigravityEnsuresGeminiDefaultPassthroughs(t *t
 	}
 }
 
-func TestAccountGetModelMapping_GoogleOneUsesConservativeDefaults(t *testing.T) {
+func TestAccountGeminiOAuthRequiresSupportedType(t *testing.T) {
 	account := &Account{
 		Platform: PlatformGemini,
 		Type:     AccountTypeOAuth,
@@ -546,40 +546,33 @@ func TestAccountGetModelMapping_GoogleOneUsesConservativeDefaults(t *testing.T) 
 		},
 	}
 
-	mapping := account.GetModelMapping()
-	for _, model := range []string{"gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"} {
-		if mapping[model] != model {
-			t.Fatalf("expected Google One model %q to map to itself, got %q", model, mapping[model])
-		}
-	}
-	for _, model := range []string{"gemini-2.5-flash-image", "gemini-3.1-flash-image", "gemini-3.5-flash"} {
-		if _, ok := mapping[model]; ok {
-			t.Fatalf("did not expect unsupported Google One model %q", model)
-		}
-	}
 	if account.IsModelSupported("gemini-3.5-flash") {
-		t.Fatal("Google One defaults must not treat unsupported models as eligible")
+		t.Fatal("unsupported Gemini OAuth types must not be schedulable")
 	}
 }
 
-func TestAccountGetModelMapping_GoogleOnePreservesExplicitMapping(t *testing.T) {
+func TestAccountGetModelMapping_GeminiAntigravityPreservesExplicitMapping(t *testing.T) {
 	account := &Account{
 		Platform: PlatformGemini,
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
-			"oauth_type": "google_one",
+			"oauth_type": "antigravity",
 			"model_mapping": map[string]any{
-				"custom-model": "gemini-2.5-flash",
+				"custom-model":           "gemini-2.5-flash",
+				"gemini-3.1-flash-image": "gemini-3.1-flash-image",
 			},
 		},
 	}
 
 	mapping := account.GetModelMapping()
 	if mapping["custom-model"] != "gemini-2.5-flash" {
-		t.Fatalf("expected explicit Google One mapping to be preserved, got %v", mapping)
+		t.Fatalf("expected explicit Antigravity mapping to be preserved, got %v", mapping)
 	}
 	if _, ok := mapping["gemini-2.5-flash"]; ok {
 		t.Fatalf("did not expect defaults to overwrite an explicit mapping: %v", mapping)
+	}
+	if !account.IsModelSupported("gemini-3.1-flash-image") {
+		t.Fatal("Antigravity model eligibility should use the persisted live catalog mapping")
 	}
 }
 

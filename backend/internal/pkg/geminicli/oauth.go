@@ -29,10 +29,10 @@ type OAuthSession struct {
 	RedirectURI  string `json:"redirect_uri"`
 	ProjectID    string `json:"project_id,omitempty"`
 	// TierID is a user-selected fallback tier.
-	// For oauth types that support auto detection (google_one/code_assist), the server will prefer
+	// For OAuth types that support auto detection, the server will prefer
 	// the detected tier and fall back to TierID when detection fails.
 	TierID    string    `json:"tier_id,omitempty"`
-	OAuthType string    `json:"oauth_type"` // "code_assist" 或 "ai_studio"
+	OAuthType string    `json:"oauth_type"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -147,15 +147,15 @@ func base64URLEncode(data []byte) string {
 	return strings.TrimRight(base64.URLEncoding.EncodeToString(data), "=")
 }
 
-// EffectiveOAuthConfig returns the effective OAuth configuration.
-// oauthType: "code_assist" or "ai_studio" (defaults to "code_assist" if empty).
-//
-// If ClientID/ClientSecret is not provided, this falls back to the built-in Gemini CLI OAuth client.
-//
-// Note: The built-in Gemini CLI OAuth client is restricted and may reject some scopes (e.g.
-// https://www.googleapis.com/auth/generative-language), which will surface as
-// "restricted_client" / "Unregistered scope(s)" errors during browser authorization.
+// EffectiveOAuthConfig applies the credential policy for Gemini CLI OAuth.
+// Code Assist always uses the built-in CLI client. AI Studio always uses the
+// explicitly configured custom client. Antigravity is handled by its own package.
 func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error) {
+	oauthType = strings.ToLower(strings.TrimSpace(oauthType))
+	if oauthType != "code_assist" && oauthType != "ai_studio" {
+		return OAuthConfig{}, infraerrors.Newf(http.StatusBadRequest, "GEMINI_OAUTH_TYPE_INVALID", "unsupported Gemini CLI OAuth type %q", oauthType)
+	}
+
 	effective := OAuthConfig{
 		ClientID:     strings.TrimSpace(cfg.ClientID),
 		ClientSecret: strings.TrimSpace(cfg.ClientSecret),
@@ -167,9 +167,7 @@ func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error
 		effective.Scopes = strings.Join(strings.Fields(strings.ReplaceAll(effective.Scopes, ",", " ")), " ")
 	}
 
-	// Fall back to built-in Gemini CLI OAuth client when not configured.
-	// SECURITY: This repo does not embed the built-in client secret; it must be provided via env.
-	if effective.ClientID == "" && effective.ClientSecret == "" {
+	if oauthType == "code_assist" {
 		secret := strings.TrimSpace(GeminiCLIOAuthClientSecret)
 		if secret == "" {
 			if v, ok := os.LookupEnv(GeminiCLIOAuthClientSecretEnv); ok {
@@ -177,36 +175,24 @@ func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error
 			}
 		}
 		if secret == "" {
-			return OAuthConfig{}, infraerrors.Newf(http.StatusBadRequest, "GEMINI_CLI_OAUTH_CLIENT_SECRET_MISSING", "built-in Gemini CLI OAuth client_secret is not configured; set %s or provide a custom OAuth client", GeminiCLIOAuthClientSecretEnv)
+			return OAuthConfig{}, infraerrors.Newf(http.StatusBadRequest, "GEMINI_CLI_OAUTH_CLIENT_SECRET_MISSING", "built-in Gemini CLI OAuth client_secret is not configured; set %s", GeminiCLIOAuthClientSecretEnv)
 		}
 		effective.ClientID = GeminiCLIOAuthClientID
 		effective.ClientSecret = secret
 	} else if effective.ClientID == "" || effective.ClientSecret == "" {
-		return OAuthConfig{}, infraerrors.New(http.StatusBadRequest, "GEMINI_OAUTH_CLIENT_NOT_CONFIGURED", "OAuth client not configured: please set both client_id and client_secret (or leave both empty to use the built-in Gemini CLI client)")
+		return OAuthConfig{}, infraerrors.New(http.StatusBadRequest, "GEMINI_OAUTH_CLIENT_NOT_CONFIGURED", "AI Studio OAuth requires a custom OAuth Client; set both client_id and client_secret")
+	} else if effective.ClientID == GeminiCLIOAuthClientID {
+		return OAuthConfig{}, infraerrors.New(http.StatusBadRequest, "GEMINI_AI_STUDIO_CUSTOM_CLIENT_REQUIRED", "AI Studio OAuth requires a custom OAuth client")
 	}
 
-	isBuiltinClient := effective.ClientID == GeminiCLIOAuthClientID
-
 	if effective.Scopes == "" {
-		// Use different default scopes based on OAuth type
-		switch oauthType {
-		case "ai_studio":
-			// Built-in client can't request some AI Studio scopes (notably generative-language).
-			if isBuiltinClient {
-				effective.Scopes = DefaultCodeAssistScopes
-			} else {
-				effective.Scopes = DefaultAIStudioScopes
-			}
-		case "google_one":
-			// Google One always uses built-in Gemini CLI client (same as code_assist)
-			// Built-in client can't request restricted scopes like generative-language.retriever or drive.readonly
+		if oauthType == "code_assist" {
 			effective.Scopes = DefaultCodeAssistScopes
-		default:
-			// Default to Code Assist scopes
-			effective.Scopes = DefaultCodeAssistScopes
+		} else {
+			effective.Scopes = DefaultAIStudioScopes
 		}
-	} else if (oauthType == "ai_studio" || oauthType == "google_one") && isBuiltinClient {
-		// If user overrides scopes while still using the built-in client, strip restricted scopes.
+	} else if oauthType == "code_assist" {
+		// Google's built-in CLI client rejects Drive and Generative Language scopes.
 		parts := strings.Fields(effective.Scopes)
 		filtered := make([]string, 0, len(parts))
 		for _, s := range parts {
@@ -220,17 +206,6 @@ func EffectiveOAuthConfig(cfg OAuthConfig, oauthType string) (OAuthConfig, error
 		} else {
 			effective.Scopes = strings.Join(filtered, " ")
 		}
-	}
-
-	// Backward compatibility: normalize older AI Studio scope to the currently documented one.
-	if oauthType == "ai_studio" && effective.Scopes != "" {
-		parts := strings.Fields(effective.Scopes)
-		for i := range parts {
-			if parts[i] == "https://www.googleapis.com/auth/generative-language" {
-				parts[i] = "https://www.googleapis.com/auth/generative-language.retriever"
-			}
-		}
-		effective.Scopes = strings.Join(parts, " ")
 	}
 
 	return effective, nil

@@ -132,6 +132,31 @@ type RedeemCodeBatchUpdateResult struct {
 	Updated int64 `json:"updated"`
 }
 
+func validateRedeemPlanVersion(ctx context.Context, client *dbent.Client, codeType string, planVersionID *int64) error {
+	if codeType != RedeemTypeSubscription {
+		if planVersionID != nil {
+			return infraerrors.BadRequest("REDEEM_CODE_PLAN_TYPE_MISMATCH", "plan_version_id can only be assigned to subscription redeem codes")
+		}
+		return nil
+	}
+	if planVersionID == nil {
+		return infraerrors.BadRequest("REDEEM_CODE_PLAN_VERSION_REQUIRED", "plan_version_id is required for subscription type")
+	}
+	if *planVersionID <= 0 {
+		return infraerrors.BadRequest("REDEEM_CODE_PLAN_VERSION_ID_INVALID", "plan_version_id must be positive")
+	}
+	if client == nil {
+		return infraerrors.InternalServer("PLAN_STORE_UNAVAILABLE", "subscription plan store is unavailable")
+	}
+	if _, err := client.SubscriptionPlanVersion.Get(ctx, *planVersionID); err != nil {
+		if dbent.IsNotFound(err) {
+			return infraerrors.BadRequest("REDEEM_CODE_PLAN_VERSION_NOT_FOUND", "subscription plan version not found")
+		}
+		return err
+	}
+	return nil
+}
+
 // RedeemService 兑换码服务
 type RedeemService struct {
 	redeemRepo           RedeemCodeRepository
@@ -260,6 +285,9 @@ func (s *RedeemService) CreateCode(ctx context.Context, code *RedeemCode) error 
 	}
 	if code.Status == "" {
 		code.Status = StatusUnused
+	}
+	if err := validateRedeemPlanVersion(ctx, s.entClient, code.Type, code.PlanVersionID); err != nil {
+		return err
 	}
 	if code.IsExpired() {
 		return ErrRedeemCodeExpired

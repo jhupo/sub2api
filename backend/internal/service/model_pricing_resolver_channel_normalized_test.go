@@ -56,7 +56,7 @@ func newChannelServiceWithPricings(groupID int64, pricings []ChannelModelPricing
 }
 
 // recordUsageWithChannelPricing 用给定的渠道定价跑一次 RecordUsage，返回落库的 UsageLog。
-func recordUsageWithChannelPricing(t *testing.T, requestedModel string, subscriptionGroup bool, pricings []ChannelModelPricing) *UsageLog {
+func recordUsageWithChannelPricing(t *testing.T, requestedModel string, pricings []ChannelModelPricing) *UsageLog {
 	t.Helper()
 	const groupID = int64(777)
 
@@ -71,10 +71,6 @@ func recordUsageWithChannelPricing(t *testing.T, requestedModel string, subscrip
 		Platform:       PlatformOpenAI,
 		RateMultiplier: 1,
 	}
-	if subscriptionGroup {
-		group.SubscriptionType = SubscriptionTypeSubscription
-	}
-
 	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
 		Result: &OpenAIForwardResult{
 			RequestID:    "resp_luna_5256",
@@ -105,7 +101,7 @@ func recordUsageWithChannelPricing(t *testing.T, requestedModel string, subscrip
 
 // 基线：请求模型与渠道定价 key 完全一致 → 按渠道价计。
 func TestChannelPricing_ExactModelMatch(t *testing.T) {
-	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna", false, []ChannelModelPricing{
+	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna", []ChannelModelPricing{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, channelPricingExpectedChannelCost),
 	})
 	require.InDelta(t, channelPricingExpectedChannelCost, log.InputCost, 1e-9)
@@ -114,7 +110,7 @@ func TestChannelPricing_ExactModelMatch(t *testing.T) {
 // issue #5256 主回归：请求模型带 effort 后缀、渠道只配基名（无通配符）→ 仍应按渠道价计。
 // 修复前此处得到 0.2（官方兜底价）。
 func TestChannelPricing_SuffixedModelUsesNormalizedChannelPricing(t *testing.T) {
-	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna-high", false, []ChannelModelPricing{
+	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna-high", []ChannelModelPricing{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, channelPricingExpectedChannelCost),
 	})
 	require.InDelta(t, channelPricingExpectedChannelCost, log.InputCost, 1e-9,
@@ -125,7 +121,7 @@ func TestChannelPricing_SuffixedModelUsesNormalizedChannelPricing(t *testing.T) 
 // 同一根因的另一种变体名：上游返回带日期后缀的模型名
 // （isCodexDateSuffix，如 gpt-5.6-luna-2026-08-01），渠道只配基名 → 仍应按渠道价计。
 func TestChannelPricing_DateSuffixedModelUsesNormalizedChannelPricing(t *testing.T) {
-	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna-2026-08-01", false, []ChannelModelPricing{
+	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna-2026-08-01", []ChannelModelPricing{
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, channelPricingExpectedChannelCost),
 	})
 	require.InDelta(t, channelPricingExpectedChannelCost, log.InputCost, 1e-9,
@@ -135,7 +131,7 @@ func TestChannelPricing_DateSuffixedModelUsesNormalizedChannelPricing(t *testing
 // 精确匹配优先：同时配了变体名与基名时，请求变体名必须命中变体的显式配价，
 // 不能被归一化后的基名覆盖。
 func TestChannelPricing_ExactVariantWinsOverNormalizedBaseName(t *testing.T) {
-	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna-high", false, []ChannelModelPricing{
+	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna-high", []ChannelModelPricing{
 		tokenPricingForModels([]string{"gpt-5.6-luna-high"}, channelPricingUnrelatedCost),
 		tokenPricingForModels([]string{"gpt-5.6-luna"}, channelPricingExpectedChannelCost),
 	})
@@ -143,18 +139,10 @@ func TestChannelPricing_ExactVariantWinsOverNormalizedBaseName(t *testing.T) {
 		"explicit per-variant channel pricing must win over the normalized base name")
 }
 
-// 订阅型分组走同一条渠道定价解析路径。
-func TestChannelPricing_SuffixedModelSubscriptionGroup(t *testing.T) {
-	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna-high", true, []ChannelModelPricing{
-		tokenPricingForModels([]string{"gpt-5.6-luna"}, channelPricingExpectedChannelCost),
-	})
-	require.InDelta(t, channelPricingExpectedChannelCost, log.InputCost, 1e-9)
-}
-
 // 反向保护：渠道只配了不相关的模型时，归一化查找不得误命中该配置，
 // 应落回官方兜底价。
 func TestChannelPricing_UnrelatedChannelModelNotMatched(t *testing.T) {
-	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna-high", false, []ChannelModelPricing{
+	log := recordUsageWithChannelPricing(t, "gpt-5.6-luna-high", []ChannelModelPricing{
 		tokenPricingForModels([]string{"gpt-5.4"}, channelPricingUnrelatedCost),
 	})
 	require.InDelta(t, channelPricingExpectedOfficialCost, log.InputCost, 1e-9,

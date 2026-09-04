@@ -82,6 +82,8 @@ type LoadCodeAssistRequest struct {
 		IDEType    string `json:"ideType"`
 		IDEVersion string `json:"ideVersion"`
 		IDEName    string `json:"ideName"`
+		Platform   string `json:"platform,omitempty"`
+		PluginType string `json:"pluginType,omitempty"`
 	} `json:"metadata"`
 }
 
@@ -442,14 +444,15 @@ func (c *Client) LoadCodeAssist(ctx context.Context, accessToken string) (*LoadC
 	reqBody.Metadata.IDEType = "ANTIGRAVITY"
 	reqBody.Metadata.IDEVersion = GetUserAgentVersionForContext(ctx)
 	reqBody.Metadata.IDEName = "antigravity"
+	reqBody.Metadata.Platform = "PLATFORM_UNSPECIFIED"
+	reqBody.Metadata.PluginType = "GEMINI"
 
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, nil, fmt.Errorf("序列化请求失败: %w", err)
 	}
 
-	// 固定顺序：prod -> daily
-	availableURLs := BaseURLs
+	availableURLs := CodeAssistBaseURLs()
 
 	var lastErr error
 	for urlIdx, baseURL := range availableURLs {
@@ -459,9 +462,7 @@ func (c *Client) LoadCodeAssist(ctx context.Context, accessToken string) (*LoadC
 			lastErr = fmt.Errorf("创建请求失败: %w", err)
 			continue
 		}
-		req.Header.Set("Authorization", "Bearer "+accessToken)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", GetUserAgentForContext(ctx))
+		ApplyCodeAssistRequestHeaders(req, ctx, accessToken, "application/json")
 
 		resp, err := servertiming.Do(c.httpClient, req)
 		if err != nil {
@@ -526,7 +527,7 @@ func (c *Client) OnboardUser(ctx context.Context, accessToken, tierID string) (s
 		return "", fmt.Errorf("序列化请求失败: %w", err)
 	}
 
-	availableURLs := BaseURLs
+	availableURLs := CodeAssistBaseURLs()
 	var lastErr error
 
 	for urlIdx, baseURL := range availableURLs {
@@ -538,9 +539,7 @@ func (c *Client) OnboardUser(ctx context.Context, accessToken, tierID string) (s
 				lastErr = fmt.Errorf("创建请求失败: %w", err)
 				break
 			}
-			req.Header.Set("Authorization", "Bearer "+accessToken)
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("User-Agent", GetUserAgentForContext(ctx))
+			ApplyCodeAssistRequestHeaders(req, ctx, accessToken, "application/json")
 
 			resp, err := servertiming.Do(c.httpClient, req)
 			if err != nil {
@@ -627,6 +626,11 @@ type ModelQuotaInfo struct {
 type ModelInfo struct {
 	QuotaInfo          *ModelQuotaInfo `json:"quotaInfo,omitempty"`
 	DisplayName        string          `json:"displayName,omitempty"`
+	Label              string          `json:"label,omitempty"`
+	Name               string          `json:"name,omitempty"`
+	ModelName          string          `json:"modelName,omitempty"`
+	APIProvider        string          `json:"apiProvider,omitempty"`
+	ModelProvider      string          `json:"modelProvider,omitempty"`
 	SupportsImages     *bool           `json:"supportsImages,omitempty"`
 	SupportsThinking   *bool           `json:"supportsThinking,omitempty"`
 	ThinkingBudget     *int            `json:"thinkingBudget,omitempty"`
@@ -652,8 +656,9 @@ type FetchAvailableModelsResponse struct {
 	DeprecatedModelIDs map[string]DeprecatedModelInfo `json:"deprecatedModelIds,omitempty"`
 }
 
-// FetchAvailableModels 获取可用模型和配额信息，返回解析后的结构体和原始 JSON
-// 支持 URL fallback：sandbox → daily → prod
+// FetchAvailableModels 获取可用模型和配额信息，返回解析后的结构体和原始 JSON。
+// 使用与 Code Assist 请求相同的 daily → daily sandbox → prod 端点集合，
+// 避免配额监控与实际转发看到不同的账号模型目录。
 func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectID string, bodyLimit int64) (*FetchAvailableModelsResponse, map[string]any, error) {
 	if c == nil || c.httpClient == nil {
 		return nil, nil, errors.New("antigravity client is not configured")
@@ -668,8 +673,7 @@ func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectI
 		return nil, nil, fmt.Errorf("序列化请求失败: %w", err)
 	}
 
-	// 固定顺序：prod -> daily
-	availableURLs := BaseURLs
+	availableURLs := CodeAssistBaseURLs()
 
 	fetchClient := c.fetchAvailableModelsHTTPClient()
 	var lastErr error
@@ -680,9 +684,7 @@ func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectI
 			lastErr = fmt.Errorf("创建请求失败: %w", err)
 			continue
 		}
-		req.Header.Set("Authorization", "Bearer "+accessToken)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", GetUserAgentForContext(ctx))
+		ApplyCodeAssistRequestHeaders(req, ctx, accessToken, "application/json")
 
 		resp, err := servertiming.Do(fetchClient, req)
 		if err != nil {
@@ -737,6 +739,120 @@ func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectI
 	return nil, nil, lastErr
 }
 
+// FetchAvailableModelsCatalog merges model catalogs across the current Code
+// Assist endpoint set. One endpoint failure does not discard successful
+// catalogs from the others.
+func (c *Client) FetchAvailableModelsCatalog(ctx context.Context, accessToken, projectID string, bodyLimit int64) (*FetchAvailableModelsResponse, error) {
+	return c.fetchAvailableModelsCatalog(ctx, accessToken, projectID, bodyLimit, CodeAssistBaseURLs())
+}
+
+func (c *Client) fetchAvailableModelsCatalog(ctx context.Context, accessToken, projectID string, bodyLimit int64, baseURLs []string) (*FetchAvailableModelsResponse, error) {
+	if c == nil || c.httpClient == nil {
+		return nil, errors.New("antigravity client is not configured")
+	}
+	if bodyLimit <= 0 {
+		return nil, errors.New("fetchAvailableModels body limit must be positive")
+	}
+	reqBody, err := json.Marshal(FetchAvailableModelsRequest{Project: projectID})
+	if err != nil {
+		return nil, fmt.Errorf("序列化请求失败: %w", err)
+	}
+
+	type endpointResult struct {
+		index  int
+		models *FetchAvailableModelsResponse
+		err    error
+	}
+	if len(baseURLs) == 0 {
+		return nil, errors.New("fetchAvailableModels failed: no endpoint available")
+	}
+	results := make(chan endpointResult, len(baseURLs))
+	for index, baseURL := range baseURLs {
+		index, baseURL := index, baseURL
+		go func() {
+			models, _, err := c.fetchAvailableModelsAt(ctx, accessToken, baseURL, reqBody, bodyLimit)
+			results <- endpointResult{index: index, models: models, err: err}
+		}()
+	}
+
+	ordered := make([]endpointResult, len(baseURLs))
+	for range baseURLs {
+		result := <-results
+		ordered[result.index] = result
+	}
+	merged := &FetchAvailableModelsResponse{
+		Models:             make(map[string]ModelInfo),
+		DeprecatedModelIDs: make(map[string]DeprecatedModelInfo),
+	}
+	var lastErr error
+	succeeded := false
+	for index, result := range ordered {
+		if result.err != nil {
+			lastErr = result.err
+			continue
+		}
+		if result.models == nil {
+			continue
+		}
+		succeeded = true
+		DefaultURLAvailability.MarkSuccess(baseURLs[index])
+		for id, info := range result.models.Models {
+			merged.Models[id] = info
+		}
+		for id, info := range result.models.DeprecatedModelIDs {
+			merged.DeprecatedModelIDs[id] = info
+		}
+	}
+	if !succeeded {
+		if lastErr == nil {
+			lastErr = errors.New("fetchAvailableModels failed: no endpoint available")
+		}
+		return nil, lastErr
+	}
+	return merged, nil
+}
+
+func (c *Client) fetchAvailableModelsAt(
+	ctx context.Context,
+	accessToken string,
+	baseURL string,
+	reqBody []byte,
+	bodyLimit int64,
+) (*FetchAvailableModelsResponse, map[string]any, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/v1internal:fetchAvailableModels", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+	ApplyCodeAssistRequestHeaders(req, ctx, accessToken, "application/json")
+
+	resp, err := servertiming.Do(c.fetchAvailableModelsHTTPClient(), req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetchAvailableModels 请求失败: %w", err)
+	}
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit+1))
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, nil, fmt.Errorf("读取响应失败: %w", err)
+	}
+	if int64(len(respBody)) > bodyLimit {
+		return nil, nil, fmt.Errorf("响应超过 %d 字节", bodyLimit)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return nil, nil, &ForbiddenError{StatusCode: resp.StatusCode, Body: string(respBody)}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("fetchAvailableModels 失败 (HTTP %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var models FetchAvailableModelsResponse
+	if err := json.Unmarshal(respBody, &models); err != nil {
+		return nil, nil, fmt.Errorf("响应解析失败: %w", err)
+	}
+	var raw map[string]any
+	_ = json.Unmarshal(respBody, &raw)
+	return &models, raw, nil
+}
+
 func (c *Client) fetchAvailableModelsHTTPClient() *http.Client {
 	fetchClient := *c.httpClient
 	fetchClient.CheckRedirect = checkFetchAvailableModelsRedirect
@@ -767,6 +883,12 @@ func isAllowedFetchAvailableModelsRedirectHost(host string) bool {
 			continue
 		}
 		if strings.EqualFold(host, parsed.Hostname()) {
+			return true
+		}
+	}
+	for _, baseURL := range CodeAssistBaseURLs() {
+		parsed, err := url.Parse(baseURL)
+		if err == nil && strings.EqualFold(host, parsed.Hostname()) {
 			return true
 		}
 	}

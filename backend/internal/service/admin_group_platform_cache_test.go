@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// groupPlatformRepoStub 只实现 UpdateGroup 走到的两个方法，其余靠内嵌接口占位。
+// groupPlatformRepoStub only implements the repository calls exercised by UpdateGroup.
 type groupPlatformRepoStub struct {
 	GroupRepository
 	group   *Group
@@ -24,6 +24,10 @@ func (r *groupPlatformRepoStub) GetByID(_ context.Context, _ int64) (*Group, err
 func (r *groupPlatformRepoStub) Update(_ context.Context, group *Group) error {
 	r.updated = group
 	return nil
+}
+
+func (r *groupPlatformRepoStub) GetAccountIDsByGroupIDs(_ context.Context, _ []int64) ([]int64, error) {
+	return nil, nil
 }
 
 type channelCacheInvalidatorSpy struct {

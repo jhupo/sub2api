@@ -577,6 +577,10 @@ func (s *AccountTestService) fetchUpstreamModelList(ctx context.Context, account
 		models, err := s.fetchAntigravityOAuthUpstreamModels(ctx, account)
 		return models, nil, err
 	}
+	if account.IsGeminiCloudCodeOAuth() {
+		models, err := s.fetchGeminiCodeAssistOAuthUpstreamModels(ctx, account)
+		return models, nil, err
+	}
 
 	if s.httpUpstream == nil {
 		return nil, nil, newUpstreamModelSyncConfigError("Upstream HTTP client is not configured", nil)
@@ -1020,6 +1024,33 @@ func (s *AccountTestService) fetchAntigravityOAuthUpstreamModels(ctx context.Con
 		models = append(models, strings.TrimSpace(modelID))
 	}
 	return dedupeAndSortModelIDs(models), nil
+}
+
+func (s *AccountTestService) fetchGeminiCodeAssistOAuthUpstreamModels(ctx context.Context, account *Account) ([]string, error) {
+	if s.geminiTokenProvider == nil {
+		return nil, newUpstreamModelSyncConfigError("Gemini token provider is not configured", nil)
+	}
+	if s.codeAssistModelResolver == nil {
+		return nil, newUpstreamModelSyncInternalError("Gemini OAuth model catalog cannot list authorized models", nil)
+	}
+	accessToken, err := s.geminiTokenProvider.GetAccessToken(ctx, account)
+	if err != nil {
+		return nil, newUpstreamModelSyncUpstreamError("Failed to get Gemini access token", err)
+	}
+	models, err := s.codeAssistModelResolver.ListAuthorized(ctx, account, accessToken, true)
+	if err != nil && len(models) == 0 {
+		return nil, newUpstreamModelSyncUpstreamError("Failed to fetch Gemini OAuth model catalog", err)
+	}
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		if id := strings.TrimSpace(model.ID); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, newUpstreamModelSyncUpstreamError("Gemini OAuth returned no supported models", nil)
+	}
+	return ids, nil
 }
 
 func (s *AccountTestService) doUpstreamModelsRequest(req *http.Request, proxyURL string, account *Account) (*http.Response, error) {

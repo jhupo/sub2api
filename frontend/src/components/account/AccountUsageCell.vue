@@ -905,21 +905,27 @@ const geminiOAuthType = computed(() => {
 const isGeminiCodeAssist = computed(() => {
   if (props.account.platform !== 'gemini') return false
   const creds = props.account.credentials as GeminiCredentials | undefined
-  return creds?.oauth_type === 'code_assist' || (!creds?.oauth_type && !!creds?.project_id)
+  return creds?.oauth_type === 'code_assist'
 })
 
-const geminiChannelShort = computed((): 'ai studio' | 'gcp' | 'google one' | 'client' | null => {
+const isGeminiAntigravity = computed(() => {
+  if (props.account.platform !== 'gemini') return false
+  const creds = props.account.credentials as GeminiCredentials | undefined
+  return creds?.oauth_type === 'antigravity'
+})
+
+const geminiChannelShort = computed((): 'ai studio' | 'gcp' | 'antigravity' | 'client' | null => {
   if (props.account.platform !== 'gemini') return null
 
   // API Key accounts are AI Studio.
   if (props.account.type === 'apikey') return 'ai studio'
 
-  if (geminiOAuthType.value === 'google_one') return 'google one'
+  if (isGeminiAntigravity.value) return 'antigravity'
   if (isGeminiCodeAssist.value) return 'gcp'
   if (geminiOAuthType.value === 'ai_studio') return 'client'
 
-  // Fallback (unknown legacy data): treat as AI Studio.
-  return 'ai studio'
+  // Unknown OAuth identities are unschedulable on the backend; keep their UI neutral.
+  return null
 })
 
 const geminiUserLevel = computed((): string | null => {
@@ -927,19 +933,12 @@ const geminiUserLevel = computed((): string | null => {
 
   const tier = (geminiTier.value || '').toString().trim()
   const tierLower = tier.toLowerCase()
-  const tierUpper = tier.toUpperCase()
 
-  // Google One: free / pro / ultra
-  if (geminiOAuthType.value === 'google_one') {
-    if (tierLower === 'google_one_free') return 'free'
+  // Antigravity personal subscription: free / pro / ultra
+  if (isGeminiAntigravity.value) {
+    if (tierLower === 'google_ai_free') return 'free'
     if (tierLower === 'google_ai_pro') return 'pro'
     if (tierLower === 'google_ai_ultra') return 'ultra'
-
-    // Backward compatibility (legacy tier markers)
-    if (tierUpper === 'AI_PREMIUM' || tierUpper === 'GOOGLE_ONE_STANDARD') return 'pro'
-    if (tierUpper === 'GOOGLE_ONE_UNLIMITED') return 'ultra'
-    if (tierUpper === 'FREE' || tierUpper === 'GOOGLE_ONE_BASIC' || tierUpper === 'GOOGLE_ONE_UNKNOWN' || tierUpper === '') return 'free'
-
     return null
   }
 
@@ -948,8 +947,6 @@ const geminiUserLevel = computed((): string | null => {
     if (tierLower === 'gcp_enterprise') return 'enterprise'
     if (tierLower === 'gcp_standard') return 'standard'
 
-    // Backward compatibility
-    if (tierUpper.includes('ULTRA') || tierUpper.includes('ENTERPRISE')) return 'enterprise'
     return 'standard'
   }
 
@@ -958,9 +955,6 @@ const geminiUserLevel = computed((): string | null => {
     if (tierLower === 'aistudio_paid') return 'paid'
     if (tierLower === 'aistudio_free') return 'free'
 
-    // Backward compatibility
-    if (tierUpper.includes('PAID') || tierUpper.includes('PAYG') || tierUpper.includes('PAY')) return 'paid'
-    if (tierUpper.includes('FREE')) return 'free'
     if (props.account.type === 'apikey') return 'free'
     return null
   }
@@ -985,7 +979,7 @@ const geminiTierClass = computed(() => {
     return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
   }
 
-  if (channel === 'google one') {
+  if (channel === 'antigravity') {
     if (level === 'ultra') return 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300'
     if (level === 'pro') return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
     return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
@@ -1001,8 +995,8 @@ const geminiTierClass = computed(() => {
 
 // Gemini 配额政策信息
 const geminiQuotaPolicyChannel = computed(() => {
-  if (geminiOAuthType.value === 'google_one') {
-    return t('admin.accounts.gemini.quotaPolicy.rows.googleOne.channel')
+  if (isGeminiAntigravity.value) {
+    return t('admin.accounts.gemini.quotaPolicy.rows.antigravity.channel')
   }
   if (isGeminiCodeAssist.value) {
     return t('admin.accounts.gemini.quotaPolicy.rows.gcp.channel')
@@ -1013,14 +1007,14 @@ const geminiQuotaPolicyChannel = computed(() => {
 const geminiQuotaPolicyLimits = computed(() => {
   const tierLower = (geminiTier.value || '').toString().trim().toLowerCase()
 
-  if (geminiOAuthType.value === 'google_one') {
+  if (isGeminiAntigravity.value) {
     if (tierLower === 'google_ai_ultra' || geminiUserLevel.value === 'ultra') {
-      return t('admin.accounts.gemini.quotaPolicy.rows.googleOne.limitsUltra')
+      return t('admin.accounts.gemini.quotaPolicy.rows.antigravity.limitsUltra')
     }
     if (tierLower === 'google_ai_pro' || geminiUserLevel.value === 'pro') {
-      return t('admin.accounts.gemini.quotaPolicy.rows.googleOne.limitsPro')
+      return t('admin.accounts.gemini.quotaPolicy.rows.antigravity.limitsPro')
     }
-    return t('admin.accounts.gemini.quotaPolicy.rows.googleOne.limitsFree')
+    return t('admin.accounts.gemini.quotaPolicy.rows.antigravity.limitsFree')
   }
 
   if (isGeminiCodeAssist.value) {
@@ -1038,7 +1032,7 @@ const geminiQuotaPolicyLimits = computed(() => {
 })
 
 const geminiQuotaPolicyDocsUrl = computed(() => {
-  if (geminiOAuthType.value === 'google_one' || isGeminiCodeAssist.value) {
+  if (isGeminiAntigravity.value || isGeminiCodeAssist.value) {
     return 'https://developers.google.com/gemini-code-assist/resources/quotas'
   }
   return 'https://ai.google.dev/pricing'
@@ -1046,11 +1040,11 @@ const geminiQuotaPolicyDocsUrl = computed(() => {
 
 const geminiUsesSharedDaily = computed(() => {
   if (props.account.platform !== 'gemini') return false
-  // Per requirement: Google One & GCP are shared RPD pools (no per-model breakdown).
+  // Antigravity and GCP use shared RPD pools (no per-model breakdown).
   return (
     !!usageInfo.value?.gemini_shared_daily ||
     !!usageInfo.value?.gemini_shared_minute ||
-    geminiOAuthType.value === 'google_one' ||
+    isGeminiAntigravity.value ||
     isGeminiCodeAssist.value
   )
 })

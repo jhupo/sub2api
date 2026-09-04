@@ -35,7 +35,7 @@ func TestRedeemService_BatchUpdate_PartialFields(t *testing.T) {
 	require.True(t, repo.batchUpdateFields.ExpiresAt.Set)
 	require.WithinDuration(t, expiresAt, *repo.batchUpdateFields.ExpiresAt.Value, time.Second)
 	require.Equal(t, &notes, repo.batchUpdateFields.Notes)
-	require.False(t, repo.batchUpdateFields.GroupID.Set)
+	require.False(t, repo.batchUpdateFields.PlanVersionID.Set)
 	require.Nil(t, repo.batchUpdateFields.Type)
 	require.Nil(t, repo.batchUpdateFields.Value)
 }

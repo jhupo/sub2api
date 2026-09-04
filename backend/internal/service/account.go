@@ -16,7 +16,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
@@ -304,9 +303,6 @@ func (a *Account) GeminiOAuthType() string {
 		return ""
 	}
 	oauthType := strings.TrimSpace(a.GetCredential("oauth_type"))
-	if oauthType == "" && strings.TrimSpace(a.GetCredential("project_id")) != "" {
-		return "code_assist"
-	}
 	return oauthType
 }
 
@@ -316,20 +312,28 @@ func (a *Account) GeminiTierID() string {
 }
 
 func (a *Account) IsGeminiCodeAssist() bool {
-	if a.Platform != PlatformGemini || a.Type != AccountTypeOAuth {
-		return false
-	}
-	oauthType := a.GeminiOAuthType()
-	if oauthType == "" {
-		return strings.TrimSpace(a.GetCredential("project_id")) != ""
-	}
-	return oauthType == "code_assist"
+	return a.Platform == PlatformGemini && a.Type == AccountTypeOAuth &&
+		a.GeminiOAuthType() == GeminiOAuthTypeCodeAssist
 }
 
-// IsGeminiGoogleOne reports whether this account uses the legacy consumer
-// Gemini CLI / Code Assist OAuth channel.
-func (a *Account) IsGeminiGoogleOne() bool {
-	return a.Platform == PlatformGemini && a.Type == AccountTypeOAuth && a.GeminiOAuthType() == "google_one"
+// IsGeminiAntigravity reports whether this Gemini account represents a
+// personal Google AI subscription authorized by the Antigravity client.
+func (a *Account) IsGeminiAntigravity() bool {
+	return a.Platform == PlatformGemini && a.Type == AccountTypeOAuth &&
+		a.GeminiOAuthType() == GeminiOAuthTypeAntigravity
+}
+
+func (a *Account) IsGeminiAIStudioOAuth() bool {
+	return a.Platform == PlatformGemini && a.Type == AccountTypeOAuth &&
+		a.GeminiOAuthType() == GeminiOAuthTypeAIStudio
+}
+
+func (a *Account) IsGeminiCloudCodeOAuth() bool {
+	return a.IsGeminiAntigravity() || a.IsGeminiCodeAssist()
+}
+
+func (a *Account) HasSupportedGeminiOAuthType() bool {
+	return a.IsGeminiCloudCodeOAuth() || a.IsGeminiAIStudioOAuth()
 }
 
 func (a *Account) CanGetUsage() bool {
@@ -633,9 +637,6 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 		return nil
 	}
 	if len(rawMapping) == 0 {
-		if a.IsGeminiGoogleOne() {
-			return geminicli.GoogleOneModelMapping()
-		}
 		// Antigravity 平台使用默认映射
 		if a.Platform == domain.PlatformAntigravity {
 			return domain.DefaultAntigravityModelMapping
@@ -670,9 +671,6 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 	}
 
 	// Antigravity 平台使用默认映射
-	if a.IsGeminiGoogleOne() {
-		return geminicli.GoogleOneModelMapping()
-	}
 	if a.Platform == domain.PlatformAntigravity {
 		return domain.DefaultAntigravityModelMapping
 	}
@@ -837,6 +835,11 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 // 请求卡死在该账号上、无法 failover 到真正支持该模型的 API Key 账号（#3662）。
 // 未知/自定义别名仍保持允许（兼容渠道级映射），见 isOpenAIOAuthServableModel。
 func (a *Account) IsModelSupported(requestedModel string) bool {
+	if a.Platform == PlatformGemini && a.Type == AccountTypeOAuth {
+		if !a.HasSupportedGeminiOAuthType() {
+			return false
+		}
+	}
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。
 	// 该短路必须在 model_mapping 判定之前：账号从"白名单模式"切换到透传后，
 	// credentials 里常残留旧的非空 model_mapping，若不在此放行，透传账号会被

@@ -496,7 +496,7 @@ func (s *PaymentService) ExecuteSubscriptionFulfillment(ctx context.Context, oid
 }
 
 func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder, lease *paymentFulfillmentLease) error {
-	if err := s.ensurePaymentSubscriptionAssigned(ctx, o); err != nil {
+	if err := s.ensurePaymentSubscriptionAssigned(ctx, o, lease); err != nil {
 		return err
 	}
 	if err := s.applyAffiliateRebateForOrder(ctx, o); err != nil {
@@ -505,11 +505,10 @@ func (s *PaymentService) doSub(ctx context.Context, o *dbent.PaymentOrder, lease
 	return s.markCompleted(ctx, o, lease, "SUBSCRIPTION_SUCCESS")
 }
 
-func (s *PaymentService) ensurePaymentSubscriptionAssigned(ctx context.Context, o *dbent.PaymentOrder) error {
-	if s.subscriptionSvc == nil {
-		return errors.New("subscription service is unavailable")
+func (s *PaymentService) ensurePaymentSubscriptionAssigned(ctx context.Context, o *dbent.PaymentOrder, lease *paymentFulfillmentLease) error {
+	if o == nil || lease == nil {
+		return errors.New("missing subscription fulfillment lease")
 	}
-
 	tx, err := s.entClient.Tx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin subscription fulfillment tx: %w", err)
@@ -518,28 +517,47 @@ func (s *PaymentService) ensurePaymentSubscriptionAssigned(ctx context.Context, 
 
 	txCtx := dbent.NewTxContext(ctx, tx)
 	txClient := tx.Client()
-	lockedOrder, err := txClient.PaymentOrder.Query().Where(paymentorder.IDEQ(o.ID)).ForUpdate().Only(txCtx)
+	currentOrder, err := txClient.PaymentOrder.Query().Where(
+		paymentorder.IDEQ(o.ID),
+		paymentorder.StatusEQ(OrderStatusRecharging),
+		paymentorder.UpdatedAtEQ(lease.version),
+	).Only(txCtx)
 	if err != nil {
-		return fmt.Errorf("lock subscription order: %w", err)
+		if dbent.IsNotFound(err) {
+			return infraerrors.Conflict("CONFLICT", "subscription fulfillment lease was lost")
+		}
+		return fmt.Errorf("load leased subscription order: %w", err)
 	}
-	if lockedOrder.FulfilledSubscriptionID != nil {
+	if currentOrder.FulfilledSubscriptionID != nil {
 		return tx.Commit()
 	}
-	if lockedOrder.PlanID == nil || lockedOrder.PlanVersionID == nil {
+	if s.subscriptionSvc == nil {
+		return errors.New("subscription service is unavailable")
+	}
+	if currentOrder.PlanID == nil || currentOrder.PlanVersionID == nil {
 		return errors.New("subscription order has no frozen plan version")
 	}
 	sub, _, err := s.subscriptionSvc.AssignOrExtendSubscription(txCtx, &AssignSubscriptionInput{
-		UserID: o.UserID, PlanID: *lockedOrder.PlanID, PlanVersionID: *lockedOrder.PlanVersionID,
+		UserID: currentOrder.UserID, PlanID: *currentOrder.PlanID, PlanVersionID: *currentOrder.PlanVersionID,
 		Notes: paymentSubscriptionOrderNote(o.ID),
 	})
 	if err != nil {
 		return fmt.Errorf("assign subscription: %w", err)
 	}
-	if _, err := txClient.PaymentOrder.UpdateOneID(o.ID).SetFulfilledSubscriptionID(sub.ID).Save(txCtx); err != nil {
+	updated, err := txClient.PaymentOrder.Update().Where(
+		paymentorder.IDEQ(o.ID),
+		paymentorder.StatusEQ(OrderStatusRecharging),
+		paymentorder.UpdatedAtEQ(lease.version),
+		paymentorder.FulfilledSubscriptionIDIsNil(),
+	).SetFulfilledSubscriptionID(sub.ID).SetUpdatedAt(lease.version).Save(txCtx)
+	if err != nil {
 		return fmt.Errorf("link fulfilled subscription: %w", err)
 	}
+	if updated != 1 {
+		return infraerrors.Conflict("CONFLICT", "subscription fulfillment lease was lost before assignment")
+	}
 	detail, _ := json.Marshal(map[string]any{
-		"planID": *lockedOrder.PlanID, "planVersionID": *lockedOrder.PlanVersionID, "subscriptionID": sub.ID,
+		"planID": *currentOrder.PlanID, "planVersionID": *currentOrder.PlanVersionID, "subscriptionID": sub.ID,
 	})
 	if _, err := txClient.PaymentAuditLog.Create().
 		SetOrderID(strconv.FormatInt(o.ID, 10)).SetAction("SUBSCRIPTION_ASSIGNED").
@@ -552,17 +570,6 @@ func (s *PaymentService) ensurePaymentSubscriptionAssigned(ctx context.Context, 
 	}
 	o.FulfilledSubscriptionID = &sub.ID
 	return nil
-}
-
-func hasPaymentSubscriptionAssignmentAudit(ctx context.Context, client *dbent.Client, orderID int64) (bool, error) {
-	count, err := client.PaymentAuditLog.Query().
-		Where(
-			paymentauditlog.OrderIDEQ(strconv.FormatInt(orderID, 10)),
-			paymentauditlog.ActionIn("SUBSCRIPTION_ASSIGNED", "SUBSCRIPTION_SUCCESS"),
-		).
-		Limit(1).
-		Count(ctx)
-	return count > 0, err
 }
 
 func paymentSubscriptionOrderNote(orderID int64) string {

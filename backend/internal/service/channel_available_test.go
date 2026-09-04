@@ -38,8 +38,8 @@ func (s *stubGroupRepoForAvailable) GetByIDLite(ctx context.Context, id int64) (
 }
 func (s *stubGroupRepoForAvailable) Update(ctx context.Context, group *Group) error { return nil }
 func (s *stubGroupRepoForAvailable) Delete(ctx context.Context, id int64) error     { return nil }
-func (s *stubGroupRepoForAvailable) DeleteCascade(ctx context.Context, id int64) ([]int64, error) {
-	return nil, nil
+func (s *stubGroupRepoForAvailable) DeleteCascade(ctx context.Context, id int64) error {
+	return nil
 }
 func (s *stubGroupRepoForAvailable) List(ctx context.Context, params pagination.PaginationParams) ([]Group, *pagination.PaginationResult, error) {
 	return nil, nil, nil

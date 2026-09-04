@@ -3,12 +3,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import RedeemView from '../RedeemView.vue'
 
-const { listRedeemCodes, generateRedeemCodes, batchUpdateRedeemCodes, getAllGroups, showSuccess, showError, showInfo } =
+const { listRedeemCodes, generateRedeemCodes, batchUpdateRedeemCodes, getAllGroups, getSubscriptionPlans, showSuccess, showError, showInfo } =
   vi.hoisted(() => ({
     listRedeemCodes: vi.fn(),
     generateRedeemCodes: vi.fn(),
     batchUpdateRedeemCodes: vi.fn(),
     getAllGroups: vi.fn(),
+    getSubscriptionPlans: vi.fn(),
     showSuccess: vi.fn(),
     showError: vi.fn(),
     showInfo: vi.fn()
@@ -26,6 +27,9 @@ vi.mock('@/api/admin', () => ({
     },
     groups: {
       getAll: getAllGroups
+    },
+    payment: {
+      getPlans: getSubscriptionPlans
     }
   }
 }))
@@ -109,6 +113,7 @@ describe('admin RedeemView batch update', () => {
     generateRedeemCodes.mockReset()
     batchUpdateRedeemCodes.mockReset()
     getAllGroups.mockReset()
+    getSubscriptionPlans.mockReset().mockResolvedValue({ data: [] })
     showSuccess.mockReset()
     showError.mockReset()
     showInfo.mockReset()
@@ -222,7 +227,6 @@ describe('admin RedeemView batch update', () => {
       1000,
       'balance',
       10,
-      undefined,
       undefined,
       undefined
     )

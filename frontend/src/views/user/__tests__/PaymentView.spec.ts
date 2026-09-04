@@ -205,7 +205,7 @@ async function mountSubscriptionConfirm(options: Parameters<typeof checkoutInfoW
   routeState.path = '/purchase'
   routeState.query = {
     tab: 'subscription',
-    group: '3',
+    plan: '7',
   }
   routerReplace.mockReset().mockResolvedValue(undefined)
   routerPush.mockReset().mockResolvedValue(undefined)

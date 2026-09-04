@@ -23,15 +23,14 @@ func TestUsageUnrestrictedIncludesWeeklyWindowStart(t *testing.T) {
 	weeklyWindowStart := time.Date(2026, time.July, 13, 0, 30, 0, 0, time.FixedZone("UTC+8", 8*60*60))
 	c.Set(string(middleware.ContextKeySubscription), &service.UserSubscription{
 		WeeklyWindowStart: &weeklyWindowStart,
+		Plan:              &service.SubscriptionPlan{Name: "Weekly plan"},
 	})
 
 	handler := &GatewayHandler{}
 	handler.usageUnrestricted(
 		c,
 		context.Background(),
-		&service.APIKey{Group: &service.Group{
-			Name: "Weekly plan",
-		}},
+		&service.APIKey{FundingSource: service.FundingSourceSubscription},
 		middleware.AuthSubject{},
 		nil,
 		nil,

@@ -16,9 +16,9 @@ import (
 
 func plazaGroups() []service.PlazaGroup {
 	return []service.PlazaGroup{
-		{ID: 1, Name: "public-standard", Platform: "anthropic", SubscriptionType: "standard", RateMultiplier: 1},
+		{ID: 1, Name: "public-standard", Platform: "anthropic", RateMultiplier: 1},
 		{ID: 2, Name: "exclusive-a", Platform: "anthropic", IsExclusive: true, RateMultiplier: 0.5},
-		{ID: 3, Name: "public-subscription", Platform: "openai", SubscriptionType: "subscription", RateMultiplier: 1},
+		{ID: 3, Name: "public-subscription", Platform: "openai", RateMultiplier: 1},
 		{ID: 4, Name: "exclusive-b", Platform: "openai", IsExclusive: true, RateMultiplier: 0.8},
 	}
 }
@@ -88,7 +88,7 @@ func TestModelPlazaHandler_NilSettingServiceFailsClosed404(t *testing.T) {
 func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 	g := service.PlazaGroup{
 		ID: 2, Name: "vip", Description: "d", Platform: "anthropic",
-		SubscriptionType: "standard", RateMultiplier: 1, IsExclusive: true,
+		RateMultiplier: 1, IsExclusive: true,
 		Models: []service.PlazaModel{{
 			Name:     "claude-sonnet",
 			Platform: "anthropic",
@@ -111,7 +111,7 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &decoded))
 
 	for _, key := range []string{
-		"id", "name", "description", "platform", "subscription_type",
+		"id", "name", "description", "platform",
 		"rate_multiplier", "user_rate_multiplier", "is_exclusive", "models",
 		"peak_rate_enabled", "peak_start", "peak_end", "peak_rate_multiplier",
 		"image_rate_independent", "image_rate_multiplier", "long_context_pricing_enabled",
@@ -156,7 +156,7 @@ func TestToModelPlazaOfficialPricing_NilPassthrough(t *testing.T) {
 func TestToModelPlazaGroupDTO_LongContextTiersAndBasis(t *testing.T) {
 	maxTokens := 272000
 	g := service.PlazaGroup{
-		ID: 3, Name: "ladder", Platform: "openai", SubscriptionType: "standard", RateMultiplier: 1,
+		ID: 3, Name: "ladder", Platform: "openai", RateMultiplier: 1,
 		LongContextPricingEnabled: true,
 		Models: []service.PlazaModel{{
 			Name:     "gpt-5.4",
@@ -207,7 +207,7 @@ func testPtr(v float64) *float64 { return &v }
 
 func TestToModelPlazaGroupDTO_TimePricing(t *testing.T) {
 	g := service.PlazaGroup{
-		ID: 4, Name: "cn", Platform: "deepseek", SubscriptionType: "standard", RateMultiplier: 1,
+		ID: 4, Name: "cn", Platform: "deepseek", RateMultiplier: 1,
 		Models: []service.PlazaModel{{
 			Name:     "deepseek-chat",
 			Platform: "deepseek",

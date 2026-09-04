@@ -201,13 +201,18 @@ func TestAdminService_BulkUpdateAccounts_RejectsRateChangeForSyncedAccounts(t *t
 // TestAdminService_BulkUpdateAccounts_PartialFailureIDs 验证部分失败时 success_ids/failed_ids 正确。
 func TestAdminService_BulkUpdateAccounts_PartialFailureIDs(t *testing.T) {
 	repo := &accountRepoStubForBulkUpdate{
+		getByIDsAccounts: []*Account{
+			{ID: 1, Platform: PlatformOpenAI},
+			{ID: 2, Platform: PlatformOpenAI},
+			{ID: 3, Platform: PlatformOpenAI},
+		},
 		bindGroupErrByID: map[int64]error{
 			2: errors.New("bind failed"),
 		},
 	}
 	svc := &adminServiceImpl{
 		accountRepo: repo,
-		groupRepo:   &groupRepoStubForAdmin{getByID: &Group{ID: 10, Name: "g10"}},
+		groupRepo:   &groupRepoStubForAdmin{getByID: &Group{ID: 10, Name: "g10", Platform: PlatformOpenAI}},
 	}
 
 	groupIDs := []int64{10}
@@ -229,7 +234,9 @@ func TestAdminService_BulkUpdateAccounts_PartialFailureIDs(t *testing.T) {
 }
 
 func TestAdminService_BulkUpdateAccounts_NilGroupRepoReturnsError(t *testing.T) {
-	repo := &accountRepoStubForBulkUpdate{}
+	repo := &accountRepoStubForBulkUpdate{
+		getByIDsAccounts: []*Account{{ID: 1, Platform: PlatformOpenAI}},
+	}
 	svc := &adminServiceImpl{accountRepo: repo}
 
 	groupIDs := []int64{10}
@@ -259,7 +266,7 @@ func TestAdminService_BulkUpdateAccounts_MixedChannelPreCheckBlocksOnExistingCon
 	}
 	svc := &adminServiceImpl{
 		accountRepo: repo,
-		groupRepo:   &groupRepoStubForAdmin{getByID: &Group{ID: 10, Name: "target-group"}},
+		groupRepo:   &groupRepoStubForAdmin{getByID: &Group{ID: 10, Name: "target-group", Platform: PlatformComposite}},
 	}
 
 	groupIDs := []int64{10}

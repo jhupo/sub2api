@@ -116,15 +116,14 @@ func TestEntSoftDelete_ApiKey_HardDeleteViaSkipSoftDelete(t *testing.T) {
 
 // --- UserSubscription 软删除测试 ---
 
-func createEntGroup(t *testing.T, ctx context.Context, client *dbent.Client, name string) *dbent.Group {
+func createEntPlan(t *testing.T, client *dbent.Client, name string) *service.SubscriptionPlan {
 	t.Helper()
-
-	g, err := client.Group.Create().
-		SetName(name).
-		SetStatus(service.StatusActive).
-		Save(ctx)
-	require.NoError(t, err, "create ent group")
-	return g
+	return mustCreateSubscriptionPlan(t, client, &service.SubscriptionPlan{
+		Name:         name,
+		Price:        10,
+		ValidityDays: 30,
+		ValidityUnit: "day",
+	})
 }
 
 func TestEntSoftDelete_UserSubscription_DefaultFilterAndSkip(t *testing.T) {
@@ -132,14 +131,15 @@ func TestEntSoftDelete_UserSubscription_DefaultFilterAndSkip(t *testing.T) {
 	client := testEntClient(t)
 
 	u := createEntUser(t, ctx, client, uniqueSoftDeleteValue(t, "sd-sub-user")+"@example.com")
-	g := createEntGroup(t, ctx, client, uniqueSoftDeleteValue(t, "sd-sub-group"))
+	plan := createEntPlan(t, client, uniqueSoftDeleteValue(t, "sd-sub-plan"))
 
 	repo := NewUserSubscriptionRepository(client)
 	sub := &service.UserSubscription{
-		UserID:    u.ID,
-		GroupID:   g.ID,
-		Status:    service.SubscriptionStatusActive,
-		ExpiresAt: time.Now().Add(24 * time.Hour),
+		UserID:        u.ID,
+		PlanID:        plan.ID,
+		PlanVersionID: plan.PublishedVersionID,
+		Status:        service.SubscriptionStatusActive,
+		ExpiresAt:     time.Now().Add(24 * time.Hour),
 	}
 	require.NoError(t, repo.Create(ctx, sub), "create user subscription")
 
@@ -164,14 +164,15 @@ func TestEntSoftDelete_UserSubscription_DeleteIdempotent(t *testing.T) {
 	client := testEntClient(t)
 
 	u := createEntUser(t, ctx, client, uniqueSoftDeleteValue(t, "sd-sub-user2")+"@example.com")
-	g := createEntGroup(t, ctx, client, uniqueSoftDeleteValue(t, "sd-sub-group2"))
+	plan := createEntPlan(t, client, uniqueSoftDeleteValue(t, "sd-sub-plan2"))
 
 	repo := NewUserSubscriptionRepository(client)
 	sub := &service.UserSubscription{
-		UserID:    u.ID,
-		GroupID:   g.ID,
-		Status:    service.SubscriptionStatusActive,
-		ExpiresAt: time.Now().Add(24 * time.Hour),
+		UserID:        u.ID,
+		PlanID:        plan.ID,
+		PlanVersionID: plan.PublishedVersionID,
+		Status:        service.SubscriptionStatusActive,
+		ExpiresAt:     time.Now().Add(24 * time.Hour),
 	}
 	require.NoError(t, repo.Create(ctx, sub), "create user subscription")
 
@@ -184,24 +185,26 @@ func TestEntSoftDelete_UserSubscription_ListExcludesDeleted(t *testing.T) {
 	client := testEntClient(t)
 
 	u := createEntUser(t, ctx, client, uniqueSoftDeleteValue(t, "sd-sub-user3")+"@example.com")
-	g1 := createEntGroup(t, ctx, client, uniqueSoftDeleteValue(t, "sd-sub-group3a"))
-	g2 := createEntGroup(t, ctx, client, uniqueSoftDeleteValue(t, "sd-sub-group3b"))
+	plan1 := createEntPlan(t, client, uniqueSoftDeleteValue(t, "sd-sub-plan3a"))
+	plan2 := createEntPlan(t, client, uniqueSoftDeleteValue(t, "sd-sub-plan3b"))
 
 	repo := NewUserSubscriptionRepository(client)
 
 	sub1 := &service.UserSubscription{
-		UserID:    u.ID,
-		GroupID:   g1.ID,
-		Status:    service.SubscriptionStatusActive,
-		ExpiresAt: time.Now().Add(24 * time.Hour),
+		UserID:        u.ID,
+		PlanID:        plan1.ID,
+		PlanVersionID: plan1.PublishedVersionID,
+		Status:        service.SubscriptionStatusActive,
+		ExpiresAt:     time.Now().Add(24 * time.Hour),
 	}
 	require.NoError(t, repo.Create(ctx, sub1), "create subscription 1")
 
 	sub2 := &service.UserSubscription{
-		UserID:    u.ID,
-		GroupID:   g2.ID,
-		Status:    service.SubscriptionStatusActive,
-		ExpiresAt: time.Now().Add(24 * time.Hour),
+		UserID:        u.ID,
+		PlanID:        plan2.ID,
+		PlanVersionID: plan2.PublishedVersionID,
+		Status:        service.SubscriptionStatusActive,
+		ExpiresAt:     time.Now().Add(24 * time.Hour),
 	}
 	require.NoError(t, repo.Create(ctx, sub2), "create subscription 2")
 

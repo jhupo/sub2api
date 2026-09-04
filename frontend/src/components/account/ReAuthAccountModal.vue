@@ -82,22 +82,22 @@
           <div
             :class="[
               'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-              geminiOAuthType === 'google_one'
+              geminiOAuthType === 'antigravity'
                 ? 'bg-purple-500 text-white'
                 : geminiOAuthType === 'code_assist'
                   ? 'bg-blue-500 text-white'
                   : 'bg-amber-500 text-white'
             ]"
           >
-            <Icon v-if="geminiOAuthType === 'google_one'" name="user" size="sm" />
+            <Icon v-if="geminiOAuthType === 'antigravity'" name="user" size="sm" />
             <Icon v-else-if="geminiOAuthType === 'code_assist'" name="cloud" size="sm" />
             <Icon v-else name="sparkles" size="sm" />
           </div>
           <div>
             <span class="block text-sm font-medium text-gray-900 dark:text-white">
               {{
-                geminiOAuthType === 'google_one'
-                  ? 'Google One'
+                geminiOAuthType === 'antigravity'
+                  ? 'Google AI Personal Subscription (Antigravity)'
                   : geminiOAuthType === 'code_assist'
                     ? t('admin.accounts.gemini.oauthType.builtInTitle')
                     : t('admin.accounts.gemini.oauthType.customTitle')
@@ -105,8 +105,8 @@
             </span>
             <span class="text-xs text-gray-500 dark:text-gray-400">
               {{
-                geminiOAuthType === 'google_one'
-                  ? t('admin.accounts.gemini.oauthType.googleOneDesc')
+                geminiOAuthType === 'antigravity'
+                  ? t('admin.accounts.gemini.oauthType.antigravityDesc')
                   : geminiOAuthType === 'code_assist'
                     ? t('admin.accounts.gemini.oauthType.builtInDesc')
                     : t('admin.accounts.gemini.oauthType.customDesc')
@@ -233,7 +233,9 @@ const oauthFlowRef = ref<OAuthFlowExposed | null>(null)
 
 // State
 const addMethod = ref<AddMethod>('oauth')
-const geminiOAuthType = ref<'code_assist' | 'google_one' | 'ai_studio'>('code_assist')
+type GeminiOAuthType = 'antigravity' | 'code_assist' | 'ai_studio'
+
+const geminiOAuthType = ref<GeminiOAuthType>('antigravity')
 
 // Computed - check platform
 const isOpenAI = computed(() => props.account?.platform === 'openai')
@@ -296,11 +298,9 @@ watch(
       if (isGemini.value) {
         const creds = (props.account.credentials || {}) as Record<string, unknown>
         geminiOAuthType.value =
-          creds.oauth_type === 'google_one'
-            ? 'google_one'
-            : creds.oauth_type === 'ai_studio'
-              ? 'ai_studio'
-              : 'code_assist'
+          creds.oauth_type === 'code_assist' || creds.oauth_type === 'ai_studio'
+            ? creds.oauth_type
+            : 'antigravity'
       }
     } else {
       resetState()
@@ -311,7 +311,7 @@ watch(
 // Methods
 const resetState = () => {
   addMethod.value = 'oauth'
-  geminiOAuthType.value = 'code_assist'
+  geminiOAuthType.value = 'antigravity'
   claudeOAuth.resetState()
   openaiOAuth.resetState()
   geminiOAuth.resetState()

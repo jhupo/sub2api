@@ -2130,7 +2130,7 @@ func TestBindOIDCOAuthLoginAppliesFirstBindGrantOnce(t *testing.T) {
 		settingValues: map[string]string{
 			service.SettingKeyAuthSourceDefaultOIDCBalance:          "12.5",
 			service.SettingKeyAuthSourceDefaultOIDCConcurrency:      "3",
-			service.SettingKeyAuthSourceDefaultOIDCSubscriptions:    `[{"group_id":101,"validity_days":30}]`,
+			service.SettingKeyAuthSourceDefaultOIDCSubscriptions:    `[{"plan_id":101}]`,
 			service.SettingKeyAuthSourceDefaultOIDCGrantOnFirstBind: "true",
 		},
 		defaultSubAssigner: defaultSubAssigner,

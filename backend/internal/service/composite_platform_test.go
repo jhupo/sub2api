@@ -142,6 +142,7 @@ func TestNewGatewayServiceWiresCompositeModelOwnershipResolver(t *testing.T) {
 		resolver,
 		nil,
 		nil,
+		nil,
 	)
 	require.Same(t, resolver, svc.compositeResolver)
 
@@ -219,6 +220,5 @@ func TestCompositeGroupSchedulerHasAllCanonicalPlatformBuckets(t *testing.T) {
 func TestCompositeConcretePlatformsIncludeCNProviders(t *testing.T) {
 	for _, platform := range []string{PlatformKimi, PlatformZhipu, PlatformDeepseek} {
 		require.True(t, isConcreteRequestPlatform(platform))
-		require.True(t, canCopyAccountsFromGroupPlatform(PlatformComposite, platform))
 	}
 }

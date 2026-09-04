@@ -693,7 +693,7 @@ func TestConstants_值正确(t *testing.T) {
 	if RedirectURI != "http://localhost:8085/callback" {
 		t.Errorf("RedirectURI 不匹配: got %s", RedirectURI)
 	}
-	if GetUserAgent() != "antigravity/1.23.2 windows/amd64" {
+	if GetUserAgent() != "antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64; cl=963137146)" {
 		t.Errorf("UserAgent 不匹配: got %s", GetUserAgent())
 	}
 	if SessionTTL != 30*time.Minute {
@@ -706,6 +706,7 @@ func TestConstants_值正确(t *testing.T) {
 
 func TestScopes_包含必要范围(t *testing.T) {
 	expectedScopes := []string{
+		"https://www.googleapis.com/auth/aicode",
 		"https://www.googleapis.com/auth/cloud-platform",
 		"https://www.googleapis.com/auth/userinfo.email",
 		"https://www.googleapis.com/auth/userinfo.profile",

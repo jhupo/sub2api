@@ -822,12 +822,12 @@ func TestGatewayHotpathHelpers_CacheTTLAndStickyContext(t *testing.T) {
 			return ok
 		}())
 
-		ctx := context.WithValue(context.Background(), windowCostPrefetchContextKey, map[int64]float64{
-			9: 12.34,
-		})
+		ctx := withWindowCostPrefetchState(context.Background(), map[int64]float64{9: 12.34}, map[int64]struct{}{10: {}})
 		cost, ok := windowCostFromPrefetchContext(ctx, 9)
 		require.True(t, ok)
 		require.Equal(t, 12.34, cost)
+		require.True(t, windowCostPrefetchFailedOpen(ctx, 10))
+		require.False(t, windowCostPrefetchFailedOpen(ctx, 9))
 	})
 }
 

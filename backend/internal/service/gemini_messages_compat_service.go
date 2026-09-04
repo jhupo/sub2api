@@ -5,22 +5,30 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"math"
 	mathrand "math/rand"
 	"net/http"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/gemini"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/googleapi"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -28,16 +36,37 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	gocache "github.com/patrickmn/go-cache"
 	"github.com/tidwall/gjson"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 )
 
 const geminiStickySessionTTL = time.Hour
+
+const (
+	geminiGroupModelCatalogTTL          = 30 * time.Second
+	geminiGroupModelCatalogFetchTimeout = 25 * time.Second
+	geminiGroupModelCatalogConcurrency  = 6
+)
 
 const (
 	geminiMaxRetries     = 5
 	geminiRetryBaseDelay = 1 * time.Second
 	geminiRetryMaxDelay  = 16 * time.Second
 )
+
+func geminiCodeAssistBaseURL(attempt int) string {
+	baseURLs := antigravity.CodeAssistBaseURLs()
+	if len(baseURLs) == 0 {
+		return geminicli.GeminiCliBaseURL
+	}
+	if attempt < 0 {
+		attempt = 0
+	}
+	return baseURLs[attempt%len(baseURLs)]
+}
 
 // Gemini tool calling now requires `thoughtSignature` in parts that include `functionCall`.
 // Many clients don't send it; we inject a known dummy signature to satisfy the validator.
@@ -53,6 +82,9 @@ type GeminiMessagesCompatService struct {
 	rateLimitService          *RateLimitService
 	httpUpstream              HTTPUpstream
 	antigravityGatewayService *AntigravityGatewayService
+	codeAssistModelResolver   GeminiCodeAssistModelCatalog
+	groupModelCatalogCache    *gocache.Cache
+	groupModelCatalogFlight   singleflight.Group
 	cfg                       *config.Config
 	responseHeaderFilter      *responseheaders.CompiledHeaderFilter
 }
@@ -80,6 +112,10 @@ func NewGeminiMessagesCompatService(
 	antigravityGatewayService *AntigravityGatewayService,
 	cfg *config.Config,
 ) *GeminiMessagesCompatService {
+	modelCatalog := GeminiCodeAssistModelCatalog(NewGeminiCodeAssistModelResolver())
+	if tokenProvider != nil && tokenProvider.CodeAssistModelCatalog() != nil {
+		modelCatalog = tokenProvider.CodeAssistModelCatalog()
+	}
 	return &GeminiMessagesCompatService{
 		accountRepo:               accountRepo,
 		groupRepo:                 groupRepo,
@@ -89,9 +125,514 @@ func NewGeminiMessagesCompatService(
 		rateLimitService:          rateLimitService,
 		httpUpstream:              httpUpstream,
 		antigravityGatewayService: antigravityGatewayService,
+		codeAssistModelResolver:   modelCatalog,
+		groupModelCatalogCache:    gocache.New(geminiGroupModelCatalogTTL, time.Minute),
 		cfg:                       cfg,
 		responseHeaderFilter:      compileResponseHeaderFilter(cfg),
 	}
+}
+
+// SetCodeAssistModelResolver replaces the catalog resolver, primarily for
+// deterministic tests. Production wiring uses the default in-memory resolver.
+func (s *GeminiMessagesCompatService) SetCodeAssistModelResolver(resolver GeminiCodeAssistModelCatalog) {
+	if s != nil {
+		s.codeAssistModelResolver = resolver
+	}
+}
+
+func (s *GeminiMessagesCompatService) resolveCodeAssistRuntimeModel(ctx context.Context, account *Account, accessToken, requested string) (string, error) {
+	if account == nil || (!account.IsGeminiCodeAssist() && !account.IsGeminiAntigravity()) || s.codeAssistModelResolver == nil {
+		return requested, nil
+	}
+	return s.codeAssistModelResolver.Resolve(ctx, account, accessToken, requested)
+}
+
+// ListCodeAssistModels returns the account-scoped client-visible catalog in the
+// native v1beta response shape. Code Assist does not expose the AI Studio
+// /v1beta/models endpoint, so callers must use this authenticated catalog.
+// A stale catalog is returned together with its refresh error; callers can
+// serve it while retaining the error for observability/fallback decisions.
+func (s *GeminiMessagesCompatService) ListCodeAssistModels(ctx context.Context, account *Account) ([]gemini.Model, error) {
+	if account == nil {
+		return nil, errors.New("account is nil")
+	}
+	if !account.IsGeminiCodeAssist() && !account.IsGeminiAntigravity() {
+		return nil, errors.New("account is not a Gemini Code Assist OAuth account")
+	}
+	if s.tokenProvider == nil {
+		return nil, errors.New("gemini token provider not configured")
+	}
+	if s.codeAssistModelResolver == nil {
+		return nil, errors.New("Code Assist model resolver not configured")
+	}
+	accessToken, err := s.tokenProvider.GetAccessToken(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	catalog, catalogErr := s.codeAssistModelResolver.List(ctx, account, accessToken)
+	models := make([]gemini.Model, 0, len(catalog))
+	methods := []string{"generateContent", "streamGenerateContent"}
+	for _, model := range catalog {
+		id := strings.TrimPrefix(strings.TrimSpace(model.ID), "models/")
+		if id == "" {
+			continue
+		}
+		models = append(models, gemini.Model{
+			Name:                       "models/" + id,
+			DisplayName:                model.DisplayName,
+			SupportedGenerationMethods: methods,
+		})
+	}
+	return models, catalogErr
+}
+
+func normalizeGeminiCatalogModelID(model string) string {
+	return strings.TrimPrefix(strings.TrimSpace(model), "models/")
+}
+
+func applyGeminiCatalogMapping(models []gemini.Model, account *Account) []gemini.Model {
+	if account == nil || len(account.GetModelMapping()) == 0 {
+		return models
+	}
+
+	byID := make(map[string]gemini.Model, len(models))
+	for _, model := range models {
+		if id := normalizeGeminiCatalogModelID(model.Name); id != "" {
+			byID[id] = model
+		}
+	}
+	mapping := account.GetModelMapping()
+	clientIDs := make([]string, 0, len(mapping))
+	for clientID := range mapping {
+		if !strings.Contains(clientID, "*") {
+			clientIDs = append(clientIDs, clientID)
+		}
+	}
+	sort.Strings(clientIDs)
+
+	result := make([]gemini.Model, 0, len(clientIDs))
+	for _, rawClientID := range clientIDs {
+		clientID := normalizeGeminiCatalogModelID(rawClientID)
+		targetID := normalizeGeminiCatalogModelID(mapping[rawClientID])
+		model, ok := byID[targetID]
+		if clientID == "" || !ok {
+			continue
+		}
+		model.Name = "models/" + clientID
+		if model.DisplayName == "" || clientID != targetID {
+			model.DisplayName = clientID
+		}
+		result = append(result, model)
+	}
+	return result
+}
+
+func staticGeminiAccountModels(account *Account) []gemini.Model {
+	if account != nil && len(account.GetModelMapping()) > 0 {
+		mapping := account.GetModelMapping()
+		ids := make([]string, 0, len(mapping))
+		for id := range mapping {
+			if normalized := normalizeGeminiCatalogModelID(id); normalized != "" && !strings.Contains(normalized, "*") {
+				ids = append(ids, normalized)
+			}
+		}
+		sort.Strings(ids)
+		models := make([]gemini.Model, 0, len(ids))
+		for _, id := range ids {
+			models = append(models, gemini.Model{
+				Name:                       "models/" + id,
+				DisplayName:                id,
+				SupportedGenerationMethods: []string{"generateContent", "streamGenerateContent"},
+			})
+		}
+		return models
+	}
+	return gemini.DefaultModels()
+}
+
+func antigravityModelsForGeminiGroup(account *Account) []gemini.Model {
+	if account != nil && len(account.GetModelMapping()) > 0 {
+		return staticGeminiAccountModels(account)
+	}
+	models := antigravity.DefaultModels()
+	result := make([]gemini.Model, 0, len(models))
+	for _, model := range models {
+		id := normalizeGeminiCatalogModelID(model.ID)
+		if id == "" {
+			continue
+		}
+		result = append(result, gemini.Model{
+			Name:                       "models/" + id,
+			DisplayName:                model.DisplayName,
+			SupportedGenerationMethods: []string{"generateContent", "streamGenerateContent"},
+		})
+	}
+	return result
+}
+
+func (s *GeminiMessagesCompatService) listAIStudioModels(ctx context.Context, account *Account) ([]gemini.Model, error) {
+	if s == nil || s.httpUpstream == nil {
+		return nil, errors.New("Gemini upstream client is not configured")
+	}
+	result, err := s.ForwardAIStudioGET(ctx, account, "/v1beta/models")
+	if err != nil {
+		return nil, err
+	}
+	if result.StatusCode < http.StatusOK || result.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("Gemini model catalog returned HTTP %d", result.StatusCode)
+	}
+	var catalog gemini.ModelsListResponse
+	if err := json.Unmarshal(result.Body, &catalog); err != nil {
+		return nil, fmt.Errorf("decode Gemini model catalog: %w", err)
+	}
+	if len(catalog.Models) == 0 {
+		return nil, errors.New("Gemini model catalog returned no models")
+	}
+	return applyGeminiCatalogMapping(catalog.Models, account), nil
+}
+
+// ListGroupModels merges the effective model catalogs of every schedulable
+// account in a Gemini group. Account mappings are applied before the merge, so
+// the public directory and request-time account selection use the same names.
+func cloneGeminiModels(models []gemini.Model) []gemini.Model {
+	result := make([]gemini.Model, len(models))
+	for i := range models {
+		result[i] = models[i]
+		result[i].SupportedGenerationMethods = append([]string(nil), models[i].SupportedGenerationMethods...)
+	}
+	return result
+}
+
+func geminiGroupModelCatalogKey(groupID *int64) string {
+	if groupID == nil {
+		return "ungrouped"
+	}
+	return strconv.FormatInt(*groupID, 10)
+}
+
+func (s *GeminiMessagesCompatService) ListGroupModels(ctx context.Context, groupID *int64) ([]gemini.Model, error) {
+	if s == nil {
+		return nil, errors.New("Gemini compatibility service is not configured")
+	}
+	key := geminiGroupModelCatalogKey(groupID)
+	if s.groupModelCatalogCache != nil {
+		if cached, ok := s.groupModelCatalogCache.Get(key); ok {
+			if models, valid := cached.([]gemini.Model); valid {
+				return cloneGeminiModels(models), nil
+			}
+		}
+	}
+	resultCh := s.groupModelCatalogFlight.DoChan(key, func() (any, error) {
+		if s.groupModelCatalogCache != nil {
+			if cached, ok := s.groupModelCatalogCache.Get(key); ok {
+				if models, valid := cached.([]gemini.Model); valid {
+					return cloneGeminiModels(models), nil
+				}
+			}
+		}
+		refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), geminiGroupModelCatalogFetchTimeout)
+		defer cancel()
+		models, listErr := s.listGroupModelsUncached(refreshCtx, groupID)
+		if len(models) > 0 && s.groupModelCatalogCache != nil {
+			s.groupModelCatalogCache.Set(key, cloneGeminiModels(models), geminiGroupModelCatalogTTL)
+		}
+		return models, listErr
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case result := <-resultCh:
+		models, ok := result.Val.([]gemini.Model)
+		if !ok && result.Err == nil {
+			return nil, errors.New("Gemini group model catalog returned an invalid result")
+		}
+		return cloneGeminiModels(models), result.Err
+	}
+}
+
+func (s *GeminiMessagesCompatService) listGroupAccountModels(ctx context.Context, account *Account) ([]gemini.Model, error) {
+	switch {
+	case account == nil:
+		return nil, errors.New("account is nil")
+	case account.Platform == PlatformAntigravity:
+		return antigravityModelsForGeminiGroup(account), nil
+	case account.IsGeminiCloudCodeOAuth():
+		return s.ListCodeAssistModels(ctx, account)
+	case account.Type == AccountTypeAPIKey || account.IsGeminiAIStudioOAuth():
+		return s.listAIStudioModels(ctx, account)
+	case account.Type == AccountTypeServiceAccount:
+		return staticGeminiAccountModels(account), nil
+	default:
+		return nil, fmt.Errorf("unsupported Gemini account type %q", account.Type)
+	}
+}
+
+func (s *GeminiMessagesCompatService) listGroupModelsUncached(ctx context.Context, groupID *int64) ([]gemini.Model, error) {
+	accounts, err := s.listSchedulableAccountsOnce(ctx, groupID, PlatformGemini, false)
+	if err != nil {
+		return nil, fmt.Errorf("query Gemini accounts: %w", err)
+	}
+	ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
+	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
+	if len(accounts) == 0 {
+		return nil, errors.New("no available Gemini accounts")
+	}
+
+	merged := make(map[string]gemini.Model)
+	var catalogErrors []error
+	var resultMu sync.Mutex
+	var group errgroup.Group
+	group.SetLimit(geminiGroupModelCatalogConcurrency)
+	for i := range accounts {
+		accountSnapshot := accounts[i]
+		group.Go(func() error {
+			account, hydrateErr := s.hydrateSelectedAccount(ctx, &accountSnapshot)
+			if hydrateErr != nil {
+				resultMu.Lock()
+				catalogErrors = append(catalogErrors, fmt.Errorf("account %d: %w", accountSnapshot.ID, hydrateErr))
+				resultMu.Unlock()
+				return nil
+			}
+			models, listErr := s.listGroupAccountModels(ctx, account)
+
+			resultMu.Lock()
+			defer resultMu.Unlock()
+			if listErr != nil {
+				catalogErrors = append(catalogErrors, fmt.Errorf("account %d: %w", account.ID, listErr))
+			}
+			for _, model := range models {
+				id := normalizeGeminiCatalogModelID(model.Name)
+				if id == "" {
+					continue
+				}
+				model.Name = "models/" + id
+				if existing, ok := merged[id]; !ok || (existing.DisplayName == "" && model.DisplayName != "") {
+					merged[id] = model
+				}
+			}
+			return nil
+		})
+	}
+	_ = group.Wait()
+
+	ids := make([]string, 0, len(merged))
+	for id := range merged {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	models := make([]gemini.Model, 0, len(ids))
+	for _, id := range ids {
+		models = append(models, merged[id])
+	}
+	joinedErr := errors.Join(catalogErrors...)
+	if len(models) == 0 {
+		if joinedErr != nil {
+			return nil, joinedErr
+		}
+		return nil, errors.New("Gemini accounts returned no models")
+	}
+	if joinedErr != nil {
+		slog.Warn("gemini_group_model_catalog_partial", "group_id", derefGroupID(groupID), "error", joinedErr)
+	}
+	return models, joinedErr
+}
+
+func isGeminiNativeModelFamily(model string) bool {
+	model = strings.ToLower(normalizeGeminiCatalogModelID(model))
+	return strings.HasPrefix(model, "gemini-") || strings.HasPrefix(model, "imagen-") || strings.HasPrefix(model, "veo-")
+}
+
+// SupportsAccountModel is the request-time capability check shared by both
+// Gemini schedulers. Cloud Code accounts are checked against their live OAuth
+// grant; AI Studio accounts without a mapping only claim native model families.
+func (s *GeminiMessagesCompatService) SupportsAccountModel(ctx context.Context, account *Account, requestedModel string) bool {
+	if account == nil {
+		return false
+	}
+	if strings.TrimSpace(requestedModel) == "" {
+		return true
+	}
+	if account.Platform == PlatformAntigravity {
+		return mapAntigravityModel(account, requestedModel) != ""
+	}
+	if account.Platform != PlatformGemini {
+		return account.IsModelSupported(requestedModel)
+	}
+	if account.IsGeminiCloudCodeOAuth() {
+		if s.tokenProvider == nil || s.codeAssistModelResolver == nil || !account.IsModelSupported(requestedModel) {
+			return false
+		}
+		accessToken, err := s.tokenProvider.GetAccessToken(ctx, account)
+		if err != nil {
+			slog.Debug("gemini_account_model_token_unavailable", "account_id", account.ID, "error", err)
+			return false
+		}
+		_, err = s.codeAssistModelResolver.Resolve(ctx, account, accessToken, account.GetMappedModel(requestedModel))
+		if err != nil {
+			slog.Debug("gemini_account_model_not_supported", "account_id", account.ID, "model", requestedModel, "error", err)
+		}
+		return err == nil
+	}
+	if len(account.GetModelMapping()) > 0 {
+		return account.IsModelSupported(requestedModel)
+	}
+	return isGeminiNativeModelFamily(requestedModel)
+}
+
+func buildGeminiCodeAssistRequestBody(projectID, model string, innerBody []byte) ([]byte, error) {
+	projectID = strings.TrimSpace(projectID)
+	model = strings.TrimSpace(model)
+	if projectID == "" {
+		return nil, ErrGeminiProjectIDRequired
+	}
+	var request map[string]any
+	if err := json.Unmarshal(innerBody, &request); err != nil {
+		return nil, fmt.Errorf("parse Gemini request: %w", err)
+	}
+	if request == nil {
+		return nil, errors.New("Gemini request must be a JSON object")
+	}
+	envelope := newGeminiCodeAssistRequestEnvelope(model)
+	if existingSessionID, ok := request["sessionId"].(string); ok && strings.TrimSpace(existingSessionID) != "" {
+		envelope.sessionID = existingSessionID
+	}
+	request["sessionId"] = envelope.sessionID
+	request["labels"] = envelope.labels
+	return json.Marshal(map[string]any{
+		"project":     projectID,
+		"requestId":   envelope.requestID,
+		"userAgent":   "antigravity",
+		"requestType": "agent",
+		"model":       model,
+		"request":     request,
+	})
+}
+
+func prepareGeminiImageGenerationRequest(body []byte, model string) ([]byte, error) {
+	if !isImageGenerationModel(model) {
+		return body, nil
+	}
+	var request map[string]any
+	if err := json.Unmarshal(body, &request); err != nil {
+		return nil, fmt.Errorf("parse Gemini image request: %w", err)
+	}
+	if request == nil {
+		return nil, errors.New("Gemini image request must be a JSON object")
+	}
+
+	generationConfig, ok := request["generationConfig"].(map[string]any)
+	if !ok {
+		if value, exists := request["generationConfig"]; exists && value != nil {
+			return nil, errors.New("Gemini generationConfig must be a JSON object")
+		}
+		generationConfig = make(map[string]any)
+		request["generationConfig"] = generationConfig
+	}
+	if value, exists := generationConfig["responseModalities"]; !exists || value == nil {
+		generationConfig["responseModalities"] = []string{"TEXT", "IMAGE"}
+	}
+	if value, exists := generationConfig["imageConfig"]; !exists || value == nil {
+		generationConfig["imageConfig"] = map[string]any{"aspectRatio": "1:1"}
+	} else {
+		imageConfig, ok := value.(map[string]any)
+		if !ok {
+			return nil, errors.New("Gemini imageConfig must be a JSON object")
+		}
+		if aspectRatio, exists := imageConfig["aspectRatio"]; !exists || aspectRatio == nil {
+			imageConfig["aspectRatio"] = "1:1"
+		}
+	}
+	return json.Marshal(request)
+}
+
+func geminiInlineImageMarkdown(part map[string]any) (string, [sha256.Size]byte, bool) {
+	var empty [sha256.Size]byte
+	if part == nil {
+		return "", empty, false
+	}
+	inlineData, ok := part["inlineData"].(map[string]any)
+	if !ok {
+		inlineData, ok = part["inline_data"].(map[string]any)
+	}
+	if !ok {
+		return "", empty, false
+	}
+	mimeType, _ := inlineData["mimeType"].(string)
+	if mimeType == "" {
+		mimeType, _ = inlineData["mime_type"].(string)
+	}
+	data, _ := inlineData["data"].(string)
+	if !isGeminiInlineImageMIMEType(mimeType) || !isValidBase64(data) {
+		return "", empty, false
+	}
+	return fmt.Sprintf("![image](data:%s;base64,%s)", mimeType, data), sha256.Sum256([]byte(data)), true
+}
+
+type geminiCodeAssistRequestEnvelope struct {
+	requestID string
+	sessionID string
+	labels    map[string]string
+}
+
+var geminiCodeAssistModelEnums = map[string]string{
+	"gemini-3.5-flash-extra-low": "MODEL_PLACEHOLDER_M187",
+	"gemini-3.5-flash-low":       "MODEL_PLACEHOLDER_M20",
+	"gemini-3-flash-agent":       "MODEL_PLACEHOLDER_M132",
+	"gemini-3.1-pro-low":         "MODEL_PLACEHOLDER_M36",
+	"gemini-pro-agent":           "MODEL_PLACEHOLDER_M16",
+}
+
+func newGeminiCodeAssistRequestEnvelope(model string) geminiCodeAssistRequestEnvelope {
+	agentID := uuid.NewString()
+	trajectoryID := uuid.NewString()
+	const step = 2
+
+	var sessionBytes [8]byte
+	_, _ = rand.Read(sessionBytes[:])
+	sessionID := strconv.FormatInt(int64(binary.LittleEndian.Uint64(sessionBytes[:])), 10)
+	isClaude := strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "claude-")
+	usedClaude := strconv.FormatBool(isClaude)
+	labels := map[string]string{
+		"last_step_index":          strconv.Itoa(step - 1),
+		"trajectory_id":            trajectoryID,
+		"used_claude":              usedClaude,
+		"used_claude_conservative": usedClaude,
+	}
+	if modelEnum := geminiCodeAssistModelEnums[strings.TrimSpace(model)]; modelEnum != "" {
+		labels["model_enum"] = modelEnum
+	}
+
+	return geminiCodeAssistRequestEnvelope{
+		requestID: fmt.Sprintf("agent/%s/%d/%s/%d", agentID, time.Now().UnixMilli(), trajectoryID, step),
+		sessionID: sessionID,
+		labels:    labels,
+	}
+}
+
+func geminiModelResolutionError(err error) error {
+	if !errors.Is(err, ErrGeminiModelUnavailable) {
+		return err
+	}
+	body, marshalErr := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"message": err.Error(),
+			"status":  "NOT_FOUND",
+		},
+	})
+	if marshalErr != nil {
+		body = []byte(`{"error":{"message":"requested Gemini model is unavailable","status":"NOT_FOUND"}}`)
+	}
+	return &UpstreamFailoverError{
+		StatusCode:        http.StatusNotFound,
+		ResponseBody:      body,
+		Scope:             GatewayFailureScopeAccount,
+		Reason:            GatewayFailureReason("gemini_model_unavailable"),
+		NextAccountAction: NextAccountRetry,
+	}
+}
+
+func IsGeminiModelUnavailableFailover(err *UpstreamFailoverError) bool {
+	return err != nil && err.Reason == GatewayFailureReason("gemini_model_unavailable")
 }
 
 // GetTokenProvider returns the token provider for OAuth accounts
@@ -266,7 +807,7 @@ func (s *GeminiMessagesCompatService) isAccountUsableForRequestWithPrecheck(
 
 	// 检查模型支持
 	// Check model support
-	if requestedModel != "" && !s.isModelSupportedByAccount(account, requestedModel) {
+	if requestedModel != "" && !s.SupportsAccountModel(ctx, account, requestedModel) {
 		return false
 	}
 
@@ -409,17 +950,6 @@ func (s *GeminiMessagesCompatService) isBetterGeminiAccount(candidate, current *
 	}
 }
 
-// isModelSupportedByAccount 根据账户平台检查模型支持
-func (s *GeminiMessagesCompatService) isModelSupportedByAccount(account *Account, requestedModel string) bool {
-	if account.Platform == PlatformAntigravity {
-		if strings.TrimSpace(requestedModel) == "" {
-			return true
-		}
-		return mapAntigravityModel(account, requestedModel) != ""
-	}
-	return account.IsModelSupported(requestedModel)
-}
-
 // GetAntigravityGatewayService 返回 AntigravityGatewayService
 func (s *GeminiMessagesCompatService) GetAntigravityGatewayService() *AntigravityGatewayService {
 	return s.antigravityGatewayService
@@ -477,13 +1007,25 @@ func (s *GeminiMessagesCompatService) listSchedulableAccountsOnce(ctx context.Co
 		queryPlatforms = []string{platform, PlatformAntigravity}
 	}
 
+	var accounts []Account
+	var err error
 	if groupID != nil {
-		return s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, queryPlatforms)
+		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, queryPlatforms)
+	} else if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, queryPlatforms)
+	} else {
+		accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatforms(ctx, queryPlatforms)
 	}
-	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
-		return s.accountRepo.ListSchedulableByPlatforms(ctx, queryPlatforms)
+	if err != nil || !useMixedScheduling {
+		return accounts, err
 	}
-	return s.accountRepo.ListSchedulableUngroupedByPlatforms(ctx, queryPlatforms)
+	filtered := make([]Account, 0, len(accounts))
+	for i := range accounts {
+		if isAccountAllowedForMixedPlatform(&accounts[i], platform) {
+			filtered = append(filtered, accounts[i])
+		}
+	}
+	return filtered, nil
 }
 
 func (s *GeminiMessagesCompatService) validateUpstreamBaseURL(raw string) (string, error) {
@@ -505,109 +1047,6 @@ func (s *GeminiMessagesCompatService) validateUpstreamBaseURL(raw string) (strin
 	return normalized, nil
 }
 
-// HasAntigravityAccounts 检查是否有可用的 antigravity 账户
-func (s *GeminiMessagesCompatService) HasAntigravityAccounts(ctx context.Context, groupID *int64) (bool, error) {
-	accounts, err := s.listSchedulableAccountsOnce(ctx, groupID, PlatformAntigravity, false)
-	if err != nil {
-		return false, err
-	}
-	return len(accounts) > 0, nil
-}
-
-// SelectAccountForAIStudioEndpoints selects an account that is likely to succeed against
-// generativelanguage.googleapis.com (e.g. GET /v1beta/models).
-//
-// Preference order:
-// 1) API key accounts (AI Studio)
-// 2) OAuth accounts without project_id (AI Studio OAuth)
-// 3) OAuth accounts explicitly marked as ai_studio
-// 4) Any remaining Gemini accounts (fallback)
-func (s *GeminiMessagesCompatService) SelectAccountForAIStudioEndpoints(ctx context.Context, groupID *int64) (*Account, error) {
-	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
-	accounts, err := s.listSchedulableAccountsOnce(ctx, groupID, PlatformGemini, true)
-	if err != nil {
-		return nil, fmt.Errorf("query accounts failed: %w", err)
-	}
-	if len(accounts) == 0 {
-		return nil, errors.New("no available Gemini accounts")
-	}
-	ctx = withSchedulerFreshnessAccounts(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
-	accounts = applySchedulerFreshnessAccounts(ctx, accounts)
-	if len(accounts) == 0 {
-		return nil, errors.New("no available Gemini accounts")
-	}
-
-	rank := func(a *Account) int {
-		if a == nil {
-			return 999
-		}
-		switch a.Type {
-		case AccountTypeAPIKey:
-			if strings.TrimSpace(a.GetCredential("api_key")) != "" {
-				return 0
-			}
-			return 9
-		case AccountTypeOAuth:
-			if strings.TrimSpace(a.GetCredential("project_id")) == "" {
-				return 1
-			}
-			if strings.TrimSpace(a.GetCredential("oauth_type")) == "ai_studio" {
-				return 2
-			}
-			// Code Assist OAuth tokens often lack AI Studio scopes for models listing.
-			return 3
-		case AccountTypeServiceAccount:
-			// Vertex service accounts use aiplatform.googleapis.com, not the AI Studio
-			// endpoint (generativelanguage.googleapis.com), so they cannot serve these requests.
-			return 999
-		default:
-			return 10
-		}
-	}
-
-	var selected *Account
-	for i := range accounts {
-		acc := &accounts[i]
-		if selected == nil {
-			selected = acc
-			continue
-		}
-
-		r1, r2 := rank(acc), rank(selected)
-		if r1 < r2 {
-			selected = acc
-			continue
-		}
-		if r1 > r2 {
-			continue
-		}
-
-		if acc.Priority < selected.Priority {
-			selected = acc
-		} else if acc.Priority == selected.Priority {
-			switch {
-			case acc.LastUsedAt == nil && selected.LastUsedAt != nil:
-				selected = acc
-			case acc.LastUsedAt != nil && selected.LastUsedAt == nil:
-				// keep selected
-			case acc.LastUsedAt == nil && selected.LastUsedAt == nil:
-				if acc.Type == AccountTypeOAuth && selected.Type != AccountTypeOAuth {
-					selected = acc
-				}
-			default:
-				if acc.LastUsedAt.Before(*selected.LastUsedAt) {
-					selected = acc
-				}
-			}
-		}
-	}
-
-	if selected == nil {
-		return nil, errors.New("no available Gemini accounts")
-	}
-	return s.hydrateSelectedAccount(ctx, selected)
-}
-
 func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*ForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
 	beginGeminiImageOutputObservation(c)
@@ -625,16 +1064,17 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	}
 
 	originalModel := req.Model
-	mappedModel := req.Model
-	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount {
-		mappedModel = account.GetMappedModel(req.Model)
-	}
+	mappedModel := account.GetMappedModel(req.Model)
 
 	geminiReq, err := convertClaudeMessagesToGeminiGenerateContent(body)
 	if err != nil {
 		return nil, s.writeClaudeError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 	}
 	geminiReq = ensureGeminiFunctionCallThoughtSignatures(geminiReq)
+	geminiReq, err = prepareGeminiImageGenerationRequest(geminiReq, mappedModel)
+	if err != nil {
+		return nil, s.writeClaudeError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+	}
 	originalClaudeBody := body
 
 	proxyURL := ""
@@ -644,8 +1084,9 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 
 	var requestIDHeader string
 	var buildReq func(ctx context.Context) (*http.Request, string, error)
+	codeAssistEndpointAttempt := 0
 	useUpstreamStream := req.Stream
-	if account.Type == AccountTypeOAuth && !req.Stream && strings.TrimSpace(account.GetCredential("project_id")) != "" {
+	if account.IsGeminiCloudCodeOAuth() && !req.Stream {
 		// Code Assist's non-streaming generateContent may return no content; use streaming upstream and aggregate.
 		useUpstreamStream = true
 	}
@@ -686,6 +1127,9 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 
 	case AccountTypeOAuth:
 		buildReq = func(ctx context.Context) (*http.Request, string, error) {
+			if !account.HasSupportedGeminiOAuthType() {
+				return nil, "", errors.New("Gemini OAuth account must be re-authorized with a supported OAuth type")
+			}
 			if s.tokenProvider == nil {
 				return nil, "", errors.New("gemini token provider not configured")
 			}
@@ -695,47 +1139,50 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 			}
 
 			projectID := strings.TrimSpace(account.GetCredential("project_id"))
+			cloudCode := account.IsGeminiCloudCodeOAuth()
+			// Project discovery can happen inside GetAccessToken. Re-evaluate the
+			// upstream mode so the first Cloud Code request uses the streaming path.
+			if cloudCode && !req.Stream {
+				useUpstreamStream = true
+			}
 
 			action := "generateContent"
 			if useUpstreamStream {
 				action = "streamGenerateContent"
 			}
 
-			// Two modes for OAuth:
-			// 1. With project_id -> Code Assist API (wrapped request)
-			// 2. Without project_id -> AI Studio API (direct OAuth, like API key but with Bearer token)
-			if projectID != "" {
-				// Mode 1: Code Assist API
-				baseURL, err := s.validateUpstreamBaseURL(geminicli.GeminiCliBaseURL)
+			if cloudCode {
+				if projectID == "" {
+					return nil, "", ErrGeminiProjectIDRequired
+				}
+				resolvedModel, resolveErr := s.resolveCodeAssistRuntimeModel(ctx, account, accessToken, mappedModel)
+				if resolveErr != nil {
+					return nil, "", geminiModelResolutionError(resolveErr)
+				}
+				mappedModel = resolvedModel
+				baseURL, err := s.validateUpstreamBaseURL(geminiCodeAssistBaseURL(codeAssistEndpointAttempt))
 				if err != nil {
 					return nil, "", err
 				}
+				codeAssistEndpointAttempt++
 				fullURL := fmt.Sprintf("%s/v1internal:%s", strings.TrimRight(baseURL, "/"), action)
 				if useUpstreamStream {
 					fullURL += "?alt=sse"
 				}
 
-				wrapped := map[string]any{
-					"model":   mappedModel,
-					"project": projectID,
+				wrappedBytes, err := buildGeminiCodeAssistRequestBody(projectID, mappedModel, geminiReq)
+				if err != nil {
+					return nil, "", err
 				}
-				var inner any
-				if err := json.Unmarshal(geminiReq, &inner); err != nil {
-					return nil, "", fmt.Errorf("failed to parse gemini request: %w", err)
-				}
-				wrapped["request"] = inner
-				wrappedBytes, _ := json.Marshal(wrapped)
 
 				upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(wrappedBytes))
 				if err != nil {
 					return nil, "", err
 				}
-				upstreamReq.Header.Set("Content-Type", "application/json")
-				upstreamReq.Header.Set("Authorization", "Bearer "+accessToken)
-				upstreamReq.Header.Set("User-Agent", geminicli.GeminiCLIUserAgent)
+				antigravity.ApplyCodeAssistRequestHeaders(upstreamReq, ctx, accessToken, "text/event-stream")
 				return upstreamReq, "x-request-id", nil
 			} else {
-				// Mode 2: AI Studio API with OAuth (like API key mode, but using Bearer token)
+				// AI Studio OAuth uses the Generative Language API regardless of project metadata.
 				baseURL := account.GetGeminiBaseURL(geminicli.AIStudioBaseURL)
 				normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
 				if err != nil {
@@ -801,8 +1248,12 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, err
 			}
+			var failoverErr *UpstreamFailoverError
+			if errors.As(err, &failoverErr) {
+				return nil, failoverErr
+			}
 			// Local build error: don't retry.
-			if strings.Contains(err.Error(), "missing project_id") {
+			if errors.Is(err, ErrGeminiProjectIDRequired) {
 				return nil, s.writeClaudeError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 			}
 			return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", err.Error())
@@ -1094,12 +1545,13 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 
 	var usage *ClaudeUsage
 	var firstTokenMs *int
+	includeImages := isImageGenerationModel(originalModel) || isImageGenerationModel(mappedModel)
 	// streamTopUpAbortErr 记录「流式补扣失败主动中止」哨兵错误，与已交付输出的部分
 	// 结果一起在函数末尾返回给 handler（result 非 nil + err 非 nil），避免既走结算又
 	// 被误判为成功。
 	var streamTopUpAbortErr error
 	if req.Stream {
-		streamRes, err := s.handleStreamingResponse(c, resp, startTime, originalModel)
+		streamRes, err := s.handleStreamingResponse(c, resp, startTime, originalModel, includeImages)
 		if err != nil {
 			// 流式补扣失败主动中止（ErrBalanceWithholdingFailed）时保留一个
 			// 零 usage 的 ForwardResult（携 err），让统一计费任务完成幂等结算。
@@ -1129,14 +1581,14 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 			collectedBytes, _ := json.Marshal(collected)
 			upstreamResponseModelObserverFromContext(c).ObserveGemini(collectedBytes)
 			observeGeminiImageOutputs(c, collectedBytes)
-			claudeResp, usageObj2 := convertGeminiToClaudeMessage(collected, originalModel, collectedBytes, false)
+			claudeResp, usageObj2 := convertGeminiToClaudeMessage(collected, originalModel, collectedBytes, includeImages)
 			c.JSON(http.StatusOK, claudeResp)
 			usage = usageObj2
 			if usageObj != nil && (usageObj.InputTokens > 0 || usageObj.OutputTokens > 0) {
 				usage = usageObj
 			}
 		} else {
-			usage, err = s.handleNonStreamingResponse(c, resp, originalModel)
+			usage, err = s.handleNonStreamingResponse(c, resp, originalModel, includeImages)
 			if err != nil {
 				return nil, err
 			}
@@ -1203,9 +1655,23 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	// `thoughtSignature` to avoid frequent INVALID_ARGUMENT 400s.
 	body = ensureGeminiFunctionCallThoughtSignatures(body)
 
-	mappedModel := originalModel
-	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount {
-		mappedModel = account.GetMappedModel(originalModel)
+	mappedModel := account.GetMappedModel(originalModel)
+	if account.IsGeminiCloudCodeOAuth() && action == "countTokens" {
+		estimated := estimateGeminiCountTokens(body)
+		c.JSON(http.StatusOK, map[string]any{"totalTokens": estimated})
+		return &ForwardResult{
+			Usage:         ClaudeUsage{},
+			Model:         originalModel,
+			UpstreamModel: mappedModel,
+			Duration:      time.Since(startTime),
+		}, nil
+	}
+	if action != "countTokens" {
+		var err error
+		body, err = prepareGeminiImageGenerationRequest(body, mappedModel)
+		if err != nil {
+			return nil, s.writeGoogleError(c, http.StatusBadRequest, err.Error())
+		}
 	}
 
 	proxyURL := ""
@@ -1215,15 +1681,14 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 
 	useUpstreamStream := stream
 	upstreamAction := action
-	if account.Type == AccountTypeOAuth && !stream && action == "generateContent" && strings.TrimSpace(account.GetCredential("project_id")) != "" {
+	if account.IsGeminiCloudCodeOAuth() && !stream && action == "generateContent" {
 		// Code Assist's non-streaming generateContent may return no content; use streaming upstream and aggregate.
 		useUpstreamStream = true
 		upstreamAction = "streamGenerateContent"
 	}
-	forceAIStudio := action == "countTokens"
-
 	var requestIDHeader string
 	var buildReq func(ctx context.Context) (*http.Request, string, error)
+	codeAssistEndpointAttempt := 0
 
 	switch account.Type {
 	case AccountTypeAPIKey:
@@ -1256,6 +1721,9 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 
 	case AccountTypeOAuth:
 		buildReq = func(ctx context.Context) (*http.Request, string, error) {
+			if !account.HasSupportedGeminiOAuthType() {
+				return nil, "", errors.New("Gemini OAuth account must be re-authorized with a supported OAuth type")
+			}
 			if s.tokenProvider == nil {
 				return nil, "", errors.New("gemini token provider not configured")
 			}
@@ -1265,42 +1733,46 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			}
 
 			projectID := strings.TrimSpace(account.GetCredential("project_id"))
+			cloudCode := account.IsGeminiCloudCodeOAuth()
+			// A project can be discovered during token acquisition. Recompute the
+			// action so the first Cloud Code request follows the streaming path.
+			if cloudCode && !stream && action == "generateContent" {
+				useUpstreamStream = true
+				upstreamAction = "streamGenerateContent"
+			}
 
-			// Two modes for OAuth:
-			// 1. With project_id -> Code Assist API (wrapped request)
-			// 2. Without project_id -> AI Studio API (direct OAuth, like API key but with Bearer token)
-			if projectID != "" && !forceAIStudio {
-				// Mode 1: Code Assist API
-				baseURL, err := s.validateUpstreamBaseURL(geminicli.GeminiCliBaseURL)
+			if cloudCode {
+				if projectID == "" {
+					return nil, "", ErrGeminiProjectIDRequired
+				}
+				resolvedModel, resolveErr := s.resolveCodeAssistRuntimeModel(ctx, account, accessToken, mappedModel)
+				if resolveErr != nil {
+					return nil, "", geminiModelResolutionError(resolveErr)
+				}
+				mappedModel = resolvedModel
+				baseURL, err := s.validateUpstreamBaseURL(geminiCodeAssistBaseURL(codeAssistEndpointAttempt))
 				if err != nil {
 					return nil, "", err
 				}
+				codeAssistEndpointAttempt++
 				fullURL := fmt.Sprintf("%s/v1internal:%s", strings.TrimRight(baseURL, "/"), upstreamAction)
 				if useUpstreamStream {
 					fullURL += "?alt=sse"
 				}
 
-				wrapped := map[string]any{
-					"model":   mappedModel,
-					"project": projectID,
+				wrappedBytes, err := buildGeminiCodeAssistRequestBody(projectID, mappedModel, body)
+				if err != nil {
+					return nil, "", err
 				}
-				var inner any
-				if err := json.Unmarshal(body, &inner); err != nil {
-					return nil, "", fmt.Errorf("failed to parse gemini request: %w", err)
-				}
-				wrapped["request"] = inner
-				wrappedBytes, _ := json.Marshal(wrapped)
 
 				upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(wrappedBytes))
 				if err != nil {
 					return nil, "", err
 				}
-				upstreamReq.Header.Set("Content-Type", "application/json")
-				upstreamReq.Header.Set("Authorization", "Bearer "+accessToken)
-				upstreamReq.Header.Set("User-Agent", geminicli.GeminiCLIUserAgent)
+				antigravity.ApplyCodeAssistRequestHeaders(upstreamReq, ctx, accessToken, "text/event-stream")
 				return upstreamReq, "x-request-id", nil
 			} else {
-				// Mode 2: AI Studio API with OAuth (like API key mode, but using Bearer token)
+				// AI Studio OAuth uses the Generative Language API regardless of project metadata.
 				baseURL := account.GetGeminiBaseURL(geminicli.AIStudioBaseURL)
 				normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
 				if err != nil {
@@ -1359,8 +1831,12 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, err
 			}
+			var failoverErr *UpstreamFailoverError
+			if errors.As(err, &failoverErr) {
+				return nil, failoverErr
+			}
 			// Local build error: don't retry.
-			if strings.Contains(err.Error(), "missing project_id") {
+			if errors.Is(err, ErrGeminiProjectIDRequired) {
 				return nil, s.writeGoogleError(c, http.StatusBadRequest, err.Error())
 			}
 			return nil, s.writeGoogleError(c, http.StatusBadGateway, err.Error())
@@ -1689,6 +2165,8 @@ func (s *GeminiMessagesCompatService) shouldRetryGeminiUpstreamError(account *Ac
 	switch statusCode {
 	case 429, 500, 502, 503, 504, 529:
 		return true
+	case 404:
+		return account != nil && (account.IsGeminiCodeAssist() || account.IsGeminiAntigravity())
 	case 403:
 		// GeminiCli OAuth occasionally returns 403 transiently (activation/quota propagation); allow retry.
 		if account == nil || account.Type != AccountTypeOAuth {
@@ -2087,7 +2565,7 @@ type geminiStreamResult struct {
 	firstTokenMs *int
 }
 
-func (s *GeminiMessagesCompatService) handleNonStreamingResponse(c *gin.Context, resp *http.Response, originalModel string) (*ClaudeUsage, error) {
+func (s *GeminiMessagesCompatService) handleNonStreamingResponse(c *gin.Context, resp *http.Response, originalModel string, includeImages bool) (*ClaudeUsage, error) {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
 		return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Failed to read upstream response")
@@ -2109,13 +2587,13 @@ func (s *GeminiMessagesCompatService) handleNonStreamingResponse(c *gin.Context,
 		return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
 	}
 
-	claudeResp, usage := convertGeminiToClaudeMessage(geminiResp, originalModel, unwrappedBody, false)
+	claudeResp, usage := convertGeminiToClaudeMessage(geminiResp, originalModel, unwrappedBody, includeImages)
 	c.JSON(http.StatusOK, claudeResp)
 
 	return usage, nil
 }
 
-func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time, originalModel string) (*geminiStreamResult, error) {
+func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time, originalModel string, includeImages bool) (*geminiStreamResult, error) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -2163,6 +2641,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 	openBlockIndex := -1
 	openBlockType := ""
 	seenText := ""
+	seenImages := make(map[[sha256.Size]byte]struct{})
 	openToolIndex := -1
 	openToolID := ""
 	openToolName := ""
@@ -2211,7 +2690,20 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 
 		parts := extractGeminiParts(geminiResp)
 		for _, part := range parts {
-			if text, ok := part["text"].(string); ok && text != "" {
+			text, hasText := part["text"].(string)
+			isImage := false
+			if (!hasText || text == "") && includeImages {
+				if markdown, fingerprint, ok := geminiInlineImageMarkdown(part); ok {
+					if _, duplicate := seenImages[fingerprint]; duplicate {
+						continue
+					}
+					seenImages[fingerprint] = struct{}{}
+					text = markdown
+					hasText = true
+					isImage = true
+				}
+			}
+			if hasText && text != "" {
 				// Close an open tool_use block before starting text, mirroring
 				// the functionCall branch (which closes open text blocks) and
 				// the chat-completions sibling's closeOpenTool(). Otherwise a
@@ -2228,8 +2720,12 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					seenToolJSON = ""
 				}
 
-				delta, newSeen := computeGeminiTextDelta(seenText, text)
-				seenText = newSeen
+				delta := text
+				if !isImage {
+					var newSeen string
+					delta, newSeen = computeGeminiTextDelta(seenText, text)
+					seenText = newSeen
+				}
 				if delta == "" {
 					continue
 				}
@@ -2256,9 +2752,11 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 
 				// Reserve this text delta before it becomes visible. If the
 				// wallet cannot extend the hold, abort without emitting it.
-				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(delta)); topUpErr != nil {
-					logger.LegacyPrintf("service.gemini_messages_compat", "Stream output hold top-up failed, aborting upstream: model=%s error=%v", originalModel, topUpErr)
-					return nil, wrapStreamOutputHoldTopUpFailure(topUpErr)
+				if !isImage {
+					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(delta)); topUpErr != nil {
+						logger.LegacyPrintf("service.gemini_messages_compat", "Stream output hold top-up failed, aborting upstream: model=%s error=%v", originalModel, topUpErr)
+						return nil, wrapStreamOutputHoldTopUpFailure(topUpErr)
+					}
 				}
 
 				if firstTokenMs == nil {
@@ -2942,15 +3440,11 @@ func convertGeminiToClaudeMessage(geminiResp map[string]any, originalModel strin
 								"text": text,
 							})
 						}
-						if inlineData, ok := pm["inlineData"].(map[string]any); includeInlineData && ok {
-							mimeType, _ := inlineData["mimeType"].(string)
-							data, _ := inlineData["data"].(string)
-							if isGeminiInlineImageMIMEType(mimeType) && isValidBase64(data) {
-								contentBlocks = append(contentBlocks, map[string]any{
-									"type": "text",
-									"text": fmt.Sprintf("![image](data:%s;base64,%s)", mimeType, data),
-								})
-							}
+						if markdown, _, ok := geminiInlineImageMarkdown(pm); includeInlineData && ok {
+							contentBlocks = append(contentBlocks, map[string]any{
+								"type": "text",
+								"text": markdown,
+							})
 						}
 						if fc, ok := pm["functionCall"].(map[string]any); ok {
 							name, _ := fc["name"].(string)
@@ -3007,7 +3501,10 @@ func isValidBase64(data string) bool {
 	if data == "" {
 		return false
 	}
-	_, err := base64.StdEncoding.DecodeString(data)
+	// Image responses can be several megabytes. Validate through a streaming
+	// decoder so verification does not allocate a second full image buffer.
+	decoder := base64.NewDecoder(base64.StdEncoding.Strict(), strings.NewReader(data))
+	_, err := io.Copy(io.Discard, decoder)
 	return err == nil
 }
 
@@ -3090,8 +3587,8 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 	if resetAt == nil {
 		// 根据账号类型使用不同的默认重置时间
 		var ra time.Time
-		if isCodeAssist || oauthType == "google_one" {
-			// Gemini CLI / Google One: fallback cooldown by tier
+		if isCodeAssist || oauthType == GeminiOAuthTypeAntigravity {
+			// Cloud Code OAuth: fallback cooldown by tier
 			cooldown := geminiCooldownForTier(tierID)
 			if s.rateLimitService != nil {
 				cooldown = s.rateLimitService.GeminiCooldown(ctx, account)
@@ -3100,7 +3597,7 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 			if isCodeAssist {
 				logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Account %d (Code Assist, tier=%s, project=%s) rate limited, cooldown=%v", account.ID, tierID, projectID, time.Until(ra).Truncate(time.Second))
 			} else {
-				logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Account %d (Google One OAuth, tier=%s, project=%s) rate limited, cooldown=%v", account.ID, tierID, projectID, time.Until(ra).Truncate(time.Second))
+				logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Account %d (Antigravity OAuth, tier=%s, project=%s) rate limited, cooldown=%v", account.ID, tierID, projectID, time.Until(ra).Truncate(time.Second))
 			}
 		} else {
 			// API Key / AI Studio OAuth: PST 午夜

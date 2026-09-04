@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -26,26 +27,28 @@ func NewGeminiOAuthClient(cfg *config.Config) service.GeminiOAuthClient {
 }
 
 func (c *geminiOAuthClient) ExchangeCode(ctx context.Context, oauthType, code, codeVerifier, redirectURI, proxyURL string) (*geminicli.TokenResponse, error) {
+	if oauthType == service.GeminiOAuthTypeAntigravity {
+		client, err := antigravity.NewClient(proxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("create Antigravity OAuth client: %w", err)
+		}
+		token, err := client.ExchangeCode(ctx, code, codeVerifier)
+		if err != nil {
+			return nil, err
+		}
+		return geminiTokenResponseFromAntigravity(token), nil
+	}
+
 	client, err := createGeminiReqClient(proxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("create HTTP client: %w", err)
 	}
 
-	// Use different OAuth clients based on oauthType:
-	// - code_assist: always use built-in Gemini CLI OAuth client (public)
-	// - google_one: always use built-in Gemini CLI OAuth client (public)
-	// - ai_studio: requires a user-provided OAuth client
 	oauthCfgInput := geminicli.OAuthConfig{
 		ClientID:     c.cfg.Gemini.OAuth.ClientID,
 		ClientSecret: c.cfg.Gemini.OAuth.ClientSecret,
 		Scopes:       c.cfg.Gemini.OAuth.Scopes,
 	}
-	if oauthType == "code_assist" || oauthType == "google_one" {
-		// Force use of built-in Gemini CLI OAuth client
-		oauthCfgInput.ClientID = ""
-		oauthCfgInput.ClientSecret = ""
-	}
-
 	oauthCfg, err := geminicli.EffectiveOAuthConfig(oauthCfgInput, oauthType)
 	if err != nil {
 		return nil, err
@@ -75,6 +78,18 @@ func (c *geminiOAuthClient) ExchangeCode(ctx context.Context, oauthType, code, c
 }
 
 func (c *geminiOAuthClient) RefreshToken(ctx context.Context, oauthType, refreshToken, proxyURL string) (*geminicli.TokenResponse, error) {
+	if oauthType == service.GeminiOAuthTypeAntigravity {
+		client, err := antigravity.NewClient(proxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("create Antigravity OAuth client: %w", err)
+		}
+		token, err := client.RefreshToken(ctx, refreshToken)
+		if err != nil {
+			return nil, err
+		}
+		return geminiTokenResponseFromAntigravity(token), nil
+	}
+
 	client, err := createGeminiReqClient(proxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("create HTTP client: %w", err)
@@ -85,12 +100,6 @@ func (c *geminiOAuthClient) RefreshToken(ctx context.Context, oauthType, refresh
 		ClientSecret: c.cfg.Gemini.OAuth.ClientSecret,
 		Scopes:       c.cfg.Gemini.OAuth.Scopes,
 	}
-	if oauthType == "code_assist" || oauthType == "google_one" {
-		// Force use of built-in Gemini CLI OAuth client
-		oauthCfgInput.ClientID = ""
-		oauthCfgInput.ClientSecret = ""
-	}
-
 	oauthCfg, err := geminicli.EffectiveOAuthConfig(oauthCfgInput, oauthType)
 	if err != nil {
 		return nil, err
@@ -115,6 +124,19 @@ func (c *geminiOAuthClient) RefreshToken(ctx context.Context, oauthType, refresh
 		return nil, fmt.Errorf("token refresh failed: status %d, body: %s", resp.StatusCode, geminicli.SanitizeBodyForLogs(resp.String()))
 	}
 	return &tokenResp, nil
+}
+
+func geminiTokenResponseFromAntigravity(token *antigravity.TokenResponse) *geminicli.TokenResponse {
+	if token == nil {
+		return nil
+	}
+	return &geminicli.TokenResponse{
+		AccessToken:  token.AccessToken,
+		RefreshToken: token.RefreshToken,
+		TokenType:    token.TokenType,
+		ExpiresIn:    token.ExpiresIn,
+		Scope:        token.Scope,
+	}
 }
 
 func createGeminiReqClient(proxyURL string) (*req.Client, error) {

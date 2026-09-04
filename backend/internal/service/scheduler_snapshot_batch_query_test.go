@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -242,6 +243,16 @@ func (c *batchSnapshotCache) SetSnapshot(_ context.Context, bucket SchedulerBuck
 		accounts: append([]Account(nil), accounts...),
 	})
 	return nil
+}
+
+func (c *batchSnapshotCache) GetSnapshotVersion(_ context.Context, bucket SchedulerBucket) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	version := c.versions[bucket]
+	if version == 0 {
+		return "", nil
+	}
+	return strconv.Itoa(version), nil
 }
 
 func (c *batchSnapshotCache) captureCount() int {

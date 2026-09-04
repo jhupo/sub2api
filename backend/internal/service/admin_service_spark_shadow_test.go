@@ -195,7 +195,8 @@ func TestCreateShadowInheritsParentEffectiveOpenAILongContextBillingValue(t *tes
 func TestCreateShadow_BindGroups(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
-	svc := &adminServiceImpl{accountRepo: repo}
+	groupRepo := &sparkShadowValidatingGroupRepoStub{existing: map[int64]bool{42: true}}
+	svc := &adminServiceImpl{accountRepo: repo, groupRepo: groupRepo}
 
 	parent := &Account{
 		Name:     "parent",
@@ -436,6 +437,15 @@ func (s *sparkShadowGroupRepoStub) ListActiveByPlatform(_ context.Context, _ str
 	return s.groups, nil
 }
 
+func (s *sparkShadowGroupRepoStub) GetByID(_ context.Context, id int64) (*Group, error) {
+	for i := range s.groups {
+		if s.groups[i].ID == id {
+			return &s.groups[i], nil
+		}
+	}
+	return nil, ErrGroupNotFound
+}
+
 // TestCreateShadow_DefaultGroupBinding 验证外审 F4:未指定 group_ids 时
 // 影子回落绑定 openai-default 组(否则无组、组内路由选不到)。
 func TestCreateShadow_DefaultGroupBinding(t *testing.T) {
@@ -443,8 +453,8 @@ func TestCreateShadow_DefaultGroupBinding(t *testing.T) {
 	repo := newSparkShadowRepoStub()
 	groupRepo := &sparkShadowGroupRepoStub{
 		groups: []Group{
-			{ID: 99, Name: PlatformOpenAI + "-default"},
-			{ID: 7, Name: "some-other-group"},
+			{ID: 99, Name: PlatformOpenAI + "-default", Platform: PlatformOpenAI},
+			{ID: 7, Name: "some-other-group", Platform: PlatformOpenAI},
 		},
 	}
 	svc := &adminServiceImpl{accountRepo: repo, groupRepo: groupRepo}
@@ -466,7 +476,11 @@ func TestCreateShadow_InheritsParentGroups(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()
 	// groupRepo 故意提供 openai-default,以证明「继承母分组」优先于「回落 openai-default」。
-	groupRepo := &sparkShadowGroupRepoStub{groups: []Group{{ID: 99, Name: PlatformOpenAI + "-default"}}}
+	groupRepo := &sparkShadowGroupRepoStub{groups: []Group{
+		{ID: 99, Name: PlatformOpenAI + "-default", Platform: PlatformOpenAI},
+		{ID: 11, Name: "custom-11", Platform: PlatformOpenAI},
+		{ID: 22, Name: "custom-22", Platform: PlatformOpenAI},
+	}}
 	svc := &adminServiceImpl{accountRepo: repo, groupRepo: groupRepo}
 
 	parent := &Account{
@@ -768,6 +782,17 @@ func (s *sparkShadowValidatingGroupRepoStub) ExistsByIDs(_ context.Context, ids 
 		out[id] = s.existing[id]
 	}
 	return out, nil
+}
+
+func (s *sparkShadowValidatingGroupRepoStub) GetByID(_ context.Context, id int64) (*Group, error) {
+	if !s.existing[id] {
+		return nil, ErrGroupNotFound
+	}
+	return &Group{ID: id, Name: "openai-test", Platform: PlatformOpenAI}, nil
+}
+
+func (s *sparkShadowValidatingGroupRepoStub) GetByIDLite(ctx context.Context, id int64) (*Group, error) {
+	return s.GetByID(ctx, id)
 }
 
 // TestCreateShadow_DefaultsNameFromParent 验证外审 E/P2:空 name 不应 500,

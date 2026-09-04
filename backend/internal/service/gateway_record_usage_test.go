@@ -46,6 +46,7 @@ func newGatewayRecordUsageServiceForTest(usageRepo UsageLogRepository, userRepo 
 		nil,
 		nil,
 		nil, // userPlatformQuotaRepo
+		nil, // geminiModelSupport
 	)
 }
 
@@ -334,7 +335,6 @@ func TestGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *
 			Group: &Group{
 				ID:                 groupID,
 				RateMultiplier:     1.0,
-				SubscriptionType:   SubscriptionTypeSubscription,
 				PeakRateEnabled:    true,
 				PeakStart:          "00:00",
 				PeakEnd:            "23:59",
@@ -380,7 +380,7 @@ func TestGatewayServiceRecordUsage_TimePricingUsesPricingAt(t *testing.T) {
 			Usage:     ClaudeUsage{InputTokens: 1000, OutputTokens: 500},
 		},
 		APIKey: &APIKey{ID: 804, GroupID: i64p(groupID), Group: &Group{
-			ID: groupID, RateMultiplier: 0.8, SubscriptionType: SubscriptionTypeSubscription,
+			ID: groupID, RateMultiplier: 0.8,
 		}},
 		User:      &User{ID: 604},
 		Account:   &Account{ID: 704},
@@ -422,7 +422,6 @@ func TestGatewayServiceRecordUsage_UsesExplicitPricingAtForPeakRate(t *testing.T
 						ID:                 groupID,
 						Platform:           platform,
 						RateMultiplier:     1.0,
-						SubscriptionType:   SubscriptionTypeSubscription,
 						PeakRateEnabled:    true,
 						PeakStart:          "00:00",
 						PeakEnd:            "01:00",

@@ -27,7 +27,7 @@ func (groupRepoNoop) GetByIDLite(context.Context, int64) (*Group, error) {
 }
 func (groupRepoNoop) Update(context.Context, *Group) error { panic("unexpected Update call") }
 func (groupRepoNoop) Delete(context.Context, int64) error  { panic("unexpected Delete call") }
-func (groupRepoNoop) DeleteCascade(context.Context, int64) ([]int64, error) {
+func (groupRepoNoop) DeleteCascade(context.Context, int64) error {
 	panic("unexpected DeleteCascade call")
 }
 func (groupRepoNoop) List(context.Context, pagination.PaginationParams) ([]Group, *pagination.PaginationResult, error) {

@@ -241,8 +241,8 @@ func (m *mockGroupRepoForGemini) GetByIDLite(ctx context.Context, id int64) (*Gr
 func (m *mockGroupRepoForGemini) Create(ctx context.Context, group *Group) error { return nil }
 func (m *mockGroupRepoForGemini) Update(ctx context.Context, group *Group) error { return nil }
 func (m *mockGroupRepoForGemini) Delete(ctx context.Context, id int64) error     { return nil }
-func (m *mockGroupRepoForGemini) DeleteCascade(ctx context.Context, id int64) ([]int64, error) {
-	return nil, nil
+func (m *mockGroupRepoForGemini) DeleteCascade(ctx context.Context, id int64) error {
+	return nil
 }
 func (m *mockGroupRepoForGemini) List(ctx context.Context, params pagination.PaginationParams) ([]Group, *pagination.PaginationResult, error) {
 	return nil, nil, nil
@@ -933,9 +933,8 @@ func TestGeminiPlatformRouting_DocumentRouteDecision(t *testing.T) {
 	}
 }
 
-func TestGeminiMessagesCompatService_isModelSupportedByAccount(t *testing.T) {
+func TestGeminiMessagesCompatServiceSupportsAccountModel(t *testing.T) {
 	svc := &GeminiMessagesCompatService{}
-
 	tests := []struct {
 		name     string
 		account  *Account
@@ -1012,7 +1011,7 @@ func TestGeminiMessagesCompatService_isModelSupportedByAccount(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := svc.isModelSupportedByAccount(tt.account, tt.model)
+			got := svc.SupportsAccountModel(context.Background(), tt.account, tt.model)
 			require.Equal(t, tt.expected, got)
 		})
 	}

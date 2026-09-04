@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/gemini"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -23,6 +26,52 @@ type geminiCompatHTTPUpstreamStub struct {
 	err      error
 	calls    int
 	lastReq  *http.Request
+}
+
+type blockingGeminiCatalogHTTPUpstream struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingGeminiCatalogHTTPUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	select {
+	case s.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-s.release:
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"models":[{"name":"models/gemini-3.1-pro"}]}`)),
+		}, nil
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	}
+}
+
+func (s *blockingGeminiCatalogHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return s.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+type geminiCompatModelCatalogStub struct {
+	resolved   string
+	listed     []geminicli.Model
+	requested  *string
+	resolveErr error
+}
+
+func (s geminiCompatModelCatalogStub) Resolve(_ context.Context, _ *Account, _, requested string) (string, error) {
+	if s.requested != nil {
+		*s.requested = requested
+	}
+	return s.resolved, s.resolveErr
+}
+func (s geminiCompatModelCatalogStub) List(context.Context, *Account, string) ([]geminicli.Model, error) {
+	return append([]geminicli.Model(nil), s.listed...), nil
+}
+func (s geminiCompatModelCatalogStub) ListAuthorized(context.Context, *Account, string, bool) ([]geminicli.Model, error) {
+	return append([]geminicli.Model(nil), s.listed...), nil
 }
 
 func (s *geminiCompatHTTPUpstreamStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
@@ -42,7 +91,154 @@ func (s *geminiCompatHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL str
 	return s.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
-func TestGeminiForwardAsChatCompletions_OAuthRoutesToGeminiAndReturnsChatFormat(t *testing.T) {
+type geminiGroupCatalogAccountRepoStub struct {
+	AccountRepository
+	accounts []Account
+}
+
+func (s *geminiGroupCatalogAccountRepoStub) ListSchedulableByGroupIDAndPlatforms(context.Context, int64, []string) ([]Account, error) {
+	return append([]Account(nil), s.accounts...), nil
+}
+
+func TestGeminiGroupCatalogMergesAIStudioAndOAuthModels(t *testing.T) {
+	apiKey := Account{
+		ID: 1, Platform: PlatformGemini, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true,
+		Credentials: map[string]any{"api_key": "key-1"},
+	}
+	oauth := Account{
+		ID: 2, Platform: PlatformGemini, Type: AccountTypeOAuth,
+		Status: StatusActive, Schedulable: true,
+		Credentials: map[string]any{
+			"oauth_type":   GeminiOAuthTypeAntigravity,
+			"access_token": "token-2",
+			"project_id":   "project-2",
+		},
+	}
+	httpStub := &geminiCompatHTTPUpstreamStub{response: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"models":[{"name":"models/gemini-3.1-pro"}]}`)),
+	}}
+	tokenProvider := NewGeminiTokenProvider(nil, &cachedGeminiTokenStub{token: "cached-token"}, nil)
+	svc := NewGeminiMessagesCompatService(
+		&geminiGroupCatalogAccountRepoStub{accounts: []Account{apiKey, oauth}},
+		nil, nil, nil, tokenProvider, nil, httpStub, nil, &config.Config{},
+	)
+	svc.SetCodeAssistModelResolver(geminiCompatModelCatalogStub{listed: []geminicli.Model{{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6"}}})
+	groupID := int64(10)
+	models, err := svc.ListGroupModels(context.Background(), &groupID)
+	require.NoError(t, err)
+	require.Equal(t, []string{"models/claude-sonnet-4-6", "models/gemini-3.1-pro"}, []string{models[0].Name, models[1].Name})
+	models, err = svc.ListGroupModels(context.Background(), &groupID)
+	require.NoError(t, err)
+	require.Len(t, models, 2)
+	require.Equal(t, 1, httpStub.calls)
+}
+
+func TestGeminiGroupCatalogReturnsSuccessfulAccountsOnPartialFailure(t *testing.T) {
+	apiKey := Account{
+		ID: 1, Platform: PlatformGemini, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true,
+		Credentials: map[string]any{"api_key": "key-1"},
+	}
+	oauth := Account{
+		ID: 2, Platform: PlatformGemini, Type: AccountTypeOAuth,
+		Status: StatusActive, Schedulable: true,
+		Credentials: map[string]any{
+			"oauth_type":   GeminiOAuthTypeCodeAssist,
+			"access_token": "token-2",
+			"project_id":   "project-2",
+		},
+	}
+	tokenProvider := NewGeminiTokenProvider(nil, &cachedGeminiTokenStub{token: "cached-token"}, nil)
+	svc := NewGeminiMessagesCompatService(
+		&geminiGroupCatalogAccountRepoStub{accounts: []Account{apiKey, oauth}},
+		nil, nil, nil, tokenProvider, nil,
+		&geminiCompatHTTPUpstreamStub{err: errors.New("AI Studio unavailable")}, nil, &config.Config{},
+	)
+	svc.SetCodeAssistModelResolver(geminiCompatModelCatalogStub{listed: []geminicli.Model{{ID: "claude-opus-4-6"}}})
+	groupID := int64(10)
+	models, err := svc.ListGroupModels(context.Background(), &groupID)
+	require.Error(t, err)
+	require.Len(t, models, 1)
+	require.Equal(t, "models/claude-opus-4-6", models[0].Name)
+}
+
+func TestGeminiGroupCatalogRefreshSurvivesCallerCancellation(t *testing.T) {
+	account := Account{
+		ID: 1, Platform: PlatformGemini, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true,
+		Credentials: map[string]any{"api_key": "key-1"},
+	}
+	upstream := &blockingGeminiCatalogHTTPUpstream{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	svc := NewGeminiMessagesCompatService(
+		&geminiGroupCatalogAccountRepoStub{accounts: []Account{account}},
+		nil, nil, nil, nil, nil, upstream, nil, &config.Config{},
+	)
+	groupID := int64(10)
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	firstErr := make(chan error, 1)
+	go func() {
+		_, err := svc.ListGroupModels(firstCtx, &groupID)
+		firstErr <- err
+	}()
+	<-upstream.started
+	cancelFirst()
+	require.ErrorIs(t, <-firstErr, context.Canceled)
+
+	secondResult := make(chan []gemini.Model, 1)
+	secondErr := make(chan error, 1)
+	go func() {
+		models, err := svc.ListGroupModels(context.Background(), &groupID)
+		secondResult <- models
+		secondErr <- err
+	}()
+	close(upstream.release)
+	require.NoError(t, <-secondErr)
+	models := <-secondResult
+	require.Len(t, models, 1)
+	require.Equal(t, "models/gemini-3.1-pro", models[0].Name)
+}
+
+func TestGeminiMixedAccountSelectionUsesLiveOAuthCapability(t *testing.T) {
+	apiKey := Account{
+		ID: 1, Platform: PlatformGemini, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true,
+		Credentials: map[string]any{"api_key": "key-1"},
+	}
+	oauth := Account{
+		ID: 2, Platform: PlatformGemini, Type: AccountTypeOAuth,
+		Status: StatusActive, Schedulable: true,
+		Credentials: map[string]any{
+			"oauth_type":   GeminiOAuthTypeAntigravity,
+			"access_token": "token-2",
+			"project_id":   "project-2",
+		},
+	}
+	svc := &GeminiMessagesCompatService{
+		tokenProvider:           NewGeminiTokenProvider(nil, &cachedGeminiTokenStub{token: "cached-token"}, nil),
+		codeAssistModelResolver: geminiCompatModelCatalogStub{resolved: "claude-sonnet-4-6"},
+	}
+
+	selected := svc.selectBestGeminiAccount(
+		context.Background(),
+		[]Account{apiKey, oauth},
+		"claude-sonnet-4-6",
+		nil,
+		PlatformGemini,
+		true,
+	)
+	require.NotNil(t, selected)
+	require.Equal(t, oauth.ID, selected.ID)
+	require.False(t, svc.SupportsAccountModel(context.Background(), &apiKey, "claude-sonnet-4-6"))
+	require.True(t, svc.SupportsAccountModel(context.Background(), &apiKey, "gemini-3.1-pro"))
+}
+
+func TestGeminiForwardAsChatCompletions_AntigravityRoutesToCloudCode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	upstreamBody := `data: {"response":{"candidates":[{"content":{"parts":[{"text":"hello from gemini"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3}}}` + "\n\n" +
@@ -65,6 +261,7 @@ func TestGeminiForwardAsChatCompletions_OAuthRoutesToGeminiAndReturnsChatFormat(
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
 			"access_token": "ya29.test-token",
+			"oauth_type":   "antigravity",
 			"project_id":   "project-1",
 		},
 		Concurrency: 1,
@@ -115,6 +312,368 @@ func TestGeminiForwardAsChatCompletions_OAuthRoutesToGeminiAndReturnsChatFormat(
 	require.Equal(t, float64(7), usage["prompt_tokens"])
 	require.Equal(t, float64(3), usage["completion_tokens"])
 	require.Equal(t, float64(10), usage["total_tokens"])
+}
+
+func TestGeminiListCodeAssistModels_UsesClientVisibleAlias(t *testing.T) {
+	svc := &GeminiMessagesCompatService{
+		tokenProvider: &GeminiTokenProvider{},
+		codeAssistModelResolver: geminiCompatModelCatalogStub{listed: []geminicli.Model{
+			{ID: "my-sonnet", Type: "model", DisplayName: "my-sonnet"},
+		}},
+	}
+	account := &Account{
+		ID:       106,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "ya29.test-token",
+			"oauth_type":   GeminiOAuthTypeAntigravity,
+			"project_id":   "project-106",
+		},
+	}
+
+	models, err := svc.ListCodeAssistModels(context.Background(), account)
+	require.NoError(t, err)
+	require.Len(t, models, 1)
+	require.Equal(t, "models/my-sonnet", models[0].Name)
+	require.Equal(t, "my-sonnet", models[0].DisplayName)
+	require.Equal(t, []string{"generateContent", "streamGenerateContent"}, models[0].SupportedGenerationMethods)
+}
+
+func TestGeminiMessagesCompatServiceForward_MapsClientAliasBeforeOAuthRuntimeResolution(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstreamBody := `data: {"response":{"candidates":[{"content":{"parts":[{"text":"hello from claude"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3}}}` + "\n\n" +
+		"data: [DONE]\n\n"
+	httpStub := &geminiCompatHTTPUpstreamStub{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+		},
+	}
+	requestedRuntime := ""
+	svc := &GeminiMessagesCompatService{
+		tokenProvider: &GeminiTokenProvider{},
+		httpUpstream:  httpStub,
+		codeAssistModelResolver: geminiCompatModelCatalogStub{
+			resolved:  "claude-sonnet-4-6",
+			requested: &requestedRuntime,
+		},
+		cfg: &config.Config{},
+	}
+	account := &Account{
+		ID:       107,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "ya29.test-token",
+			"oauth_type":   GeminiOAuthTypeAntigravity,
+			"project_id":   "project-107",
+			"model_mapping": map[string]any{
+				"my-sonnet": "claude-sonnet-4-6",
+			},
+		},
+		Concurrency: 1,
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"my-sonnet","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+
+	result, err := svc.Forward(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "my-sonnet", result.Model)
+	require.Equal(t, "claude-sonnet-4-6", result.UpstreamModel)
+	require.Equal(t, "claude-sonnet-4-6", requestedRuntime)
+
+	sentBody, err := io.ReadAll(httpStub.lastReq.Body)
+	require.NoError(t, err)
+	var sent map[string]any
+	require.NoError(t, json.Unmarshal(sentBody, &sent))
+	require.Equal(t, "claude-sonnet-4-6", sent["model"])
+	require.NotContains(t, string(sentBody), `"model":"my-sonnet"`)
+}
+
+func TestGeminiForwardAsResponses_OAuthUsesRuntimeModelAndReturnsResponsesFormat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upstreamBody := `data: {"response":{"candidates":[{"content":{"parts":[{"text":"hello from gemini"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3}}}` + "\n\n" +
+		"data: [DONE]\n\n"
+	httpStub := &geminiCompatHTTPUpstreamStub{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+		},
+	}
+	svc := &GeminiMessagesCompatService{
+		tokenProvider:           &GeminiTokenProvider{},
+		httpUpstream:            httpStub,
+		codeAssistModelResolver: geminiCompatModelCatalogStub{resolved: "gemini-pro-agent"},
+		cfg:                     &config.Config{},
+	}
+	account := &Account{
+		ID:       104,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "ya29.test-token",
+			"oauth_type":   "antigravity",
+			"project_id":   "project-104",
+		},
+		Concurrency: 1,
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gemini-3.1-pro","input":"hi"}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+
+	result, err := svc.ForwardAsResponses(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "gemini-3.1-pro", result.Model)
+	require.Equal(t, "gemini-pro-agent", result.UpstreamModel)
+	require.Equal(t, 7, result.Usage.InputTokens)
+	require.Equal(t, 3, result.Usage.OutputTokens)
+
+	var sent map[string]any
+	sentBody, err := io.ReadAll(httpStub.lastReq.Body)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(sentBody, &sent))
+	require.Equal(t, "gemini-pro-agent", sent["model"])
+	request, ok := sent["request"].(map[string]any)
+	require.True(t, ok)
+	require.NotEmpty(t, request["sessionId"])
+	require.NotEmpty(t, request["labels"])
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, "response", got["object"])
+	require.Equal(t, "gemini-3.1-pro", got["model"])
+	require.Contains(t, rec.Body.String(), "hello from gemini")
+}
+
+func TestGeminiForwardAsResponses_StreamsResponsesEvents(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upstreamBody := `data: {"candidates":[{"content":{"parts":[{"text":"hel"}]}}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1}}` + "\n\n" +
+		`data: {"candidates":[{"content":{"parts":[{"text":"hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":2}}` + "\n\n" +
+		"data: [DONE]\n\n"
+	httpStub := &geminiCompatHTTPUpstreamStub{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+		},
+	}
+	svc := &GeminiMessagesCompatService{httpUpstream: httpStub, cfg: &config.Config{}}
+	account := &Account{
+		ID:          105,
+		Platform:    PlatformGemini,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "gemini-api-key"},
+		Concurrency: 1,
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gemini-3.8-flash","stream":true,"input":"hi"}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+
+	result, err := svc.ForwardAsResponses(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.Stream)
+	require.Equal(t, 2, result.Usage.InputTokens)
+	require.Equal(t, 2, result.Usage.OutputTokens)
+
+	out := rec.Body.String()
+	require.Contains(t, out, "event: response.created")
+	require.Contains(t, out, `"delta":"hel"`)
+	require.Contains(t, out, `"delta":"lo"`)
+	require.Contains(t, out, "event: response.completed")
+	require.NotContains(t, out, "data: [DONE]")
+}
+
+func TestGeminiCodeAssistUpstreamBuilderCyclesEndpointCandidates(t *testing.T) {
+	svc := &GeminiMessagesCompatService{
+		tokenProvider:           &GeminiTokenProvider{},
+		codeAssistModelResolver: geminiCompatModelCatalogStub{resolved: "gemini-pro-agent"},
+		cfg:                     &config.Config{},
+	}
+	account := &Account{
+		ID:       106,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "ya29.test-token",
+			"oauth_type":   "antigravity",
+			"project_id":   "project-106",
+		},
+	}
+	build, _ := svc.buildGeminiChatCompletionsUpstreamRequestFunc(
+		account,
+		"gemini-3.1-pro",
+		[]byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+		true,
+		true,
+	)
+
+	first, _, firstModel, err := build(context.Background())
+	require.NoError(t, err)
+	second, _, secondModel, err := build(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "daily-cloudcode-pa.googleapis.com", first.URL.Host)
+	require.Equal(t, "daily-cloudcode-pa.sandbox.googleapis.com", second.URL.Host)
+	require.Equal(t, "gemini-pro-agent", firstModel)
+	require.Equal(t, "gemini-pro-agent", secondModel)
+	require.Equal(t, "text/event-stream", first.Header.Get("Accept"))
+	require.Equal(t, "google-cloud-sdk vscode_cloudshelleditor/0.1", first.Header.Get("X-Goog-Api-Client"))
+	require.Contains(t, first.Header.Get("Client-Metadata"), `"ideType":"ANTIGRAVITY"`)
+	require.Contains(t, first.Header.Get("User-Agent"), "antigravity/")
+	require.True(t, svc.shouldRetryGeminiUpstreamError(account, http.StatusNotFound))
+}
+
+func TestGeminiAntigravityOAuthSupportsClaudeAndNativeGeminiProtocols(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		path     string
+		body     []byte
+		forward  func(*GeminiMessagesCompatService, *gin.Context, *Account, []byte) (*ForwardResult, error)
+		response string
+	}{
+		{
+			name: "claude messages",
+			path: "/v1/messages",
+			body: []byte(`{"model":"gemini-3.1-pro","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`),
+			forward: func(s *GeminiMessagesCompatService, c *gin.Context, account *Account, body []byte) (*ForwardResult, error) {
+				return s.Forward(context.Background(), c, account, body)
+			},
+			response: `"type":"message"`,
+		},
+		{
+			name: "native gemini",
+			path: "/v1beta/models/gemini-3.1-pro:generateContent",
+			body: []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`),
+			forward: func(s *GeminiMessagesCompatService, c *gin.Context, account *Account, body []byte) (*ForwardResult, error) {
+				return s.ForwardNative(context.Background(), c, account, "gemini-3.1-pro", "generateContent", false, body)
+			},
+			response: `"candidates"`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			upstreamBody := `data: {"response":{"candidates":[{"content":{"parts":[{"text":"hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2}}}` + "\n\n" +
+				"data: [DONE]\n\n"
+			httpStub := &geminiCompatHTTPUpstreamStub{response: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+			}}
+			svc := &GeminiMessagesCompatService{
+				tokenProvider:           &GeminiTokenProvider{},
+				httpUpstream:            httpStub,
+				codeAssistModelResolver: geminiCompatModelCatalogStub{resolved: "gemini-pro-agent"},
+				cfg:                     &config.Config{},
+			}
+			account := &Account{
+				ID:          107,
+				Platform:    PlatformGemini,
+				Type:        AccountTypeOAuth,
+				Credentials: map[string]any{"access_token": "token", "oauth_type": "antigravity", "project_id": "project-107"},
+			}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, tt.path, bytes.NewReader(tt.body))
+
+			result, err := tt.forward(svc, c, account, tt.body)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, "gemini-3.1-pro", result.Model)
+			require.Equal(t, "gemini-pro-agent", result.UpstreamModel)
+			require.Contains(t, rec.Body.String(), tt.response)
+			require.Equal(t, "daily-cloudcode-pa.googleapis.com", httpStub.lastReq.URL.Host)
+		})
+	}
+}
+
+func TestGeminiCodeAssistDiscoverySwitchesFirstNonStreamingRequestToSSE(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstreamBody := `data: {"response":{"candidates":[{"content":{"parts":[{"text":"discovered"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1}}}` + "\n\n" +
+		"data: [DONE]\n\n"
+	httpStub := &geminiCompatHTTPUpstreamStub{response: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	account := &Account{
+		ID:       108,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token",
+			"oauth_type":   "code_assist",
+		},
+	}
+	provider := NewGeminiTokenProvider(nil, nil, &GeminiOAuthService{codeAssist: &projectDetectCodeAssistStub{}})
+	svc := &GeminiMessagesCompatService{
+		tokenProvider:           provider,
+		httpUpstream:            httpStub,
+		codeAssistModelResolver: geminiCompatModelCatalogStub{resolved: "gemini-pro-agent"},
+		cfg:                     &config.Config{},
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gemini-3.1-pro","messages":[{"role":"user","content":"hi"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "detected-project", account.GetCredential("project_id"))
+	require.Contains(t, httpStub.lastReq.URL.String(), "/v1internal:streamGenerateContent?alt=sse")
+	require.Contains(t, rec.Body.String(), "discovered")
+}
+
+func TestGeminiNativeCodeAssistDiscoverySwitchesFirstNonStreamingRequestToSSE(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstreamBody := `data: {"response":{"candidates":[{"content":{"parts":[{"text":"native discovered"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1}}}` + "\n\n" +
+		"data: [DONE]\n\n"
+	httpStub := &geminiCompatHTTPUpstreamStub{response: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	account := &Account{
+		ID:       109,
+		Platform: PlatformGemini,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token",
+			"oauth_type":   "code_assist",
+		},
+	}
+	provider := NewGeminiTokenProvider(nil, nil, &GeminiOAuthService{codeAssist: &projectDetectCodeAssistStub{}})
+	svc := &GeminiMessagesCompatService{
+		tokenProvider:           provider,
+		httpUpstream:            httpStub,
+		codeAssistModelResolver: geminiCompatModelCatalogStub{resolved: "gemini-pro-agent"},
+		cfg:                     &config.Config{},
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3.1-pro:generateContent", bytes.NewReader(body))
+
+	result, err := svc.ForwardNative(context.Background(), c, account, "gemini-3.1-pro", "generateContent", false, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "detected-project", account.GetCredential("project_id"))
+	require.Contains(t, httpStub.lastReq.URL.String(), "/v1internal:streamGenerateContent?alt=sse")
+	require.Contains(t, rec.Body.String(), "native discovered")
 }
 
 func TestGeminiForwardAsChatCompletions_StreamsOpenAIChunksFromGeminiSSE(t *testing.T) {
@@ -1077,7 +1636,7 @@ func TestGeminiMessagesHandleStreamingResponse_ClosesToolBlockBeforeText(t *test
 	c, _ := gin.CreateTestContext(rec)
 
 	svc := &GeminiMessagesCompatService{}
-	result, err := svc.handleStreamingResponse(c, resp, time.Now(), "claude-3-5-sonnet")
+	result, err := svc.handleStreamingResponse(c, resp, time.Now(), "claude-3-5-sonnet", false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -1150,7 +1709,7 @@ func TestGeminiMessagesHandleStreamingResponse_TopUpAbortSurfacesSentinel(t *tes
 	)
 
 	svc := &GeminiMessagesCompatService{}
-	_, err := svc.handleStreamingResponse(c, resp, time.Now(), "claude-3-5-sonnet")
+	_, err := svc.handleStreamingResponse(c, resp, time.Now(), "claude-3-5-sonnet", false)
 	require.ErrorIs(t, err, ErrBalanceWithholdingFailed,
 		"Gemini-compat top-up abort must surface the withholding sentinel so Forward preserves the delivered-output result")
 }
@@ -1177,7 +1736,7 @@ func TestGeminiMessagesHandleStreamingResponse_ToolArgsTopUpBeforeWrite(t *testi
 	c.Request = c.Request.WithContext(ContextWithBalancePreauthorizationGuard(c.Request.Context(), guard))
 
 	svc := &GeminiMessagesCompatService{}
-	_, err := svc.handleStreamingResponse(c, resp, time.Now(), "claude-3-5-sonnet")
+	_, err := svc.handleStreamingResponse(c, resp, time.Now(), "claude-3-5-sonnet", false)
 
 	require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
 	require.Equal(t, 1, fixture.wallet.topUpCalls)

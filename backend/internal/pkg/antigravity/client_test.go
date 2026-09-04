@@ -1731,6 +1731,45 @@ func TestClient_FetchAvailableModels_EmptyModels_RealCall(t *testing.T) {
 	}
 }
 
+func TestClient_FetchAvailableModelsCatalog_MergesSuccessfulEndpoints(t *testing.T) {
+	daily := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"models":{"gemini-3.1-pro-low":{"displayName":"Gemini 3.1 Pro (Low)"}}}`))
+	}))
+	defer daily.Close()
+	sandbox := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"temporary"}`))
+	}))
+	defer sandbox.Close()
+	prod := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"models":{"gemini-pro-agent":{"displayName":"Gemini 3.1 Pro (High)"}}}`))
+	}))
+	defer prod.Close()
+
+	client := mustNewClient(t, "")
+	catalog, err := client.fetchAvailableModelsCatalog(
+		context.Background(),
+		"token",
+		"project",
+		defaultFetchAvailableModelsBodyLimit,
+		[]string{daily.URL, sandbox.URL, prod.URL},
+	)
+	if err != nil {
+		t.Fatalf("FetchAvailableModelsCatalog failed: %v", err)
+	}
+	if len(catalog.Models) != 2 {
+		t.Fatalf("merged models = %#v", catalog.Models)
+	}
+	if _, ok := catalog.Models["gemini-3.1-pro-low"]; !ok {
+		t.Fatal("daily model missing from merged catalog")
+	}
+	if _, ok := catalog.Models["gemini-pro-agent"]; !ok {
+		t.Fatal("prod model missing from merged catalog")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // LoadCodeAssist 和 FetchAvailableModels 的 408 fallback 测试
 // ---------------------------------------------------------------------------

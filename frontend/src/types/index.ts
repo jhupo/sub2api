@@ -979,18 +979,15 @@ export interface GeminiCredentials {
   // OAuth authentication
   access_token?: string
   refresh_token?: string
-  oauth_type?: 'code_assist' | 'google_one' | 'ai_studio' | string
+  oauth_type?: 'antigravity' | 'code_assist' | 'ai_studio' | string
   tier_id?:
-    | 'google_one_free'
+    | 'google_ai_free'
     | 'google_ai_pro'
     | 'google_ai_ultra'
     | 'gcp_standard'
     | 'gcp_enterprise'
     | 'aistudio_free'
     | 'aistudio_paid'
-    | 'LEGACY'
-    | 'PRO'
-    | 'ULTRA'
     | string
   project_id?: string
   token_type?: string

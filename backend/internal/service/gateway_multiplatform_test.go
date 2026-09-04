@@ -333,8 +333,8 @@ func (m *mockGroupRepoForGateway) GetByIDLite(ctx context.Context, id int64) (*G
 func (m *mockGroupRepoForGateway) Create(ctx context.Context, group *Group) error { return nil }
 func (m *mockGroupRepoForGateway) Update(ctx context.Context, group *Group) error { return nil }
 func (m *mockGroupRepoForGateway) Delete(ctx context.Context, id int64) error     { return nil }
-func (m *mockGroupRepoForGateway) DeleteCascade(ctx context.Context, id int64) ([]int64, error) {
-	return nil, nil
+func (m *mockGroupRepoForGateway) DeleteCascade(ctx context.Context, id int64) error {
+	return nil
 }
 func (m *mockGroupRepoForGateway) List(ctx context.Context, params pagination.PaginationParams) ([]Group, *pagination.PaginationResult, error) {
 	return nil, nil, nil
@@ -526,7 +526,7 @@ func TestGatewayService_SelectAccountForModelWithPlatform_GeminiOAuthPreference(
 	repo := &mockAccountRepoForPlatform{
 		accounts: []Account{
 			{ID: 1, Platform: PlatformGemini, Priority: 1, Status: StatusActive, Schedulable: true, Type: AccountTypeAPIKey},
-			{ID: 2, Platform: PlatformGemini, Priority: 1, Status: StatusActive, Schedulable: true, Type: AccountTypeOAuth},
+			{ID: 2, Platform: PlatformGemini, Priority: 1, Status: StatusActive, Schedulable: true, Type: AccountTypeOAuth, Credentials: map[string]any{"oauth_type": GeminiOAuthTypeCodeAssist}},
 		},
 		accountsByID: map[int64]*Account{},
 	}
@@ -1015,7 +1015,7 @@ func TestGatewayService_SelectAccountForModelWithPlatform_GeminiPreferOAuth(t *t
 	repo := &mockAccountRepoForPlatform{
 		accounts: []Account{
 			{ID: 1, Platform: PlatformGemini, Priority: 1, Status: StatusActive, Schedulable: true, Type: AccountTypeAPIKey},
-			{ID: 2, Platform: PlatformGemini, Priority: 1, Status: StatusActive, Schedulable: true, Type: AccountTypeOAuth},
+			{ID: 2, Platform: PlatformGemini, Priority: 1, Status: StatusActive, Schedulable: true, Type: AccountTypeOAuth, Credentials: map[string]any{"oauth_type": GeminiOAuthTypeCodeAssist}},
 		},
 		accountsByID: map[int64]*Account{},
 	}
@@ -1309,7 +1309,7 @@ func TestGatewayService_selectAccountWithMixedScheduling(t *testing.T) {
 		repo := &mockAccountRepoForPlatform{
 			accounts: []Account{
 				{ID: 1, Platform: PlatformGemini, Priority: 1, Status: StatusActive, Schedulable: true, Type: AccountTypeAPIKey},
-				{ID: 2, Platform: PlatformGemini, Priority: 1, Status: StatusActive, Schedulable: true, Type: AccountTypeOAuth},
+				{ID: 2, Platform: PlatformGemini, Priority: 1, Status: StatusActive, Schedulable: true, Type: AccountTypeOAuth, Credentials: map[string]any{"oauth_type": GeminiOAuthTypeCodeAssist}},
 			},
 			accountsByID: map[int64]*Account{},
 		}
@@ -3049,7 +3049,7 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 		repo := &mockAccountRepoForPlatform{
 			accounts: []Account{
 				{ID: 1, Platform: PlatformGemini, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5, Type: AccountTypeAPIKey},
-				{ID: 2, Platform: PlatformGemini, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5, Type: AccountTypeOAuth},
+				{ID: 2, Platform: PlatformGemini, Priority: 1, Status: StatusActive, Schedulable: true, Concurrency: 5, Type: AccountTypeOAuth, Credentials: map[string]any{"oauth_type": GeminiOAuthTypeCodeAssist}},
 			},
 			accountsByID: map[int64]*Account{},
 		}

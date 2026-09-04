@@ -278,13 +278,6 @@ func compositeDefaultModelsListCandidateIDs() []string {
 	return ids
 }
 
-func canCopyAccountsFromGroupPlatform(targetPlatform, sourcePlatform string) bool {
-	if targetPlatform == PlatformComposite {
-		return sourcePlatform == PlatformComposite || isConcreteRequestPlatform(sourcePlatform)
-	}
-	return sourcePlatform == targetPlatform
-}
-
 func groupSupportsOAuthOnlyFilter(platform string) bool {
 	return platform == PlatformOpenAI ||
 		platform == PlatformAntigravity ||
@@ -292,6 +285,26 @@ func groupSupportsOAuthOnlyFilter(platform string) bool {
 		platform == PlatformGemini ||
 		platform == PlatformGrok ||
 		platform == PlatformComposite
+}
+
+func filterOAuthOnlyAccountIDs(accountIDs []int64, accounts []*Account) ([]int64, error) {
+	accountsByID := make(map[int64]*Account, len(accounts))
+	for _, account := range accounts {
+		if account != nil {
+			accountsByID[account.ID] = account
+		}
+	}
+	filtered := make([]int64, 0, len(accountIDs))
+	for _, accountID := range accountIDs {
+		account, ok := accountsByID[accountID]
+		if !ok {
+			return nil, ErrAccountNotFound
+		}
+		if account.Type != AccountTypeAPIKey {
+			filtered = append(filtered, accountID)
+		}
+	}
+	return filtered, nil
 }
 
 func groupSupportsOpenAIFast(platform string) bool {
@@ -439,14 +452,12 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 			}
 		}
 
-		// 校验源分组的平台是否与新分组一致
+		// 先确认源分组存在。最终是否允许绑定由逐账号校验决定：例如启用
+		// mixed scheduling 的 Antigravity 账号可以绑定 Gemini/Anthropic 分组，
+		// 仅比较源分组平台会错误拒绝这种合法组合。
 		for _, srcGroupID := range uniqueSourceGroupIDs {
-			srcGroup, err := s.groupRepo.GetByIDLite(ctx, srcGroupID)
-			if err != nil {
+			if _, err := s.groupRepo.GetByIDLite(ctx, srcGroupID); err != nil {
 				return nil, fmt.Errorf("source group %d not found: %w", srcGroupID, err)
-			}
-			if !canCopyAccountsFromGroupPlatform(platform, srcGroup.Platform) {
-				return nil, fmt.Errorf("source group %d platform mismatch: expected %s, got %s", srcGroupID, platform, srcGroup.Platform)
 			}
 		}
 
@@ -520,34 +531,31 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		group.AllowLive = false
 	}
 	sanitizeGroupReasoningEffortPolicy(group)
-	if err := s.groupRepo.Create(ctx, group); err != nil {
-		return nil, err
-	}
-
-	// require_oauth_only: 过滤掉 apikey 类型账号
+	// require_oauth_only changes the actual binding set, so apply it before
+	// compatibility validation and before creating the group.
 	if group.RequireOAuthOnly && groupSupportsOAuthOnlyFilter(group.Platform) && len(accountIDsToCopy) > 0 {
 		accounts, err := s.accountRepo.GetByIDs(ctx, accountIDsToCopy)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch accounts for oauth filter: %w", err)
 		}
-		oauthIDs := make(map[int64]struct{}, len(accounts))
-		for _, acc := range accounts {
-			if acc.Type != AccountTypeAPIKey {
-				oauthIDs[acc.ID] = struct{}{}
-			}
+		accountIDsToCopy, err = filterOAuthOnlyAccountIDs(accountIDsToCopy, accounts)
+		if err != nil {
+			return nil, err
 		}
-		var filtered []int64
-		for _, aid := range accountIDsToCopy {
-			if _, ok := oauthIDs[aid]; ok {
-				filtered = append(filtered, aid)
-			}
-		}
-		accountIDsToCopy = filtered
+	}
+	if err := s.validateAccountIDsForGroup(ctx, accountIDsToCopy, group); err != nil {
+		return nil, err
+	}
+	if err := s.groupRepo.Create(ctx, group); err != nil {
+		return nil, err
 	}
 
 	// 如果有需要复制的账号，绑定到新分组
 	if len(accountIDsToCopy) > 0 {
 		if err := s.groupRepo.BindAccountsToGroup(ctx, group.ID, accountIDsToCopy); err != nil {
+			if deleteErr := s.groupRepo.DeleteCascade(context.WithoutCancel(ctx), group.ID); deleteErr != nil {
+				logger.LegacyPrintf("service.admin_group", "rollback new group %d after account binding failure: %v", group.ID, deleteErr)
+			}
 			return nil, fmt.Errorf("failed to bind accounts to new group: %w", err)
 		}
 		group.AccountCount = int64(len(accountIDsToCopy))
@@ -891,6 +899,54 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	sanitizeGroupReasoningEffortPolicy(group)
 
+	replaceAccountBindings := len(input.CopyAccountsFromGroupIDs) > 0
+	var accountIDsToCopy []int64
+	if replaceAccountBindings {
+		seen := make(map[int64]struct{})
+		uniqueSourceGroupIDs := make([]int64, 0, len(input.CopyAccountsFromGroupIDs))
+		for _, srcGroupID := range input.CopyAccountsFromGroupIDs {
+			if srcGroupID == id {
+				return nil, fmt.Errorf("cannot copy accounts from self")
+			}
+			if _, exists := seen[srcGroupID]; exists {
+				continue
+			}
+			seen[srcGroupID] = struct{}{}
+			uniqueSourceGroupIDs = append(uniqueSourceGroupIDs, srcGroupID)
+		}
+		for _, srcGroupID := range uniqueSourceGroupIDs {
+			if _, err := s.groupRepo.GetByIDLite(ctx, srcGroupID); err != nil {
+				return nil, fmt.Errorf("source group %d not found: %w", srcGroupID, err)
+			}
+		}
+		accountIDsToCopy, err = s.groupRepo.GetAccountIDsByGroupIDs(ctx, uniqueSourceGroupIDs)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get accounts from source groups: %w", err)
+		}
+
+		if group.RequireOAuthOnly && groupSupportsOAuthOnlyFilter(group.Platform) && len(accountIDsToCopy) > 0 {
+			accounts, err := s.accountRepo.GetByIDs(ctx, accountIDsToCopy)
+			if err != nil {
+				return nil, fmt.Errorf("failed to fetch accounts for oauth filter: %w", err)
+			}
+			accountIDsToCopy, err = filterOAuthOnlyAccountIDs(accountIDsToCopy, accounts)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err := s.validateAccountIDsForGroup(ctx, accountIDsToCopy, group); err != nil {
+			return nil, err
+		}
+	} else if group.Platform != previousPlatform {
+		currentAccountIDs, err := s.groupRepo.GetAccountIDsByGroupIDs(ctx, []int64{id})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get current group accounts: %w", err)
+		}
+		if err := s.validateAccountIDsForGroup(ctx, currentAccountIDs, group); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := s.groupRepo.Update(ctx, group); err != nil {
 		return nil, err
 	}
@@ -906,64 +962,12 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		s.channelCacheInvalidator.InvalidateCache()
 	}
 
-	// 如果指定了复制账号的源分组，同步绑定（替换当前分组的账号）
-	if len(input.CopyAccountsFromGroupIDs) > 0 {
-		// 去重源分组 IDs
-		seen := make(map[int64]struct{})
-		uniqueSourceGroupIDs := make([]int64, 0, len(input.CopyAccountsFromGroupIDs))
-		for _, srcGroupID := range input.CopyAccountsFromGroupIDs {
-			// 校验：源分组不能是自身
-			if srcGroupID == id {
-				return nil, fmt.Errorf("cannot copy accounts from self")
-			}
-			// 去重
-			if _, exists := seen[srcGroupID]; !exists {
-				seen[srcGroupID] = struct{}{}
-				uniqueSourceGroupIDs = append(uniqueSourceGroupIDs, srcGroupID)
-			}
-		}
-
-		// 校验源分组的平台是否与当前分组一致
-		for _, srcGroupID := range uniqueSourceGroupIDs {
-			srcGroup, err := s.groupRepo.GetByIDLite(ctx, srcGroupID)
-			if err != nil {
-				return nil, fmt.Errorf("source group %d not found: %w", srcGroupID, err)
-			}
-			if !canCopyAccountsFromGroupPlatform(group.Platform, srcGroup.Platform) {
-				return nil, fmt.Errorf("source group %d platform mismatch: expected %s, got %s", srcGroupID, group.Platform, srcGroup.Platform)
-			}
-		}
-
-		// 获取所有源分组的账号（去重）
-		accountIDsToCopy, err := s.groupRepo.GetAccountIDsByGroupIDs(ctx, uniqueSourceGroupIDs)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get accounts from source groups: %w", err)
-		}
-
+	// 如果指定了复制账号的源分组，同步绑定（替换当前分组的账号）。
+	// 新绑定已在更新分组前完成平台兼容性校验。
+	if replaceAccountBindings {
 		// 先清空当前分组的所有账号绑定
 		if _, err := s.groupRepo.DeleteAccountGroupsByGroupID(ctx, id); err != nil {
 			return nil, fmt.Errorf("failed to clear existing account bindings: %w", err)
-		}
-
-		// require_oauth_only: 过滤掉 apikey 类型账号
-		if group.RequireOAuthOnly && groupSupportsOAuthOnlyFilter(group.Platform) && len(accountIDsToCopy) > 0 {
-			accounts, err := s.accountRepo.GetByIDs(ctx, accountIDsToCopy)
-			if err != nil {
-				return nil, fmt.Errorf("failed to fetch accounts for oauth filter: %w", err)
-			}
-			oauthIDs := make(map[int64]struct{}, len(accounts))
-			for _, acc := range accounts {
-				if acc.Type != AccountTypeAPIKey {
-					oauthIDs[acc.ID] = struct{}{}
-				}
-			}
-			var filtered []int64
-			for _, aid := range accountIDsToCopy {
-				if _, ok := oauthIDs[aid]; ok {
-					filtered = append(filtered, aid)
-				}
-			}
-			accountIDsToCopy = filtered
 		}
 
 		// 再绑定源分组的账号
@@ -1135,7 +1139,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		apiKey.GroupID = &gid
 		apiKey.Group = group
 
-		// 专属标准分组：使用事务保证「添加分组权限」与「更新 API Key」的原子性
+		// 专属路由分组：使用事务保证「添加分组权限」与「更新 API Key」的原子性
 		if group.IsExclusive {
 			opCtx := ctx
 			var tx *dbent.Tx

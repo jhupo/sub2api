@@ -1317,10 +1317,10 @@ export default {
           hint: '提示：系统会优先尝试自动识别账号等级；若自动识别不可用或失败，则使用你选择的等级作为回退（本地模拟配额）。',
           aiStudioHint:
             'AI Studio 的配额是按模型分别限流（Pro/Flash 独立）。若已绑卡（按量付费），请选 Pay-as-you-go。',
-          googleOne: {
-            free: 'Google One Free',
-            pro: 'Google One Pro',
-            ultra: 'Google One Ultra'
+          googleAI: {
+            free: 'Google AI Free',
+            pro: 'Google AI Pro',
+            ultra: 'Google AI Ultra'
           },
           gcp: {
             standard: 'GCP Standard',
@@ -1344,7 +1344,7 @@ export default {
           builtInTitle: '内置授权（Gemini CLI / Code Assist）',
           builtInDesc: '使用 Google 内置客户端 ID，无需管理员配置。',
           builtInRequirement: '需要 GCP 项目并填写 Project ID。',
-          googleOneDesc: '个人账号，享受 Google One 订阅配额',
+          antigravityDesc: '使用 Antigravity OAuth 客户端授权个人 Google AI 账号',
           codeAssistDesc: '企业级，需要 GCP 项目',
           codeAssistRequirement: '需要激活 GCP 项目并绑定信用卡',
           showAdvanced: '显示高级选项（自建 OAuth Client）',
@@ -1399,8 +1399,8 @@ export default {
           },
           simulatedNote: '本地模拟配额，仅供参考',
           rows: {
-            googleOne: {
-              channel: 'Google One OAuth（个人版 / Code Assist for Individuals）',
+            antigravity: {
+              channel: 'Antigravity OAuth（Google AI 个人订阅）',
               limitsFree: '共享池：1000 RPD / 60 RPM（不分模型）',
               limitsPro: '共享池：1500 RPD / 120 RPM（不分模型）',
               limitsUltra: '共享池：2000 RPD / 120 RPM（不分模型）'
@@ -1413,7 +1413,7 @@ export default {
             cli: {
               channel: 'Gemini CLI（官方 Google 登录 / Code Assist）',
               free: '免费 Google 账号',
-              premium: 'Google One AI Premium',
+              premium: 'Google AI Pro',
               limitsFree: 'RPD ~1000；RPM ~60（软限制）',
               limitsPremium: 'RPD ~1500+；RPM ~60+（优先队列）'
             },

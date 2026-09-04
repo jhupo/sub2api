@@ -132,7 +132,7 @@ func TestSettingHandler_GetSettings_InjectsAuthSourceDefaults(t *testing.T) {
 			service.SettingKeyPromoCodeEnabled:                    "true",
 			service.SettingKeyAuthSourceDefaultEmailBalance:       "9.5",
 			service.SettingKeyAuthSourceDefaultEmailConcurrency:   "8",
-			service.SettingKeyAuthSourceDefaultEmailSubscriptions: `[{"group_id":31,"validity_days":15}]`,
+			service.SettingKeyAuthSourceDefaultEmailSubscriptions: `[{"plan_id":31}]`,
 			service.SettingKeyForceEmailOnThirdPartySignup:        "true",
 		},
 	}
@@ -167,7 +167,7 @@ func TestSettingHandler_UpdateSettings_PreservesOmittedAuthSourceDefaults(t *tes
 			service.SettingKeyPromoCodeEnabled:                       "true",
 			service.SettingKeyAuthSourceDefaultEmailBalance:          "9.5",
 			service.SettingKeyAuthSourceDefaultEmailConcurrency:      "8",
-			service.SettingKeyAuthSourceDefaultEmailSubscriptions:    `[{"group_id":31,"validity_days":15}]`,
+			service.SettingKeyAuthSourceDefaultEmailSubscriptions:    `[{"plan_id":31}]`,
 			service.SettingKeyAuthSourceDefaultEmailGrantOnSignup:    "true",
 			service.SettingKeyAuthSourceDefaultEmailGrantOnFirstBind: "false",
 			service.SettingKeyForceEmailOnThirdPartySignup:           "true",
@@ -194,7 +194,7 @@ func TestSettingHandler_UpdateSettings_PreservesOmittedAuthSourceDefaults(t *tes
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "12.75000000", repo.values[service.SettingKeyAuthSourceDefaultEmailBalance])
 	require.Equal(t, "8", repo.values[service.SettingKeyAuthSourceDefaultEmailConcurrency])
-	require.Equal(t, `[{"group_id":31,"validity_days":15}]`, repo.values[service.SettingKeyAuthSourceDefaultEmailSubscriptions])
+	require.Equal(t, `[{"plan_id":31}]`, repo.values[service.SettingKeyAuthSourceDefaultEmailSubscriptions])
 	require.Equal(t, "true", repo.values[service.SettingKeyForceEmailOnThirdPartySignup])
 
 	var resp response.Response
@@ -451,7 +451,7 @@ func TestSettingHandler_UpdateSettings_DoesNotPersistPartialSystemSettingsWhenAu
 			service.SettingKeyPromoCodeEnabled:                    "true",
 			service.SettingKeyAuthSourceDefaultEmailBalance:       "9.5",
 			service.SettingKeyAuthSourceDefaultEmailConcurrency:   "8",
-			service.SettingKeyAuthSourceDefaultEmailSubscriptions: `[{"group_id":31,"validity_days":15}]`,
+			service.SettingKeyAuthSourceDefaultEmailSubscriptions: `[{"plan_id":31}]`,
 		},
 		err: errors.New("write auth source defaults failed"),
 	}

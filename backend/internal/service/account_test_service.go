@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -140,6 +141,7 @@ func normalizeGrokAccountTestMode(mode string) string {
 type AccountTestService struct {
 	accountRepo               AccountRepository
 	geminiTokenProvider       *GeminiTokenProvider
+	codeAssistModelResolver   GeminiCodeAssistModelCatalog
 	claudeTokenProvider       *ClaudeTokenProvider
 	grokTokenProvider         *GrokTokenProvider
 	antigravityGatewayService *AntigravityGatewayService
@@ -171,6 +173,32 @@ func (s *AccountTestService) SetPluginManager(pluginManager *PluginManager) {
 	}
 }
 
+// ListGeminiCodeAssistModels returns the live account-scoped model catalog used
+// by enterprise Code Assist and personal Antigravity OAuth accounts.
+func (s *AccountTestService) ListGeminiCodeAssistModels(ctx context.Context, account *Account) ([]geminicli.Model, error) {
+	if s == nil || s.geminiTokenProvider == nil {
+		return nil, errors.New("gemini token provider not configured")
+	}
+	if account == nil || (!account.IsGeminiCodeAssist() && !account.IsGeminiAntigravity()) {
+		return nil, errors.New("account is not a Gemini Code Assist OAuth account")
+	}
+	if s.codeAssistModelResolver == nil {
+		return nil, errors.New("Code Assist model resolver not configured")
+	}
+	accessToken, err := s.geminiTokenProvider.GetAccessToken(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	return s.codeAssistModelResolver.List(ctx, account, accessToken)
+}
+
+// SetCodeAssistModelResolver replaces model discovery for deterministic tests.
+func (s *AccountTestService) SetCodeAssistModelResolver(resolver GeminiCodeAssistModelCatalog) {
+	if s != nil {
+		s.codeAssistModelResolver = resolver
+	}
+}
+
 // NewAccountTestService creates a new AccountTestService
 func NewAccountTestService(
 	accountRepo AccountRepository,
@@ -182,9 +210,14 @@ func NewAccountTestService(
 	cfg *config.Config,
 	tlsFPProfileService *TLSFingerprintProfileService,
 ) *AccountTestService {
+	modelCatalog := GeminiCodeAssistModelCatalog(NewGeminiCodeAssistModelResolver())
+	if geminiTokenProvider != nil && geminiTokenProvider.CodeAssistModelCatalog() != nil {
+		modelCatalog = geminiTokenProvider.CodeAssistModelCatalog()
+	}
 	return &AccountTestService{
 		accountRepo:               accountRepo,
 		geminiTokenProvider:       geminiTokenProvider,
+		codeAssistModelResolver:   modelCatalog,
 		claudeTokenProvider:       claudeTokenProvider,
 		grokTokenProvider:         grokTokenProvider,
 		antigravityGatewayService: antigravityGatewayService,
@@ -2247,15 +2280,9 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 		testModelID = geminicli.DefaultTestModel
 	}
 
-	// For static upstream credentials with model mapping, map the model
-	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount {
-		mapping := account.GetModelMapping()
-		if len(mapping) > 0 {
-			if mappedModel, exists := mapping[testModelID]; exists {
-				testModelID = mappedModel
-			}
-		}
-	}
+	// Account tests use the same client-name to upstream-name mapping as live
+	// forwarding for every Gemini credential type.
+	testModelID = account.GetMappedModel(testModelID)
 
 	// Set SSE headers
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -2411,8 +2438,8 @@ func (s *AccountTestService) buildGeminiOAuthRequest(ctx context.Context, accoun
 	}
 
 	projectID := strings.TrimSpace(account.GetCredential("project_id"))
-	if projectID == "" {
-		// AI Studio OAuth mode (no project_id): call generativelanguage API directly with Bearer token.
+	if account.IsGeminiAIStudioOAuth() {
+		// AI Studio OAuth always calls the Generative Language API.
 		baseURL := account.GetCredential("base_url")
 		if strings.TrimSpace(baseURL) == "" {
 			baseURL = geminicli.AIStudioBaseURL
@@ -2434,8 +2461,22 @@ func (s *AccountTestService) buildGeminiOAuthRequest(ctx context.Context, accoun
 		req.Header.Set("Authorization", "Bearer "+accessToken)
 		return req, nil
 	}
+	if !account.IsGeminiCloudCodeOAuth() {
+		return nil, fmt.Errorf("Gemini OAuth account must be re-authorized with a supported OAuth type")
+	}
+	if projectID == "" {
+		return nil, ErrGeminiProjectIDRequired
+	}
 
-	// Code Assist mode (with project_id)
+	if s.codeAssistModelResolver != nil {
+		resolvedModel, resolveErr := s.codeAssistModelResolver.Resolve(ctx, account, accessToken, modelID)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("resolve Code Assist model: %w", resolveErr)
+		}
+		modelID = resolvedModel
+	}
+
+	// Cloud Code mode for Code Assist and Antigravity OAuth.
 	return s.buildCodeAssistRequest(ctx, accessToken, projectID, modelID, payload)
 }
 
@@ -2462,19 +2503,12 @@ func (s *AccountTestService) buildGeminiServiceAccountRequest(ctx context.Contex
 
 // buildCodeAssistRequest builds request for Google Code Assist API (used by Gemini CLI and Antigravity)
 func (s *AccountTestService) buildCodeAssistRequest(ctx context.Context, accessToken, projectID, modelID string, payload []byte) (*http.Request, error) {
-	var inner map[string]any
-	if err := json.Unmarshal(payload, &inner); err != nil {
+	wrappedBytes, err := buildGeminiCodeAssistRequestBody(projectID, modelID, payload)
+	if err != nil {
 		return nil, err
 	}
 
-	wrapped := map[string]any{
-		"model":   modelID,
-		"project": projectID,
-		"request": inner,
-	}
-	wrappedBytes, _ := json.Marshal(wrapped)
-
-	normalizedBaseURL, err := s.validateUpstreamBaseURL(geminicli.GeminiCliBaseURL)
+	normalizedBaseURL, err := s.validateUpstreamBaseURL(geminiCodeAssistBaseURL(0))
 	if err != nil {
 		return nil, err
 	}
@@ -2485,9 +2519,7 @@ func (s *AccountTestService) buildCodeAssistRequest(ctx context.Context, accessT
 		return nil, err
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("User-Agent", geminicli.GeminiCLIUserAgent)
+	antigravity.ApplyCodeAssistRequestHeaders(req, ctx, accessToken, "text/event-stream")
 
 	return req, nil
 }

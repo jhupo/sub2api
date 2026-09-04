@@ -34,13 +34,15 @@ const (
 	AntigravityUserAgentVersionEnv = "ANTIGRAVITY_USER_AGENT_VERSION"
 
 	// DefaultUserAgentVersion 是未通过环境变量或后台设置覆盖时使用的默认版本号。
-	DefaultUserAgentVersion = "1.23.2"
+	DefaultUserAgentVersion = "2.8.0"
+	defaultUserAgentCL      = "963137146"
 
 	// 固定的 redirect_uri（用户需手动复制 code）
 	RedirectURI = "http://localhost:8085/callback"
 
 	// OAuth scopes
-	Scopes = "https://www.googleapis.com/auth/cloud-platform " +
+	Scopes = "https://www.googleapis.com/auth/aicode " +
+		"https://www.googleapis.com/auth/cloud-platform " +
 		"https://www.googleapis.com/auth/userinfo.email " +
 		"https://www.googleapis.com/auth/userinfo.profile " +
 		"https://www.googleapis.com/auth/cclog " +
@@ -53,8 +55,9 @@ const (
 	URLAvailabilityTTL = 5 * time.Minute
 
 	// Antigravity API 端点
-	antigravityProdBaseURL  = "https://cloudcode-pa.googleapis.com"
-	antigravityDailyBaseURL = "https://daily-cloudcode-pa.googleapis.com"
+	antigravityProdBaseURL         = "https://cloudcode-pa.googleapis.com"
+	antigravityDailyBaseURL        = "https://daily-cloudcode-pa.googleapis.com"
+	antigravityDailySandboxBaseURL = "https://daily-cloudcode-pa.sandbox.googleapis.com"
 )
 
 var userAgentVersionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
@@ -123,9 +126,9 @@ func GetUserAgentVersionForContext(ctx context.Context) string {
 // BuildUserAgent 使用指定版本号构造 User-Agent；版本为空或非法时回退默认值。
 func BuildUserAgent(version string) string {
 	if normalized := NormalizeUserAgentVersion(version); normalized != "" {
-		return fmt.Sprintf("antigravity/%s windows/amd64", normalized)
+		return fmt.Sprintf("antigravity/hub/%s (aidev_client; os_type=darwin; arch=arm64; cl=%s)", normalized, defaultUserAgentCL)
 	}
-	return fmt.Sprintf("antigravity/%s windows/amd64", defaultUserAgentVersion)
+	return fmt.Sprintf("antigravity/hub/%s (aidev_client; os_type=darwin; arch=arm64; cl=%s)", defaultUserAgentVersion, defaultUserAgentCL)
 }
 
 // GetUserAgentForContext 返回当前请求应使用的 User-Agent。
@@ -179,6 +182,24 @@ func ForwardBaseURLs() []string {
 		reordered = append(reordered, url)
 	}
 	return reordered
+}
+
+// CodeAssistBaseURLs returns the endpoint order used by current Code Assist
+// clients. The daily and sandbox catalogs can advertise paid runtime models
+// before they are visible on the production endpoint.
+func CodeAssistBaseURLs() []string {
+	// BaseURLs is intentionally mutable in tests and in deployments that use a
+	// private gateway. Preserve those explicit overrides instead of bypassing
+	// them with the built-in endpoint list.
+	if len(BaseURLs) > 0 && !(len(BaseURLs) == 2 &&
+		BaseURLs[0] == antigravityProdBaseURL && BaseURLs[1] == antigravityDailyBaseURL) {
+		return append([]string(nil), BaseURLs...)
+	}
+	return []string{
+		antigravityDailyBaseURL,
+		antigravityDailySandboxBaseURL,
+		antigravityProdBaseURL,
+	}
 }
 
 // URLAvailability 管理 URL 可用性状态（带 TTL 自动恢复和动态优先级）

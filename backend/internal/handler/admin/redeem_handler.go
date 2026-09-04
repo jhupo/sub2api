@@ -189,6 +189,10 @@ func (h *RedeemHandler) CreateAndRedeem(c *gin.Context) {
 			response.BadRequest(c, "plan_version_id is required for subscription type")
 			return
 		}
+		if *req.PlanVersionID <= 0 {
+			response.BadRequest(c, "plan_version_id must be positive")
+			return
+		}
 	}
 
 	expiresAt, err := resolveRedeemCodeExpiresAt(req.ExpiresAt, req.ExpiresInDays)

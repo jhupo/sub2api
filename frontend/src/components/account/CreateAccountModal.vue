@@ -694,13 +694,13 @@
         <div v-if="accountCategory === 'oauth-based'" class="mt-4">
           <label class="input-label">{{ t('admin.accounts.oauth.gemini.oauthTypeLabel') }}</label>
           <div class="mt-2 grid grid-cols-2 gap-3">
-            <!-- Google One OAuth -->
+            <!-- Google AI personal subscription via Antigravity OAuth -->
             <button
               type="button"
-              @click="handleSelectGeminiOAuthType('google_one')"
+              @click="handleSelectGeminiOAuthType('antigravity')"
               :class="[
                 'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-                geminiOAuthType === 'google_one'
+                geminiOAuthType === 'antigravity'
                   ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
                   : 'border-gray-200 hover:border-purple-300 dark:border-dark-600 dark:hover:border-purple-700'
               ]"
@@ -708,7 +708,7 @@
               <div
                 :class="[
                   'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                  geminiOAuthType === 'google_one'
+                  geminiOAuthType === 'antigravity'
                     ? 'bg-purple-500 text-white'
                     : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
                 ]"
@@ -717,10 +717,10 @@
               </div>
               <div class="min-w-0">
                 <span class="block text-sm font-medium text-gray-900 dark:text-white">
-                  Google One
+                  Google AI (Antigravity)
                 </span>
                 <span class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.oauthType.googleOneDesc') }}
+                  {{ t('admin.accounts.gemini.oauthType.antigravityDesc') }}
                 </span>
                 <div class="mt-2 flex flex-wrap gap-1">
                   <span
@@ -899,13 +899,13 @@
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
           <div class="mt-2">
             <select
-              v-if="geminiOAuthType === 'google_one'"
-              v-model="geminiTierGoogleOne"
+              v-if="geminiOAuthType === 'antigravity'"
+              v-model="geminiTierGoogleAI"
               class="input"
             >
-              <option value="google_one_free">{{ t('admin.accounts.gemini.tier.googleOne.free') }}</option>
-              <option value="google_ai_pro">{{ t('admin.accounts.gemini.tier.googleOne.pro') }}</option>
-              <option value="google_ai_ultra">{{ t('admin.accounts.gemini.tier.googleOne.ultra') }}</option>
+              <option value="google_ai_free">{{ t('admin.accounts.gemini.tier.googleAI.free') }}</option>
+              <option value="google_ai_pro">{{ t('admin.accounts.gemini.tier.googleAI.pro') }}</option>
+              <option value="google_ai_ultra">{{ t('admin.accounts.gemini.tier.googleAI.ultra') }}</option>
             </select>
 
             <select
@@ -2183,9 +2183,9 @@
         </div>
       </div>
 
-      <!-- OpenAI OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
+      <!-- OAuth model restriction (OAuth 类型没有 apikey 容器，需要独立区域) -->
       <div
-        v-if="(form.platform === 'openai' || form.platform === 'grok') && isOAuthFlow"
+        v-if="(form.platform === 'openai' || form.platform === 'grok' || form.platform === 'gemini') && isOAuthFlow"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -3592,25 +3592,25 @@
             <tbody class="divide-y divide-gray-200 dark:divide-dark-600">
               <tr>
                 <td class="px-3 py-2 text-gray-900 dark:text-white">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.googleOne.channel') }}
+                  {{ t('admin.accounts.gemini.quotaPolicy.rows.antigravity.channel') }}
                 </td>
                 <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Free</td>
                 <td class="px-3 py-2 text-gray-600 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.googleOne.limitsFree') }}
+                  {{ t('admin.accounts.gemini.quotaPolicy.rows.antigravity.limitsFree') }}
                 </td>
               </tr>
               <tr>
                 <td class="px-3 py-2 text-gray-900 dark:text-white"></td>
                 <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Pro</td>
                 <td class="px-3 py-2 text-gray-600 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.googleOne.limitsPro') }}
+                  {{ t('admin.accounts.gemini.quotaPolicy.rows.antigravity.limitsPro') }}
                 </td>
               </tr>
               <tr>
                 <td class="px-3 py-2 text-gray-900 dark:text-white"></td>
                 <td class="px-3 py-2 text-gray-600 dark:text-gray-400">Ultra</td>
                 <td class="px-3 py-2 text-gray-600 dark:text-gray-400">
-                  {{ t('admin.accounts.gemini.quotaPolicy.rows.googleOne.limitsUltra') }}
+                  {{ t('admin.accounts.gemini.quotaPolicy.rows.antigravity.limitsUltra') }}
                 </td>
               </tr>
               <tr>
@@ -4257,7 +4257,7 @@ const getModelMappingKey = createStableObjectKeyResolver<ModelMapping>('create-m
 const getOpenAICompactModelMappingKey = createStableObjectKeyResolver<ModelMapping>('create-openai-compact-model-mapping')
 const getAntigravityModelMappingKey = createStableObjectKeyResolver<ModelMapping>('create-antigravity-model-mapping')
 const getTempUnschedRuleKey = createStableObjectKeyResolver<TempUnschedRuleForm>('create-temp-unsched-rule')
-const geminiOAuthType = ref<'code_assist' | 'google_one' | 'ai_studio'>('google_one')
+const geminiOAuthType = ref<'antigravity' | 'code_assist' | 'ai_studio'>('antigravity')
 const geminiAIStudioOAuthEnabled = ref(false)
 const openAICompactModeOptions = computed(() => [
   { value: 'auto', label: t('admin.accounts.openai.compactModeAuto') },
@@ -4369,7 +4369,7 @@ const customBaseUrlEnabled = ref(false)
 const customBaseUrl = ref('')
 
 // Gemini tier selection (used as fallback when auto-detection is unavailable/fails)
-const geminiTierGoogleOne = ref<'google_one_free' | 'google_ai_pro' | 'google_ai_ultra'>('google_one_free')
+const geminiTierGoogleAI = ref<'google_ai_free' | 'google_ai_pro' | 'google_ai_ultra'>('google_ai_free')
 const geminiTierGcp = ref<'gcp_standard' | 'gcp_enterprise'>('gcp_standard')
 const geminiTierAIStudio = ref<'aistudio_free' | 'aistudio_paid'>('aistudio_free')
 
@@ -4377,8 +4377,8 @@ const geminiSelectedTier = computed(() => {
   if (form.platform !== 'gemini') return ''
   if (accountCategory.value === 'apikey') return geminiTierAIStudio.value
   switch (geminiOAuthType.value) {
-    case 'google_one':
-      return geminiTierGoogleOne.value
+    case 'antigravity':
+      return geminiTierGoogleAI.value
     case 'code_assist':
       return geminiTierGcp.value
     default:
@@ -4705,13 +4705,13 @@ watch(
     const caps = await geminiOAuth.getCapabilities()
     geminiAIStudioOAuthEnabled.value = !!caps?.ai_studio_oauth_enabled
     if (!geminiAIStudioOAuthEnabled.value && geminiOAuthType.value === 'ai_studio') {
-      geminiOAuthType.value = 'code_assist'
+      geminiOAuthType.value = 'antigravity'
     }
   },
   { immediate: true }
 )
 
-const handleSelectGeminiOAuthType = (oauthType: 'code_assist' | 'google_one' | 'ai_studio') => {
+const handleSelectGeminiOAuthType = (oauthType: 'antigravity' | 'code_assist' | 'ai_studio') => {
   if (oauthType === 'ai_studio' && !geminiAIStudioOAuthEnabled.value) {
     appStore.showError(t('admin.accounts.oauth.gemini.aiStudioNotConfigured'))
     return
@@ -5140,8 +5140,8 @@ const resetForm = () => {
   vertexLocation.value = 'global'
   tempUnschedEnabled.value = false
   tempUnschedRules.value = []
-  geminiOAuthType.value = 'code_assist'
-  geminiTierGoogleOne.value = 'google_one_free'
+  geminiOAuthType.value = 'antigravity'
+  geminiTierGoogleAI.value = 'google_ai_free'
   geminiTierGcp.value = 'gcp_standard'
   geminiTierAIStudio.value = 'aistudio_free'
   oauth.resetState()
@@ -6516,8 +6516,15 @@ const handleGeminiExchange = async (authCode: string) => {
     if (!tokenInfo) return
 
     const credentials = geminiOAuth.buildCredentials(tokenInfo)
-    const extra = geminiOAuth.buildExtraInfo(tokenInfo)
-    await createAccountAndFinish('gemini', 'oauth', credentials, extra)
+    const modelMapping = buildModelMappingObject(
+      modelRestrictionMode.value,
+      allowedModels.value,
+      modelMappings.value
+    )
+    if (modelMapping) {
+      credentials.model_mapping = modelMapping
+    }
+    await createAccountAndFinish('gemini', 'oauth', credentials)
   } catch (error: any) {
     geminiOAuth.error.value = error.response?.data?.detail || t('admin.accounts.oauth.authFailed')
     appStore.showError(geminiOAuth.error.value)

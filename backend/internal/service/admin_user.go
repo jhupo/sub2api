@@ -1260,16 +1260,8 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 		return nil, ErrRedeemCodeExpired
 	}
 
-	if input.Type == RedeemTypeSubscription {
-		if input.PlanVersionID == nil {
-			return nil, errors.New("plan_version_id is required for subscription type")
-		}
-		if s.entClient == nil {
-			return nil, errors.New("subscription plan store is unavailable")
-		}
-		if _, err := s.entClient.SubscriptionPlanVersion.Get(ctx, *input.PlanVersionID); err != nil {
-			return nil, fmt.Errorf("subscription plan version not found: %w", err)
-		}
+	if err := validateRedeemPlanVersion(ctx, s.entClient, input.Type, input.PlanVersionID); err != nil {
+		return nil, err
 	}
 
 	codes := make([]RedeemCode, 0, input.Count)

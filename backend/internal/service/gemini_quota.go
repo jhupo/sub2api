@@ -196,8 +196,8 @@ func newGeminiQuotaPolicy() *GeminiQuotaPolicy {
 			// aistudio_paid: -1 means "unlimited/pay-as-you-go" for RPD.
 			GeminiTierAIStudioPaid: {Quota: GeminiQuota{ProRPD: -1, ProRPM: 1000, FlashRPD: -1, FlashRPM: 2000}, Cooldown: 5 * time.Minute},
 
-			// --- Google One (shared pool) ---
-			GeminiTierGoogleOneFree: {Quota: GeminiQuota{SharedRPD: 1000, SharedRPM: 60}, Cooldown: 30 * time.Minute},
+			// --- Google AI personal subscriptions through Antigravity (shared pool) ---
+			GeminiTierGoogleAIFree:  {Quota: GeminiQuota{SharedRPD: 1000, SharedRPM: 60}, Cooldown: 30 * time.Minute},
 			GeminiTierGoogleAIPro:   {Quota: GeminiQuota{SharedRPD: 1500, SharedRPM: 120}, Cooldown: 5 * time.Minute},
 			GeminiTierGoogleAIUltra: {Quota: GeminiQuota{SharedRPD: 2000, SharedRPM: 120}, Cooldown: 5 * time.Minute},
 
@@ -329,8 +329,6 @@ func normalizeGeminiTierID(tierID string) string {
 		return GeminiTierAIStudioFree
 	case "AISTUDIO_PAID":
 		return GeminiTierAIStudioPaid
-	case "GOOGLE_ONE_FREE":
-		return GeminiTierGoogleOneFree
 	case "GOOGLE_AI_PRO":
 		return GeminiTierGoogleAIPro
 	case "GOOGLE_AI_ULTRA":
@@ -374,22 +372,22 @@ func geminiQuotaTierKeyForAccount(account *Account) string {
 		return ""
 	}
 
-	// Note: GeminiOAuthType() already defaults legacy (project_id present) to code_assist.
+	// OAuth identity is explicit; legacy or missing values do not inherit a tier.
 	oauthType := strings.ToLower(strings.TrimSpace(account.GeminiOAuthType()))
 	rawTier := strings.TrimSpace(account.GeminiTierID())
 
 	// Prefer the canonical tier stored in credentials.
-	if tierID := canonicalGeminiTierIDForOAuthType(oauthType, rawTier); tierID != "" && tierID != GeminiTierGoogleOneUnknown {
+	if tierID := canonicalGeminiTierIDForOAuthType(oauthType, rawTier); tierID != "" {
 		return tierID
 	}
 
 	// Fallback defaults when tier_id is missing or unknown.
 	switch oauthType {
-	case "google_one":
-		return GeminiTierGoogleOneFree
-	case "code_assist":
+	case GeminiOAuthTypeAntigravity:
+		return GeminiTierGoogleAIFree
+	case GeminiOAuthTypeCodeAssist:
 		return GeminiTierGCPStandard
-	case "ai_studio":
+	case GeminiOAuthTypeAIStudio:
 		return GeminiTierAIStudioFree
 	default:
 		// API Key accounts (type=apikey) have empty oauth_type and are treated as AI Studio.

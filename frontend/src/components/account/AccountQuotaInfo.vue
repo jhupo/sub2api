@@ -42,17 +42,15 @@ const now = ref(new Date())
 let timer: ReturnType<typeof setInterval> | null = null
 
 // 是否为 Code Assist OAuth
-// 判断逻辑与后端保持一致：project_id 存在即为 Code Assist
 const isCodeAssist = computed(() => {
   const creds = props.account.credentials as GeminiCredentials | undefined
-  // 显式为 code_assist，或 legacy 情况（oauth_type 为空但 project_id 存在）
-  return creds?.oauth_type === 'code_assist' || (!creds?.oauth_type && !!creds?.project_id)
+  return creds?.oauth_type === 'code_assist'
 })
 
-// 是否为 Google One OAuth
-const isGoogleOne = computed(() => {
+// 是否为 Antigravity 个人订阅 OAuth
+const isAntigravity = computed(() => {
   const creds = props.account.credentials as GeminiCredentials | undefined
-  return creds?.oauth_type === 'google_one'
+  return creds?.oauth_type === 'antigravity'
 })
 
 // 是否应该显示配额信息
@@ -68,24 +66,15 @@ const tierLabel = computed(() => {
     const tier = (creds?.tier_id || '').toString().trim().toLowerCase()
     if (tier === 'gcp_enterprise') return 'GCP Enterprise'
     if (tier === 'gcp_standard') return 'GCP Standard'
-    // Backward compatibility
-    const upper = (creds?.tier_id || '').toString().trim().toUpperCase()
-    if (upper.includes('ULTRA') || upper.includes('ENTERPRISE')) return 'GCP Enterprise'
-    if (upper) return `GCP ${upper}`
     return 'GCP'
   }
 
-  if (isGoogleOne.value) {
+  if (isAntigravity.value) {
     const tier = (creds?.tier_id || '').toString().trim().toLowerCase()
     if (tier === 'google_ai_ultra') return 'Google AI Ultra'
     if (tier === 'google_ai_pro') return 'Google AI Pro'
-    if (tier === 'google_one_free') return 'Google One Free'
-    // Backward compatibility
-    const upper = (creds?.tier_id || '').toString().trim().toUpperCase()
-    if (upper === 'AI_PREMIUM') return 'Google AI Pro'
-    if (upper === 'GOOGLE_ONE_UNLIMITED') return 'Google AI Ultra'
-    if (upper) return `Google One ${upper}`
-    return 'Google One'
+    if (tier === 'google_ai_free') return 'Google AI Free'
+    return 'Google AI (Antigravity)'
   }
 
   // API Key: 显示 AI Studio
@@ -103,21 +92,14 @@ const tierBadgeClass = computed(() => {
     const tier = (creds?.tier_id || '').toString().trim().toLowerCase()
     if (tier === 'gcp_enterprise') return 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300'
     if (tier === 'gcp_standard') return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
-    // Backward compatibility
-    const upper = (creds?.tier_id || '').toString().trim().toUpperCase()
-    if (upper.includes('ULTRA') || upper.includes('ENTERPRISE')) return 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300'
     return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
   }
 
-  if (isGoogleOne.value) {
+  if (isAntigravity.value) {
     const tier = (creds?.tier_id || '').toString().trim().toLowerCase()
     if (tier === 'google_ai_ultra') return 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300'
     if (tier === 'google_ai_pro') return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
-    if (tier === 'google_one_free') return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
-    // Backward compatibility
-    const upper = (creds?.tier_id || '').toString().trim().toUpperCase()
-    if (upper === 'GOOGLE_ONE_UNLIMITED') return 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300'
-    if (upper === 'AI_PREMIUM') return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
+    if (tier === 'google_ai_free') return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
     return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
   }
 

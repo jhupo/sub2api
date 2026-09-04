@@ -476,7 +476,7 @@ func TestGeminiErrorPolicy_NilRateLimitService(t *testing.T) {
 // policy tests. Embeds mockAccountRepoForGemini and adds tracking.
 // ---------------------------------------------------------------------------
 
-func TestHandleGeminiUpstreamError_GoogleOneCapacityExhaustedUsesTierCooldown(t *testing.T) {
+func TestHandleGeminiUpstreamError_AntigravityCapacityExhaustedUsesTierCooldown(t *testing.T) {
 	repo := &rateLimit429AccountRepoStub{}
 	quotaSvc := NewGeminiQuotaService(&config.Config{}, nil)
 	rlSvc := NewRateLimitService(repo, nil, &config.Config{}, quotaSvc, nil)
@@ -490,7 +490,7 @@ func TestHandleGeminiUpstreamError_GoogleOneCapacityExhaustedUsesTierCooldown(t 
 		Platform: PlatformGemini,
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
-			"oauth_type": "google_one",
+			"oauth_type": "antigravity",
 			"tier_id":    "google_ai_pro",
 		},
 	}

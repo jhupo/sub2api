@@ -524,18 +524,6 @@ func (f *fakeZeroQuotaCache) SetUserPlatformQuotaCache(_ context.Context, _ int6
 	return nil
 }
 
-// GetSubscriptionCache 返回有效订阅（active、未过期、usage 远低于 limit），
-// 用于支持 checkSubscriptionEligibility 通过，以便验证 quota 检查不被触发。
-func (f *fakeZeroQuotaCache) GetSubscriptionCache(_ context.Context, _ int64, _ int64) (*SubscriptionCacheData, error) {
-	return &SubscriptionCacheData{
-		Status:       SubscriptionStatusActive,
-		ExpiresAt:    time.Now().Add(30 * 24 * time.Hour),
-		DailyUsage:   0,
-		WeeklyUsage:  0,
-		MonthlyUsage: 0,
-	}, nil
-}
-
 func (f *fakeZeroQuotaCache) GetUserBalanceCache(_ context.Context, _ int64) (float64, bool, error) {
 	return 100.0, true, nil
 }
@@ -572,16 +560,18 @@ func TestCheckBillingEligibility_SubscriptionMode_BypassesPlatformQuota(t *testi
 		userPlatformQuotaRepo: &fakeQuotaRepo{},
 	}
 
-	subGroup := &Group{
-		ID:               10,
-		SubscriptionType: "subscription",
-		Status:           "active",
-		// 无 DailyLimitUSD → checkSubscriptionEligibility 不会因超限失败
+	now := time.Now()
+	subscriptionID := int64(10)
+	apiKey := &APIKey{FundingSource: FundingSourceSubscription, SubscriptionID: &subscriptionID}
+	subGroup := &Group{ID: 10, Status: StatusActive}
+	sub := &UserSubscription{
+		ID: subscriptionID, Status: SubscriptionStatusActive,
+		StartsAt: now.Add(-time.Hour), ExpiresAt: now.Add(30 * 24 * time.Hour),
+		Plan: &SubscriptionPlan{},
 	}
-	sub := &UserSubscription{Status: "active"}
 	user := &User{ID: 42}
 
-	err := s.CheckBillingEligibility(context.Background(), user, nil, subGroup, sub, "anthropic")
+	err := s.CheckBillingEligibility(context.Background(), user, apiKey, subGroup, sub, "anthropic")
 	// 订阅模式下不应收到任何 user×platform quota 错误
 	if errors.Is(err, ErrUserPlatformDailyQuotaExhausted) ||
 		errors.Is(err, ErrUserPlatformWeeklyQuotaExhausted) ||
@@ -769,9 +759,9 @@ func TestHasUserPlatformQuotaLimit(t *testing.T) {
 	daily := 5.0
 
 	tests := []struct {
-		name    string
-		setup   func() *BillingCacheService
-		want    bool
+		name  string
+		setup func() *BillingCacheService
+		want  bool
 	}{
 		{
 			name: "has_limit",

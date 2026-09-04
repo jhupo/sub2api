@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 )
@@ -39,20 +40,20 @@ func TestGeminiOAuthService_GenerateAuthURL_RedirectURIStrategy(t *testing.T) {
 
 	tests := []testCase{
 		{
-			name: "google_one uses built-in client when not configured and redirects to upstream",
+			name: "antigravity uses the personal subscription client and fixed callback",
 			cfg: &config.Config{
 				Gemini: config.GeminiConfig{
 					OAuth: config.GeminiOAuthConfig{},
 				},
 			},
-			oauthType:     "google_one",
-			wantClientID:  geminicli.GeminiCLIOAuthClientID,
-			wantRedirect:  geminicli.GeminiCLIRedirectURI,
-			wantScope:     geminicli.DefaultCodeAssistScopes,
+			oauthType:     GeminiOAuthTypeAntigravity,
+			wantClientID:  antigravity.ClientID,
+			wantRedirect:  antigravity.RedirectURI,
+			wantScope:     antigravity.Scopes,
 			wantProjectID: "",
 		},
 		{
-			name: "google_one always forces built-in client even when custom client configured",
+			name: "antigravity ignores the unrelated custom Gemini CLI client",
 			cfg: &config.Config{
 				Gemini: config.GeminiConfig{
 					OAuth: config.GeminiOAuthConfig{
@@ -61,10 +62,10 @@ func TestGeminiOAuthService_GenerateAuthURL_RedirectURIStrategy(t *testing.T) {
 					},
 				},
 			},
-			oauthType:     "google_one",
-			wantClientID:  geminicli.GeminiCLIOAuthClientID,
-			wantRedirect:  geminicli.GeminiCLIRedirectURI,
-			wantScope:     geminicli.DefaultCodeAssistScopes,
+			oauthType:     GeminiOAuthTypeAntigravity,
+			wantClientID:  antigravity.ClientID,
+			wantRedirect:  antigravity.RedirectURI,
+			wantScope:     antigravity.Scopes,
 			wantProjectID: "",
 		},
 		{
@@ -94,14 +95,18 @@ func TestGeminiOAuthService_GenerateAuthURL_RedirectURIStrategy(t *testing.T) {
 			oauthType:     "ai_studio",
 			wantErrSubstr: "AI Studio OAuth requires a custom OAuth Client",
 		},
+		{
+			name:          "unsupported legacy oauth type is rejected",
+			cfg:           &config.Config{},
+			oauthType:     "google_one",
+			wantErrSubstr: "unsupported Gemini OAuth type",
+		},
 	}
 
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			svc := NewGeminiOAuthService(nil, nil, nil, nil, tt.cfg)
+			svc := NewGeminiOAuthService(nil, nil, nil, tt.cfg)
 			got, err := svc.GenerateAuthURL(context.Background(), nil, "https://example.com/auth/callback", tt.projectID, tt.oauthType, "")
 			if tt.wantErrSubstr != "" {
 				if err == nil {
@@ -134,6 +139,9 @@ func TestGeminiOAuthService_GenerateAuthURL_RedirectURIStrategy(t *testing.T) {
 			if gotScope := q.Get("scope"); gotScope != tt.wantScope {
 				t.Fatalf("scope mismatch: got=%q want=%q", gotScope, tt.wantScope)
 			}
+			if tt.oauthType == GeminiOAuthTypeAntigravity && !strings.Contains(q.Get("scope"), "https://www.googleapis.com/auth/aicode") {
+				t.Fatalf("Antigravity authorization scope must include aicode: %q", q.Get("scope"))
+			}
 			if gotProjectID := q.Get("project_id"); gotProjectID != tt.wantProjectID {
 				t.Fatalf("project_id mismatch: got=%q want=%q", gotProjectID, tt.wantProjectID)
 			}
@@ -154,7 +162,7 @@ func TestValidateTierID(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "空字符串合法", tierID: "", wantErr: false},
-		{name: "正常 tier_id", tierID: "google_one_free", wantErr: false},
+		{name: "正常 tier_id", tierID: "google_ai_free", wantErr: false},
 		{name: "包含斜杠", tierID: "tier/sub", wantErr: false},
 		{name: "包含连字符", tierID: "gcp-standard", wantErr: false},
 		{name: "纯数字", tierID: "12345", wantErr: false},
@@ -198,35 +206,29 @@ func TestCanonicalGeminiTierID(t *testing.T) {
 		{name: "纯空白", raw: "   ", want: ""},
 
 		// 已规范化的值（直接返回）
-		{name: "google_one_free", raw: "google_one_free", want: GeminiTierGoogleOneFree},
+		{name: "google_ai_free", raw: "google_ai_free", want: GeminiTierGoogleAIFree},
 		{name: "google_ai_pro", raw: "google_ai_pro", want: GeminiTierGoogleAIPro},
 		{name: "google_ai_ultra", raw: "google_ai_ultra", want: GeminiTierGoogleAIUltra},
 		{name: "gcp_standard", raw: "gcp_standard", want: GeminiTierGCPStandard},
 		{name: "gcp_enterprise", raw: "gcp_enterprise", want: GeminiTierGCPEnterprise},
 		{name: "aistudio_free", raw: "aistudio_free", want: GeminiTierAIStudioFree},
 		{name: "aistudio_paid", raw: "aistudio_paid", want: GeminiTierAIStudioPaid},
-		{name: "google_one_unknown", raw: "google_one_unknown", want: GeminiTierGoogleOneUnknown},
 
 		// 大小写不敏感
-		{name: "Google_One_Free 大写", raw: "Google_One_Free", want: GeminiTierGoogleOneFree},
+		{name: "Google_AI_Free 大写", raw: "Google_AI_Free", want: GeminiTierGoogleAIFree},
 		{name: "GCP_STANDARD 全大写", raw: "GCP_STANDARD", want: GeminiTierGCPStandard},
 
-		// legacy 映射: Google One
-		{name: "AI_PREMIUM -> google_ai_pro", raw: "AI_PREMIUM", want: GeminiTierGoogleAIPro},
-		{name: "FREE -> google_one_free", raw: "FREE", want: GeminiTierGoogleOneFree},
-		{name: "GOOGLE_ONE_BASIC -> google_one_free", raw: "GOOGLE_ONE_BASIC", want: GeminiTierGoogleOneFree},
-		{name: "GOOGLE_ONE_STANDARD -> google_one_free", raw: "GOOGLE_ONE_STANDARD", want: GeminiTierGoogleOneFree},
-		{name: "GOOGLE_ONE_UNLIMITED -> google_ai_ultra", raw: "GOOGLE_ONE_UNLIMITED", want: GeminiTierGoogleAIUltra},
-		{name: "GOOGLE_ONE_UNKNOWN -> google_one_unknown", raw: "GOOGLE_ONE_UNKNOWN", want: GeminiTierGoogleOneUnknown},
-
-		// legacy 映射: Code Assist
+		// Tier values returned by loadCodeAssist.
 		{name: "STANDARD -> gcp_standard", raw: "STANDARD", want: GeminiTierGCPStandard},
 		{name: "PRO -> gcp_standard", raw: "PRO", want: GeminiTierGCPStandard},
 		{name: "LEGACY -> gcp_standard", raw: "LEGACY", want: GeminiTierGCPStandard},
 		{name: "ENTERPRISE -> gcp_enterprise", raw: "ENTERPRISE", want: GeminiTierGCPEnterprise},
 		{name: "ULTRA -> gcp_enterprise", raw: "ULTRA", want: GeminiTierGCPEnterprise},
 
-		// kebab-case
+		// Antigravity and Code Assist kebab-case values.
+		{name: "free-tier -> google_ai_free", raw: "free-tier", want: GeminiTierGoogleAIFree},
+		{name: "g1-pro-tier -> google_ai_pro", raw: "g1-pro-tier", want: GeminiTierGoogleAIPro},
+		{name: "g1-ultra-tier -> google_ai_ultra", raw: "g1-ultra-tier", want: GeminiTierGoogleAIUltra},
 		{name: "standard-tier -> gcp_standard", raw: "standard-tier", want: GeminiTierGCPStandard},
 		{name: "pro-tier -> gcp_standard", raw: "pro-tier", want: GeminiTierGCPStandard},
 		{name: "ultra-tier -> gcp_enterprise", raw: "ultra-tier", want: GeminiTierGCPEnterprise},
@@ -236,7 +238,7 @@ func TestCanonicalGeminiTierID(t *testing.T) {
 		{name: "random-text -> 空", raw: "random-text", want: ""},
 
 		// 带空白
-		{name: "带前后空白", raw: "  google_one_free  ", want: GeminiTierGoogleOneFree},
+		{name: "带前后空白", raw: "  google_ai_free  ", want: GeminiTierGoogleAIFree},
 	}
 
 	for _, tt := range tests {
@@ -264,35 +266,35 @@ func TestCanonicalGeminiTierIDForOAuthType(t *testing.T) {
 		tierID    string
 		want      string
 	}{
-		// google_one 类型过滤
-		{name: "google_one + google_one_free", oauthType: "google_one", tierID: "google_one_free", want: GeminiTierGoogleOneFree},
-		{name: "google_one + google_ai_pro", oauthType: "google_one", tierID: "google_ai_pro", want: GeminiTierGoogleAIPro},
-		{name: "google_one + google_ai_ultra", oauthType: "google_one", tierID: "google_ai_ultra", want: GeminiTierGoogleAIUltra},
-		{name: "google_one + gcp_standard 被过滤", oauthType: "google_one", tierID: "gcp_standard", want: ""},
-		{name: "google_one + aistudio_free 被过滤", oauthType: "google_one", tierID: "aistudio_free", want: ""},
-		{name: "google_one + AI_PREMIUM 遗留映射", oauthType: "google_one", tierID: "AI_PREMIUM", want: GeminiTierGoogleAIPro},
+		// antigravity 类型过滤
+		{name: "antigravity + google_ai_free", oauthType: "antigravity", tierID: "google_ai_free", want: GeminiTierGoogleAIFree},
+		{name: "antigravity + google_ai_pro", oauthType: "antigravity", tierID: "google_ai_pro", want: GeminiTierGoogleAIPro},
+		{name: "antigravity + google_ai_ultra", oauthType: "antigravity", tierID: "google_ai_ultra", want: GeminiTierGoogleAIUltra},
+		{name: "antigravity + g1-pro-tier", oauthType: "antigravity", tierID: "g1-pro-tier", want: GeminiTierGoogleAIPro},
+		{name: "antigravity + gcp_standard 被过滤", oauthType: "antigravity", tierID: "gcp_standard", want: ""},
+		{name: "antigravity + aistudio_free 被过滤", oauthType: "antigravity", tierID: "aistudio_free", want: ""},
 
 		// code_assist 类型过滤
 		{name: "code_assist + gcp_standard", oauthType: "code_assist", tierID: "gcp_standard", want: GeminiTierGCPStandard},
 		{name: "code_assist + gcp_enterprise", oauthType: "code_assist", tierID: "gcp_enterprise", want: GeminiTierGCPEnterprise},
-		{name: "code_assist + google_one_free 被过滤", oauthType: "code_assist", tierID: "google_one_free", want: ""},
+		{name: "code_assist + google_ai_free 被过滤", oauthType: "code_assist", tierID: "google_ai_free", want: ""},
 		{name: "code_assist + aistudio_free 被过滤", oauthType: "code_assist", tierID: "aistudio_free", want: ""},
-		{name: "code_assist + STANDARD 遗留映射", oauthType: "code_assist", tierID: "STANDARD", want: GeminiTierGCPStandard},
+		{name: "code_assist + STANDARD 响应值", oauthType: "code_assist", tierID: "STANDARD", want: GeminiTierGCPStandard},
 		{name: "code_assist + standard-tier kebab", oauthType: "code_assist", tierID: "standard-tier", want: GeminiTierGCPStandard},
 
 		// ai_studio 类型过滤
 		{name: "ai_studio + aistudio_free", oauthType: "ai_studio", tierID: "aistudio_free", want: GeminiTierAIStudioFree},
 		{name: "ai_studio + aistudio_paid", oauthType: "ai_studio", tierID: "aistudio_paid", want: GeminiTierAIStudioPaid},
 		{name: "ai_studio + gcp_standard 被过滤", oauthType: "ai_studio", tierID: "gcp_standard", want: ""},
-		{name: "ai_studio + google_one_free 被过滤", oauthType: "ai_studio", tierID: "google_one_free", want: ""},
+		{name: "ai_studio + google_ai_free 被过滤", oauthType: "ai_studio", tierID: "google_ai_free", want: ""},
 
 		// 空值
-		{name: "空 tierID", oauthType: "google_one", tierID: "", want: ""},
-		{name: "空 oauthType + 有效 tierID", oauthType: "", tierID: "gcp_standard", want: GeminiTierGCPStandard},
-		{name: "未知 oauthType 接受规范化值", oauthType: "unknown_type", tierID: "gcp_standard", want: GeminiTierGCPStandard},
+		{name: "空 tierID", oauthType: "antigravity", tierID: "", want: ""},
+		{name: "空 oauthType 拒绝 tierID", oauthType: "", tierID: "gcp_standard", want: ""},
+		{name: "未知 oauthType 拒绝 tierID", oauthType: "unknown_type", tierID: "gcp_standard", want: ""},
 
 		// oauthType 大小写和空白
-		{name: "GOOGLE_ONE 大写", oauthType: "GOOGLE_ONE", tierID: "google_one_free", want: GeminiTierGoogleOneFree},
+		{name: "ANTIGRAVITY 大写", oauthType: "ANTIGRAVITY", tierID: "google_ai_free", want: GeminiTierGoogleAIFree},
 		{name: "oauthType 带空白", oauthType: "  code_assist  ", tierID: "gcp_standard", want: GeminiTierGCPStandard},
 	}
 
@@ -399,54 +401,6 @@ func TestExtractTierIDFromAllowedTiers(t *testing.T) {
 }
 
 // =====================
-// 新增测试：inferGoogleOneTier
-// =====================
-
-func TestInferGoogleOneTier(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name         string
-		storageBytes int64
-		want         string
-	}{
-		// 边界：<= 0
-		{name: "0 bytes -> unknown", storageBytes: 0, want: GeminiTierGoogleOneUnknown},
-		{name: "负数 -> unknown", storageBytes: -1, want: GeminiTierGoogleOneUnknown},
-
-		// > 100TB -> ultra
-		{name: "> 100TB -> ultra", storageBytes: int64(StorageTierUnlimited) + 1, want: GeminiTierGoogleAIUltra},
-		{name: "200TB -> ultra", storageBytes: 200 * int64(TB), want: GeminiTierGoogleAIUltra},
-
-		// >= 2TB -> pro (但 <= 100TB)
-		{name: "正好 2TB -> pro", storageBytes: int64(StorageTierAIPremium), want: GeminiTierGoogleAIPro},
-		{name: "5TB -> pro", storageBytes: 5 * int64(TB), want: GeminiTierGoogleAIPro},
-		{name: "100TB 正好 -> pro (不是 > 100TB)", storageBytes: int64(StorageTierUnlimited), want: GeminiTierGoogleAIPro},
-
-		// >= 15GB -> free (但 < 2TB)
-		{name: "正好 15GB -> free", storageBytes: int64(StorageTierFree), want: GeminiTierGoogleOneFree},
-		{name: "100GB -> free", storageBytes: 100 * int64(GB), want: GeminiTierGoogleOneFree},
-		{name: "略低于 2TB -> free", storageBytes: int64(StorageTierAIPremium) - 1, want: GeminiTierGoogleOneFree},
-
-		// < 15GB -> unknown
-		{name: "1GB -> unknown", storageBytes: int64(GB), want: GeminiTierGoogleOneUnknown},
-		{name: "略低于 15GB -> unknown", storageBytes: int64(StorageTierFree) - 1, want: GeminiTierGoogleOneUnknown},
-		{name: "1 byte -> unknown", storageBytes: 1, want: GeminiTierGoogleOneUnknown},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := inferGoogleOneTier(tt.storageBytes)
-			if got != tt.want {
-				t.Fatalf("inferGoogleOneTier(%d) = %q, want %q", tt.storageBytes, got, tt.want)
-			}
-		})
-	}
-}
-
-// =====================
 // 新增测试：isNonRetryableGeminiOAuthError
 // =====================
 
@@ -487,7 +441,7 @@ func TestIsNonRetryableGeminiOAuthError(t *testing.T) {
 func TestGeminiOAuthService_BuildAccountCredentials(t *testing.T) {
 	t.Parallel()
 
-	svc := NewGeminiOAuthService(nil, nil, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(nil, nil, nil, &config.Config{})
 	defer svc.Stop()
 
 	t.Run("完整字段", func(t *testing.T) {
@@ -502,9 +456,6 @@ func TestGeminiOAuthService_BuildAccountCredentials(t *testing.T) {
 			ProjectID:    "my-project",
 			TierID:       "gcp_standard",
 			OAuthType:    "code_assist",
-			Extra: map[string]any{
-				"drive_storage_limit": int64(2199023255552),
-			},
 		}
 
 		creds := svc.BuildAccountCredentials(tokenInfo)
@@ -517,10 +468,6 @@ func TestGeminiOAuthService_BuildAccountCredentials(t *testing.T) {
 		assertCredStr(t, creds, "tier_id", "gcp_standard")
 		assertCredStr(t, creds, "oauth_type", "code_assist")
 		assertCredStr(t, creds, "expires_at", "1700000000")
-
-		if _, ok := creds["drive_storage_limit"]; !ok {
-			t.Fatal("extra 字段 drive_storage_limit 未包含在 creds 中")
-		}
 	})
 
 	t.Run("最小字段（仅 access_token 和 expires_at）", func(t *testing.T) {
@@ -687,15 +634,16 @@ func TestGeminiOAuthService_GetOAuthConfig(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			svc := NewGeminiOAuthService(nil, nil, nil, nil, tt.cfg)
+			svc := NewGeminiOAuthService(nil, nil, nil, tt.cfg)
 			defer svc.Stop()
 
 			result := svc.GetOAuthConfig()
 			if result.AIStudioOAuthEnabled != tt.wantEnabled {
 				t.Fatalf("AIStudioOAuthEnabled = %v, want %v", result.AIStudioOAuthEnabled, tt.wantEnabled)
 			}
-			// RequiredRedirectURIs 始终包含 AI Studio redirect URI
-			if len(result.RequiredRedirectURIs) != 1 || result.RequiredRedirectURIs[0] != geminicli.AIStudioOAuthRedirectURI {
+			if len(result.RequiredRedirectURIs) != 2 ||
+				result.RequiredRedirectURIs[0] != antigravity.RedirectURI ||
+				result.RequiredRedirectURIs[1] != geminicli.AIStudioOAuthRedirectURI {
 				t.Fatalf("RequiredRedirectURIs 不匹配: got=%v", result.RequiredRedirectURIs)
 			}
 		})
@@ -709,7 +657,7 @@ func TestGeminiOAuthService_GetOAuthConfig(t *testing.T) {
 func TestGeminiOAuthService_Stop_NoPanic(t *testing.T) {
 	t.Parallel()
 
-	svc := NewGeminiOAuthService(nil, nil, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(nil, nil, nil, &config.Config{})
 
 	// 调用 Stop 不应 panic
 	svc.Stop()
@@ -818,18 +766,6 @@ func (m *mockGeminiProxyRepo) CountExpiringSoon(ctx context.Context, now time.Ti
 	panic("not impl")
 }
 
-// mockDriveClient implements geminicli.DriveClient for tests.
-type mockDriveClient struct {
-	getStorageQuotaFunc func(ctx context.Context, accessToken, proxyURL string) (*geminicli.DriveStorageInfo, error)
-}
-
-func (m *mockDriveClient) GetStorageQuota(ctx context.Context, accessToken, proxyURL string) (*geminicli.DriveStorageInfo, error) {
-	if m.getStorageQuotaFunc != nil {
-		return m.getStorageQuotaFunc(ctx, accessToken, proxyURL)
-	}
-	return nil, fmt.Errorf("drive API not available in test")
-}
-
 // =====================
 // 新增测试：GeminiOAuthService.RefreshToken（含重试逻辑）
 // =====================
@@ -849,7 +785,7 @@ func TestGeminiOAuthService_RefreshToken_Success(t *testing.T) {
 		},
 	}
 
-	svc := NewGeminiOAuthService(nil, client, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(nil, client, nil, &config.Config{})
 	defer svc.Stop()
 
 	info, err := svc.RefreshToken(context.Background(), "code_assist", "old-refresh", "")
@@ -876,7 +812,7 @@ func TestGeminiOAuthService_RefreshToken_NonRetryableError(t *testing.T) {
 		},
 	}
 
-	svc := NewGeminiOAuthService(nil, client, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(nil, client, nil, &config.Config{})
 	defer svc.Stop()
 
 	_, err := svc.RefreshToken(context.Background(), "code_assist", "revoked-token", "")
@@ -905,7 +841,7 @@ func TestGeminiOAuthService_RefreshToken_RetryableError(t *testing.T) {
 		},
 	}
 
-	svc := NewGeminiOAuthService(nil, client, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(nil, client, nil, &config.Config{})
 	defer svc.Stop()
 
 	info, err := svc.RefreshToken(context.Background(), "code_assist", "rt", "")
@@ -927,7 +863,7 @@ func TestGeminiOAuthService_RefreshToken_RetryableError(t *testing.T) {
 func TestGeminiOAuthService_RefreshAccountToken_NotGeminiOAuth(t *testing.T) {
 	t.Parallel()
 
-	svc := NewGeminiOAuthService(nil, nil, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(nil, nil, nil, &config.Config{})
 	defer svc.Stop()
 
 	account := &Account{
@@ -947,7 +883,7 @@ func TestGeminiOAuthService_RefreshAccountToken_NotGeminiOAuth(t *testing.T) {
 func TestGeminiOAuthService_RefreshAccountToken_NoRefreshToken(t *testing.T) {
 	t.Parallel()
 
-	svc := NewGeminiOAuthService(nil, nil, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(nil, nil, nil, &config.Config{})
 	defer svc.Stop()
 
 	account := &Account{
@@ -982,7 +918,7 @@ func TestGeminiOAuthService_RefreshAccountToken_AIStudio(t *testing.T) {
 		},
 	}
 
-	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, nil, &config.Config{})
 	defer svc.Stop()
 
 	account := &Account{
@@ -1021,7 +957,7 @@ func TestGeminiOAuthService_RefreshAccountToken_CodeAssist_WithProjectID(t *test
 		},
 	}
 
-	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, nil, &config.Config{})
 	defer svc.Stop()
 
 	account := &Account{
@@ -1051,25 +987,12 @@ func TestGeminiOAuthService_RefreshAccountToken_CodeAssist_WithProjectID(t *test
 	}
 }
 
-func TestGeminiOAuthService_RefreshAccountToken_DefaultOAuthType(t *testing.T) {
+func TestGeminiOAuthService_RefreshAccountToken_MissingOAuthTypeRequiresReauthorization(t *testing.T) {
 	t.Parallel()
 
-	client := &mockGeminiOAuthClient{
-		refreshTokenFunc: func(ctx context.Context, oauthType, refreshToken, proxyURL string) (*geminicli.TokenResponse, error) {
-			if oauthType != "code_assist" {
-				t.Errorf("默认 oauthType 应为 code_assist: got=%q", oauthType)
-			}
-			return &geminicli.TokenResponse{
-				AccessToken: "refreshed",
-				ExpiresIn:   3600,
-			}, nil
-		},
-	}
-
-	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, nil, nil, &config.Config{})
 	defer svc.Stop()
 
-	// 无 oauth_type 凭据的旧账号
 	account := &Account{
 		Platform: PlatformGemini,
 		Type:     AccountTypeOAuth,
@@ -1080,12 +1003,9 @@ func TestGeminiOAuthService_RefreshAccountToken_DefaultOAuthType(t *testing.T) {
 		},
 	}
 
-	info, err := svc.RefreshAccountToken(context.Background(), account)
-	if err != nil {
-		t.Fatalf("RefreshAccountToken 返回错误: %v", err)
-	}
-	if info.OAuthType != "code_assist" {
-		t.Fatalf("OAuthType 应默认为 code_assist: got=%q", info.OAuthType)
+	_, err := svc.RefreshAccountToken(context.Background(), account)
+	if err == nil || !strings.Contains(err.Error(), "must be re-authorized") {
+		t.Fatalf("缺少 oauth_type 时应要求重新授权，got: %v", err)
 	}
 }
 
@@ -1114,7 +1034,7 @@ func TestGeminiOAuthService_RefreshAccountToken_WithProxy(t *testing.T) {
 		},
 	}
 
-	svc := NewGeminiOAuthService(proxyRepo, client, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(proxyRepo, client, nil, &config.Config{})
 	defer svc.Stop()
 
 	proxyID := int64(5)
@@ -1156,7 +1076,7 @@ func TestGeminiOAuthService_RefreshAccountToken_CodeAssist_NoProjectID_AutoDetec
 		},
 	}
 
-	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, codeAssist, nil, &config.Config{})
+	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, codeAssist, &config.Config{})
 	defer svc.Stop()
 
 	account := &Account{
@@ -1205,7 +1125,7 @@ func TestGeminiOAuthService_RefreshAccountToken_CodeAssist_NoProjectID_FailsEmpt
 		},
 	}
 
-	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, codeAssist, nil, &config.Config{})
+	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, codeAssist, &config.Config{})
 	defer svc.Stop()
 
 	account := &Account{
@@ -1226,7 +1146,7 @@ func TestGeminiOAuthService_RefreshAccountToken_CodeAssist_NoProjectID_FailsEmpt
 	}
 }
 
-func TestGeminiOAuthService_RefreshAccountToken_GoogleOne_FreshCache(t *testing.T) {
+func TestGeminiOAuthService_RefreshAccountToken_AntigravityRefreshesMetadata(t *testing.T) {
 	t.Parallel()
 
 	client := &mockGeminiOAuthClient{
@@ -1237,8 +1157,16 @@ func TestGeminiOAuthService_RefreshAccountToken_GoogleOne_FreshCache(t *testing.
 			}, nil
 		},
 	}
+	codeAssist := &mockGeminiCodeAssistClient{
+		loadCodeAssistFunc: func(ctx context.Context, accessToken, proxyURL string, req *geminicli.LoadCodeAssistRequest) (*geminicli.LoadCodeAssistResponse, error) {
+			return &geminicli.LoadCodeAssistResponse{
+				CloudAICompanionProject: "antigravity-project",
+				CurrentTier:             &geminicli.TierInfo{ID: "g1-pro-tier"},
+			}, nil
+		},
+	}
 
-	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, codeAssist, &config.Config{})
 	defer svc.Stop()
 
 	account := &Account{
@@ -1246,13 +1174,7 @@ func TestGeminiOAuthService_RefreshAccountToken_GoogleOne_FreshCache(t *testing.
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
 			"refresh_token": "rt",
-			"oauth_type":    "google_one",
-			"project_id":    "proj",
-			"tier_id":       "google_ai_pro",
-		},
-		Extra: map[string]any{
-			// 缓存刷新时间在 24 小时内
-			"drive_tier_updated_at": time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+			"oauth_type":    "antigravity",
 		},
 	}
 
@@ -1260,25 +1182,21 @@ func TestGeminiOAuthService_RefreshAccountToken_GoogleOne_FreshCache(t *testing.
 	if err != nil {
 		t.Fatalf("RefreshAccountToken 返回错误: %v", err)
 	}
-	// 缓存新鲜，应使用已有的 tier_id
 	if info.TierID != GeminiTierGoogleAIPro {
-		t.Fatalf("TierID 应使用缓存值: got=%q want=%q", info.TierID, GeminiTierGoogleAIPro)
+		t.Fatalf("TierID 应来自 loadCodeAssist: got=%q want=%q", info.TierID, GeminiTierGoogleAIPro)
+	}
+	if info.ProjectID != "antigravity-project" {
+		t.Fatalf("ProjectID 应来自 loadCodeAssist: got=%q", info.ProjectID)
+	}
+	if info.OAuthType != GeminiOAuthTypeAntigravity {
+		t.Fatalf("OAuthType 不匹配: got=%q", info.OAuthType)
 	}
 }
 
-func TestGeminiOAuthService_RefreshAccountToken_GoogleOne_NoTierID_DefaultsFree(t *testing.T) {
+func TestGeminiOAuthService_RefreshAccountToken_LegacyOAuthTypeRequiresReauthorization(t *testing.T) {
 	t.Parallel()
 
-	client := &mockGeminiOAuthClient{
-		refreshTokenFunc: func(ctx context.Context, oauthType, refreshToken, proxyURL string) (*geminicli.TokenResponse, error) {
-			return &geminicli.TokenResponse{
-				AccessToken: "at",
-				ExpiresIn:   3600,
-			}, nil
-		},
-	}
-
-	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, nil, &mockDriveClient{}, &config.Config{})
+	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, nil, nil, &config.Config{})
 	defer svc.Stop()
 
 	account := &Account{
@@ -1288,41 +1206,26 @@ func TestGeminiOAuthService_RefreshAccountToken_GoogleOne_NoTierID_DefaultsFree(
 			"refresh_token": "rt",
 			"oauth_type":    "google_one",
 			"project_id":    "proj",
-			// 无 tier_id
 		},
 	}
 
-	info, err := svc.RefreshAccountToken(context.Background(), account)
-	if err != nil {
-		t.Fatalf("RefreshAccountToken 返回错误: %v", err)
-	}
-	// FetchGoogleOneTier 会被调用但 oauthClient（此处 mock）不实现 Drive API，
-	// svc.FetchGoogleOneTier 使用真实 DriveClient 会失败，最终回退到默认值。
-	// 由于没有 tier_id 且 FetchGoogleOneTier 失败，应默认为 google_one_free
-	if info.TierID != GeminiTierGoogleOneFree {
-		t.Fatalf("TierID 应为默认 free: got=%q", info.TierID)
+	_, err := svc.RefreshAccountToken(context.Background(), account)
+	if err == nil || !strings.Contains(err.Error(), "must be re-authorized") {
+		t.Fatalf("旧 OAuth 类型应要求重新授权，got: %v", err)
 	}
 }
 
-func TestGeminiOAuthService_RefreshAccountToken_UnauthorizedClient_Fallback(t *testing.T) {
+func TestGeminiOAuthService_RefreshAccountToken_UnauthorizedClientDoesNotCrossClients(t *testing.T) {
 	t.Parallel()
 
 	callCount := 0
 	client := &mockGeminiOAuthClient{
 		refreshTokenFunc: func(ctx context.Context, oauthType, refreshToken, proxyURL string) (*geminicli.TokenResponse, error) {
 			callCount++
-			if oauthType == "code_assist" {
-				return nil, fmt.Errorf("unauthorized_client: client mismatch")
-			}
-			// ai_studio 路径成功
-			return &geminicli.TokenResponse{
-				AccessToken: "recovered",
-				ExpiresIn:   3600,
-			}, nil
+			return nil, fmt.Errorf("unauthorized_client: client mismatch")
 		},
 	}
 
-	// 启用自定义 OAuth 客户端以触发 fallback 路径
 	cfg := &config.Config{
 		Gemini: config.GeminiConfig{
 			OAuth: config.GeminiOAuthConfig{
@@ -1332,7 +1235,7 @@ func TestGeminiOAuthService_RefreshAccountToken_UnauthorizedClient_Fallback(t *t
 		},
 	}
 
-	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, nil, nil, cfg)
+	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, nil, cfg)
 	defer svc.Stop()
 
 	account := &Account{
@@ -1346,12 +1249,12 @@ func TestGeminiOAuthService_RefreshAccountToken_UnauthorizedClient_Fallback(t *t
 		},
 	}
 
-	info, err := svc.RefreshAccountToken(context.Background(), account)
-	if err != nil {
-		t.Fatalf("RefreshAccountToken 应在 fallback 后成功: %v", err)
+	_, err := svc.RefreshAccountToken(context.Background(), account)
+	if err == nil || !strings.Contains(err.Error(), "different OAuth client") {
+		t.Fatalf("client 不匹配时应要求重新授权，got: %v", err)
 	}
-	if info.AccessToken != "recovered" {
-		t.Fatalf("AccessToken 不匹配: got=%q", info.AccessToken)
+	if callCount != 1 {
+		t.Fatalf("不得跨 OAuth client 重试，调用次数: %d", callCount)
 	}
 }
 
@@ -1364,8 +1267,7 @@ func TestGeminiOAuthService_RefreshAccountToken_UnauthorizedClient_NoFallback(t 
 		},
 	}
 
-	// 无自定义 OAuth 客户端，无法 fallback
-	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(&mockGeminiProxyRepo{}, client, nil, &config.Config{})
 	defer svc.Stop()
 
 	account := &Account{
@@ -1382,8 +1284,8 @@ func TestGeminiOAuthService_RefreshAccountToken_UnauthorizedClient_NoFallback(t 
 	if err == nil {
 		t.Fatal("应返回错误（无 fallback）")
 	}
-	if !strings.Contains(err.Error(), "OAuth client mismatch") {
-		t.Fatalf("错误应包含 OAuth client mismatch: got=%q", err.Error())
+	if !strings.Contains(err.Error(), "different OAuth client") {
+		t.Fatalf("错误应提示 OAuth client 不匹配: got=%q", err.Error())
 	}
 }
 
@@ -1394,7 +1296,7 @@ func TestGeminiOAuthService_RefreshAccountToken_UnauthorizedClient_NoFallback(t 
 func TestGeminiOAuthService_ExchangeCode_SessionNotFound(t *testing.T) {
 	t.Parallel()
 
-	svc := NewGeminiOAuthService(nil, nil, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(nil, nil, nil, &config.Config{})
 	defer svc.Stop()
 
 	_, err := svc.ExchangeCode(context.Background(), &GeminiExchangeCodeInput{
@@ -1413,7 +1315,7 @@ func TestGeminiOAuthService_ExchangeCode_SessionNotFound(t *testing.T) {
 func TestGeminiOAuthService_ExchangeCode_InvalidState(t *testing.T) {
 	t.Parallel()
 
-	svc := NewGeminiOAuthService(nil, nil, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(nil, nil, nil, &config.Config{})
 	defer svc.Stop()
 
 	// 手动创建 session（必须设置 CreatedAt，否则会因 TTL 过期被拒绝）
@@ -1440,7 +1342,7 @@ func TestGeminiOAuthService_ExchangeCode_InvalidState(t *testing.T) {
 func TestGeminiOAuthService_ExchangeCode_EmptyState(t *testing.T) {
 	t.Parallel()
 
-	svc := NewGeminiOAuthService(nil, nil, nil, nil, &config.Config{})
+	svc := NewGeminiOAuthService(nil, nil, nil, &config.Config{})
 	defer svc.Stop()
 
 	svc.sessionStore.Set("test-session", &geminicli.OAuthSession{

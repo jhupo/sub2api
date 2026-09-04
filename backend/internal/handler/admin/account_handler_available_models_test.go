@@ -8,8 +8,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -33,6 +35,47 @@ func setupAvailableModelsRouter(adminSvc service.AdminService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router.GET("/api/v1/admin/accounts/:id/models", handler.GetAvailableModels)
+	return router
+}
+
+type availableModelsGeminiTokenCache struct{}
+
+func (availableModelsGeminiTokenCache) GetAccessToken(context.Context, string) (string, error) {
+	return "cached-token", nil
+}
+func (availableModelsGeminiTokenCache) SetAccessToken(context.Context, string, string, time.Duration) error {
+	return nil
+}
+func (availableModelsGeminiTokenCache) DeleteAccessToken(context.Context, string) error { return nil }
+func (availableModelsGeminiTokenCache) AcquireRefreshLock(context.Context, string, time.Duration) (bool, error) {
+	return true, nil
+}
+func (availableModelsGeminiTokenCache) ReleaseRefreshLock(context.Context, string) error { return nil }
+
+type availableModelsGeminiCatalog struct{}
+
+func (availableModelsGeminiCatalog) Resolve(_ context.Context, _ *service.Account, _, model string) (string, error) {
+	return model, nil
+}
+func (availableModelsGeminiCatalog) List(context.Context, *service.Account, string) ([]geminicli.Model, error) {
+	return []geminicli.Model{
+		{ID: "claude-sonnet-4-6", Type: "model", DisplayName: "Claude Sonnet 4.6"},
+		{ID: "gemini-3.1-pro", Type: "model", DisplayName: "Gemini 3.1 Pro"},
+		{ID: "gemini-3.1-flash-image", Type: "model", DisplayName: "Gemini 3.1 Flash Image"},
+	}, nil
+}
+func (catalog availableModelsGeminiCatalog) ListAuthorized(ctx context.Context, account *service.Account, token string, _ bool) ([]geminicli.Model, error) {
+	return catalog.List(ctx, account, token)
+}
+
+func setupAvailableModelsRouterWithGeminiCatalog(adminSvc service.AdminService) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	tokenProvider := service.NewGeminiTokenProvider(nil, availableModelsGeminiTokenCache{}, nil)
+	accountTestSvc := service.NewAccountTestService(nil, tokenProvider, nil, nil, nil, nil, &config.Config{}, nil)
+	accountTestSvc.SetCodeAssistModelResolver(availableModelsGeminiCatalog{})
+	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, accountTestSvc, nil, nil, nil, nil, nil)
 	router.GET("/api/v1/admin/accounts/:id/models", handler.GetAvailableModels)
 	return router
 }
@@ -110,6 +153,40 @@ func TestAccountHandlerGetAvailableModels_GrokUsesXAIModels(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.Len(t, resp.Data, 1)
 	require.Equal(t, "grok-4.3", resp.Data[0].ID)
+}
+
+func TestAccountHandlerGetAvailableModels_GeminiAntigravityUsesLiveCatalog(t *testing.T) {
+	svc := &availableModelsAdminService{
+		stubAdminService: newStubAdminService(),
+		account: service.Account{
+			ID:       47,
+			Name:     "gemini-pro-oauth",
+			Platform: service.PlatformGemini,
+			Type:     service.AccountTypeOAuth,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"oauth_type": "antigravity",
+				"project_id": "project-47",
+			},
+		},
+	}
+	router := setupAvailableModelsRouterWithGeminiCatalog(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/47/models", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		Data []geminicli.Model `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Data, 3)
+	require.ElementsMatch(
+		t,
+		[]string{"claude-sonnet-4-6", "gemini-3.1-pro", "gemini-3.1-flash-image"},
+		[]string{resp.Data[0].ID, resp.Data[1].ID, resp.Data[2].ID},
+	)
 }
 
 func TestAccountHandlerGetAvailableModels_GrokDefaultsToXAIModelsWithoutMapping(t *testing.T) {
@@ -294,12 +371,12 @@ func TestAccountHandlerGetAvailableModels_OpenAISparkShadowReturnsMappingModels(
 	}, ids, "影子可用模型由 model_mapping 派生（非写死）")
 }
 
-func TestAccountHandlerGetAvailableModels_GeminiGoogleOneUsesConservativeCatalog(t *testing.T) {
+func TestAccountHandlerGetAvailableModels_LegacyGeminiOAuthRequiresReauthorization(t *testing.T) {
 	svc := &availableModelsAdminService{
 		stubAdminService: newStubAdminService(),
 		account: service.Account{
 			ID:       45,
-			Name:     "google-one",
+			Name:     "legacy-gemini-oauth",
 			Platform: service.PlatformGemini,
 			Type:     service.AccountTypeOAuth,
 			Status:   service.StatusActive,
@@ -314,20 +391,8 @@ func TestAccountHandlerGetAvailableModels_GeminiGoogleOneUsesConservativeCatalog
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/45/models", nil)
 	router.ServeHTTP(rec, req)
 
-	require.Equal(t, http.StatusOK, rec.Code)
-	var resp struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	ids := make([]string, 0, len(resp.Data))
-	for _, model := range resp.Data {
-		ids = append(ids, model.ID)
-	}
-	require.ElementsMatch(t, []string{"gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"}, ids)
-	require.NotContains(t, ids, "gemini-3.5-flash")
-	require.NotContains(t, ids, "gemini-2.5-flash-image")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "must be re-authorized")
 }
 
 func TestAccountHandlerSyncUpstreamModels_ConfigErrorReturnsBadRequest(t *testing.T) {

@@ -1257,10 +1257,10 @@ export default {
           hint: 'Tip: The system will try to auto-detect the tier first; if auto-detection is unavailable or fails, your selected tier is used as a fallback (simulated quota).',
           aiStudioHint:
             'AI Studio quotas are per-model (Pro/Flash are limited independently). If billing is enabled, choose Pay-as-you-go.',
-          googleOne: {
-            free: 'Google One Free',
-            pro: 'Google One Pro',
-            ultra: 'Google One Ultra'
+          googleAI: {
+            free: 'Google AI Free',
+            pro: 'Google AI Pro',
+            ultra: 'Google AI Ultra'
           },
           gcp: {
             standard: 'GCP Standard',
@@ -1285,7 +1285,7 @@ export default {
           builtInTitle: 'Built-in OAuth (Gemini CLI / Code Assist)',
           builtInDesc: 'Uses Google built-in client ID. No admin configuration required.',
           builtInRequirement: 'Requires a GCP project and Project ID.',
-          googleOneDesc: 'Personal account with Google One subscription quota',
+          antigravityDesc: 'Personal Google AI account using the Antigravity OAuth client',
           codeAssistDesc: 'Enterprise-grade, requires a GCP project',
           codeAssistRequirement: 'Requires an active GCP project with billing enabled',
           showAdvanced: 'Show advanced options (custom OAuth Client)',
@@ -1340,8 +1340,8 @@ export default {
           },
           simulatedNote: 'Simulated quota, for reference only',
           rows: {
-            googleOne: {
-              channel: 'Google One OAuth (Individuals / Code Assist for Individuals)',
+            antigravity: {
+              channel: 'Antigravity OAuth (Google AI personal subscription)',
               limitsFree: 'Shared pool: 1000 RPD / 60 RPM',
               limitsPro: 'Shared pool: 1500 RPD / 120 RPM',
               limitsUltra: 'Shared pool: 2000 RPD / 120 RPM'
@@ -1354,7 +1354,7 @@ export default {
             cli: {
               channel: 'Gemini CLI (Official Google Login / Code Assist)',
               free: 'Free Google Account',
-              premium: 'Google One AI Premium',
+              premium: 'Google AI Pro',
               limitsFree: 'RPD ~1000; RPM ~60 (soft)',
               limitsPremium: 'RPD ~1500+; RPM ~60+ (priority queue)'
             },

@@ -201,10 +201,10 @@ type UsageInfo struct {
 	CodexQuotaOverdraft *CodexQuotaOverdraftProbeState `json:"codex_quota_overdraft,omitempty"`
 	SevenDaySonnet      *UsageProgress                 `json:"seven_day_sonnet,omitempty"`     // 7天Sonnet窗口
 	SevenDayFable       *UsageProgress                 `json:"seven_day_fable,omitempty"`      // 7天Fable窗口（响应头 7d_oi）
-	GeminiSharedDaily   *UsageProgress                 `json:"gemini_shared_daily,omitempty"`  // Gemini shared pool RPD (Google One / Code Assist)
+	GeminiSharedDaily   *UsageProgress                 `json:"gemini_shared_daily,omitempty"`  // Gemini shared pool RPD (Antigravity / Code Assist)
 	GeminiProDaily      *UsageProgress                 `json:"gemini_pro_daily,omitempty"`     // Gemini Pro 日配额
 	GeminiFlashDaily    *UsageProgress                 `json:"gemini_flash_daily,omitempty"`   // Gemini Flash 日配额
-	GeminiSharedMinute  *UsageProgress                 `json:"gemini_shared_minute,omitempty"` // Gemini shared pool RPM (Google One / Code Assist)
+	GeminiSharedMinute  *UsageProgress                 `json:"gemini_shared_minute,omitempty"` // Gemini shared pool RPM (Antigravity / Code Assist)
 	GeminiProMinute     *UsageProgress                 `json:"gemini_pro_minute,omitempty"`    // Gemini Pro RPM
 	GeminiFlashMinute   *UsageProgress                 `json:"gemini_flash_minute,omitempty"`  // Gemini Flash RPM
 
