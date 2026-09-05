@@ -28,15 +28,15 @@ const (
 )
 
 type UpstreamModelMetadata struct {
-	ID                       string   `json:"id"`
-	DisplayName              string   `json:"display_name,omitempty"`
-	Description              string   `json:"description,omitempty"`
-	Reasoning                *bool    `json:"reasoning,omitempty"`
-	DefaultReasoningLevel    string   `json:"default_reasoning_level,omitempty"`
-	SupportedReasoningLevels []string `json:"supported_reasoning_levels,omitempty"`
-	InputModalities          []string `json:"input_modalities,omitempty"`
-	ContextWindow            int64    `json:"context_window,omitempty"`
-	MaxOutputTokens          int64    `json:"max_output_tokens,omitempty"`
+	ID                       string                     `json:"id"`
+	DisplayName              string                     `json:"display_name,omitempty"`
+	Description              string                     `json:"description,omitempty"`
+	Reasoning                *bool                      `json:"reasoning,omitempty"`
+	DefaultReasoningLevel    string                     `json:"default_reasoning_level,omitempty"`
+	SupportedReasoningLevels []string                   `json:"supported_reasoning_levels,omitempty"`
+	InputModalities          []string                   `json:"input_modalities,omitempty"`
+	ContextWindow            int64                      `json:"context_window,omitempty"`
+	MaxOutputTokens          int64                      `json:"max_output_tokens,omitempty"`
 	CodexToolCapabilities    map[string]json.RawMessage `json:"codex_tool_capabilities,omitempty"`
 }
 
@@ -259,7 +259,8 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 		}
 	}
 
-	completeMetadata := completeUpstreamModelMetadataSubset(capabilityIDs, catalog.Metadata)
+	freshCompleteMetadata := completeUpstreamModelMetadataSubset(capabilityIDs, catalog.Metadata)
+	completeMetadata := freshCompleteMetadata
 	// Preserve the last known complete capabilities for entries that are still
 	// listed but temporarily incomplete, while retaining newly synced metadata.
 	if previous := account.GetUpstreamModelMetadataSnapshot(); previous != nil {
@@ -282,8 +283,7 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 			}
 		}
 	}
-	persistedCapabilities := false
-	if len(completeMetadata) > 0 && account != nil && account.ID > 0 && s.accountRepo != nil {
+	if len(freshCompleteMetadata) > 0 && len(completeMetadata) > 0 && account != nil && account.ID > 0 && s.accountRepo != nil {
 		snapshot := UpstreamModelMetadataSnapshot{
 			Source:   source,
 			SyncedAt: time.Now().UTC().Format(time.RFC3339),
@@ -293,11 +293,10 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 			return nil, newUpstreamModelSyncInternalError("Failed to save upstream model metadata", err)
 		}
 		account.SetUpstreamModelMetadataSnapshot(snapshot)
-		persistedCapabilities = true
 	}
 
 	if upstreamCatalogNeedsRegistry(capabilityIDs, catalog.Metadata) {
-		if persistedCapabilities {
+		if len(freshCompleteMetadata) > 0 {
 			catalog.Warnings = append(catalog.Warnings, UpstreamModelSyncWarning{
 				Code:    UpstreamModelMetadataPartialCode,
 				Message: "Some model capabilities were saved; remaining models are still incomplete.",
@@ -518,7 +517,7 @@ func (s *AccountTestService) fetchModelsDevMetadata(
 			continue
 		}
 		entry := upstreamMetadataFromModelsDevModel(modelID, model)
-		if upstreamModelMetadataIsUseful(entry) {
+		if upstreamModelMetadataIsUseful(entry) || len(entry.CodexToolCapabilities) > 0 {
 			metadata[modelID] = entry
 		}
 	}

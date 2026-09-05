@@ -46,8 +46,18 @@ func accountCodexToolCapabilities(account *Account, modelID string) map[string]j
 	if account == nil {
 		return capabilities
 	}
+	// capability lookup follows the account's public-to-upstream model mapping.
 	if metadata, ok := account.GetUpstreamModelMetadata(modelID); ok {
 		applyCodexToolCapabilities(capabilities, metadata.CodexToolCapabilities, true)
+	} else if mapped, matched := account.ResolveMappedModel(modelID); matched {
+		if metadata, ok := account.GetUpstreamModelMetadata(strings.TrimSpace(mapped)); ok {
+			applyCodexToolCapabilities(capabilities, metadata.CodexToolCapabilities, true)
+		}
+	}
+	if len(capabilities) == 0 && isOpenAIGPT6AstraModel(modelID) {
+		if metadata, ok := account.GetUpstreamModelMetadata("gpt-6-astra"); ok {
+			applyCodexToolCapabilities(capabilities, metadata.CodexToolCapabilities, true)
+		}
 	}
 	if account.IsOpenAI() && shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
 		// This bridge implements client-side tool discovery, even without a native manifest.

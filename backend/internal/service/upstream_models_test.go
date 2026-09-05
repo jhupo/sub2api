@@ -1199,5 +1199,5 @@ func TestMatchModelsDevProviderOfficialHostsWithoutAPI(t *testing.T) {
 	metadata := map[string]UpstreamModelMetadata{"gpt-6-astra": {
 		Reasoning: new(bool), InputModalities: []string{"text"}, ContextWindow: 1050000,
 	}}
-	require.False(t, upstreamCatalogNeedsRegistry([]string{"gpt-6-astra", "gpt-image-2"}, metadata))
+	require.False(t, upstreamCatalogNeedsRegistry(capabilitySyncModelIDs([]string{"gpt-6-astra", "gpt-image-2"}), metadata))
 }

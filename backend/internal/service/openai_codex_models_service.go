@@ -80,7 +80,8 @@ func FilterCodexModelIDsForGroup(modelIDs []string, group *Group) []string {
 
 func isCodexDedicatedMediaModel(modelID string) bool {
 	canonical := codexProviderQualifiedModelID(modelID)
-	return IsGPTImageGenerationModel(canonical) ||
+	return strings.HasPrefix(strings.ToLower(canonical), "gpt-image-") ||
+		IsGPTImageGenerationModel(canonical) ||
 		isImageGenerationModel(canonical) ||
 		xai.IsGrokImagineModel(modelID)
 }
@@ -850,7 +851,7 @@ func buildCodexModelsManifest(
 	modelMetadata map[string]codexModelMetadataOverride,
 ) ([]byte, error) {
 	seen := make(map[string]struct{}, len(modelIDs))
-	models := make([]configuredCodexModelDescriptor, 0, len(modelIDs))
+	models := make([]json.RawMessage, 0, len(modelIDs))
 	for _, modelID := range modelIDs {
 		modelID = strings.TrimSpace(modelID)
 		if modelID == "" {
@@ -880,10 +881,29 @@ func buildCodexModelsManifest(
 			descriptor.DisplayName = modelID
 			descriptor.Description = configuredCodexCustomDescription
 		}
-		models = append(models, descriptor)
+		encoded, err := json.Marshal(descriptor)
+		if err != nil {
+			return nil, err
+		}
+		metadata := modelMetadata[modelID]
+		if len(metadata.CodexToolCapabilities) == 0 && metadataModelID != modelID {
+			metadata = modelMetadata[metadataModelID]
+		}
+		if capabilities := metadata.CodexToolCapabilities; len(capabilities) > 0 {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				return nil, err
+			}
+			applyCodexToolCapabilities(fields, capabilities, true)
+			encoded, err = json.Marshal(fields)
+			if err != nil {
+				return nil, err
+			}
+		}
+		models = append(models, encoded)
 	}
 	return json.Marshal(struct {
-		Models []configuredCodexModelDescriptor `json:"models"`
+		Models []json.RawMessage `json:"models"`
 	}{Models: models})
 }
 
@@ -2096,6 +2116,11 @@ func applySyncedAPIKeyCodexModelMetadata(body []byte, account *Account, overwrit
 		slug = strings.TrimSpace(slug)
 		metadata, ok := snapshot.Models[slug]
 		if !ok {
+			if mapped, matched := account.ResolveMappedModel(slug); matched {
+				metadata, ok = snapshot.Models[strings.TrimSpace(mapped)]
+			}
+		}
+		if !ok {
 			continue
 		}
 
@@ -2145,6 +2170,21 @@ func applySyncedAPIKeyCodexModelMetadata(body []byte, account *Account, overwrit
 				continue
 			}
 			model[field] = value
+			modelChanged = true
+		}
+		for _, field := range codexToolCapabilityFields {
+			value, exists := metadata.CodexToolCapabilities[field]
+			if !exists || len(bytes.TrimSpace(value)) == 0 {
+				continue
+			}
+			current, currentExists := model[field]
+			if currentExists && field != "comp_hash" {
+				continue
+			}
+			if bytes.Equal(bytes.TrimSpace(current), bytes.TrimSpace(value)) {
+				continue
+			}
+			model[field] = append(json.RawMessage(nil), value...)
 			modelChanged = true
 		}
 		if !modelChanged {
@@ -2241,6 +2281,11 @@ func completeAPIKeyCodexModelsManifestMetadata(body []byte, completeAll bool, ac
 			return nil, fmt.Errorf("decode default model %q: %w", slug, err)
 		}
 
+		capabilities := accountCodexToolCapabilities(account, slug)
+		for _, field := range codexToolCapabilityFields {
+			delete(defaults, field)
+		}
+
 		modelChanged := false
 		if completeDescriptor {
 			merged, err := mergeMissingCodexModelFields(model, defaults)
@@ -2263,6 +2308,31 @@ func completeAPIKeyCodexModelsManifestMetadata(body []byte, completeAll bool, ac
 				model["supports_image_detail_original"] = imageDetailOriginal
 				modelChanged = true
 			}
+		}
+		for _, field := range codexToolCapabilityFields {
+			value, exists := capabilities[field]
+			if !exists || len(bytes.TrimSpace(value)) == 0 {
+				continue
+			}
+			current, currentExists := model[field]
+			mappedModel, aliasMatched := account.ResolveMappedModel(slug)
+			aliasTarget := aliasMatched && strings.TrimSpace(mappedModel) != slug
+			if currentExists && !bytes.Equal(bytes.TrimSpace(current), []byte("null")) {
+				if field != "supports_search_tool" || !bytes.Equal(bytes.TrimSpace(current), []byte("false")) {
+					continue
+				}
+				if mapped, matched := account.ResolveMappedModel(slug); !matched || strings.TrimSpace(mapped) == slug {
+					continue
+				}
+			}
+			if currentExists && field != "comp_hash" && !aliasTarget {
+				continue
+			}
+			if bytes.Equal(bytes.TrimSpace(current), bytes.TrimSpace(value)) {
+				continue
+			}
+			model[field] = append(json.RawMessage(nil), value...)
+			modelChanged = true
 		}
 		if !modelChanged {
 			continue
