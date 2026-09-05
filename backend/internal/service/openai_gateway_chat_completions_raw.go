@@ -353,25 +353,6 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 	}
 
-	resultWithUsage := func() *OpenAIForwardResult {
-		return &OpenAIForwardResult{
-			RequestID:                     requestID,
-			UpstreamHeaders:               resp.Header,
-			Usage:                         usage,
-			Model:                         originalModel,
-			BillingModel:                  billingModel,
-			UpstreamModel:                 upstreamModel,
-			UpstreamResponseModel:         observedUpstreamResponseModel(c),
-			UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
-			UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
-			ReasoningEffort:               reasoningEffort,
-			ServiceTier:                   resolvedOpenAIUpstreamServiceTier(c, serviceTier),
-			Stream:                        true,
-			Duration:                      time.Since(startTime),
-			FirstTokenMs:                  firstTokenMs,
-		}
-	}
-
 	scanErr := scanner.Err()
 	if scanErr != nil && !errors.Is(scanErr, context.Canceled) && !errors.Is(scanErr, context.DeadlineExceeded) {
 		logger.L().Warn("openai chat_completions raw: stream read error",
@@ -408,6 +389,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		recordOpenAIRawStreamTruncation(c, account, requestID, cause, "http_error")
 		return &OpenAIForwardResult{
 			RequestID:                     requestID,
+			UpstreamHeaders:               resp.Header,
 			Usage:                         usage,
 			Model:                         originalModel,
 			BillingModel:                  billingModel,
@@ -447,6 +429,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 
 	return &OpenAIForwardResult{
 		RequestID:                     requestID,
+		UpstreamHeaders:               resp.Header,
 		Usage:                         usage,
 		Model:                         originalModel,
 		BillingModel:                  billingModel,

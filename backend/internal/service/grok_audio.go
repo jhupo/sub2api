@@ -120,10 +120,10 @@ func (s *OpenAIGatewayService) ForwardGrokVoice(ctx context.Context, c *gin.Cont
 		// Forced durable money-event id so usage_billing_dedup cannot collapse under a reused client id.
 		RequestID:       StableGrokAudioBillingRequestID(upstreamID),
 		UpstreamHeaders: resp.Header,
-		Model:         baseEndpoint,
-		UpstreamModel: baseEndpoint,
-		Duration:      time.Since(started),
-		AudioUsage:    audioUsage,
+		Model:           baseEndpoint,
+		UpstreamModel:   baseEndpoint,
+		Duration:        time.Since(started),
+		AudioUsage:      audioUsage,
 		grokVoiceResponse: &grokMediaBufferedResponse{
 			statusCode: resp.StatusCode,
 			header:     resp.Header.Clone(),
