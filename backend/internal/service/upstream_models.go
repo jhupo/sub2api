@@ -37,6 +37,7 @@ type UpstreamModelMetadata struct {
 	InputModalities          []string `json:"input_modalities,omitempty"`
 	ContextWindow            int64    `json:"context_window,omitempty"`
 	MaxOutputTokens          int64    `json:"max_output_tokens,omitempty"`
+	CodexToolCapabilities    map[string]json.RawMessage `json:"codex_tool_capabilities,omitempty"`
 }
 
 type UpstreamModelMetadataSnapshot struct {
@@ -259,6 +260,28 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 	}
 
 	completeMetadata := completeUpstreamModelMetadataSubset(capabilityIDs, catalog.Metadata)
+	// Preserve the last known complete capabilities for entries that are still
+	// listed but temporarily incomplete, while retaining newly synced metadata.
+	if previous := account.GetUpstreamModelMetadataSnapshot(); previous != nil {
+		if completeMetadata == nil {
+			completeMetadata = make(map[string]UpstreamModelMetadata)
+		}
+		for _, modelID := range capabilityIDs {
+			old, exists := previous.Models[modelID]
+			if !exists {
+				continue
+			}
+			if current, ok := completeMetadata[modelID]; ok {
+				if current.CodexToolCapabilities == nil {
+					current.CodexToolCapabilities = make(map[string]json.RawMessage)
+				}
+				applyCodexToolCapabilities(current.CodexToolCapabilities, old.CodexToolCapabilities, false)
+				completeMetadata[modelID] = current
+			} else {
+				completeMetadata[modelID] = old
+			}
+		}
+	}
 	persistedCapabilities := false
 	if len(completeMetadata) > 0 && account != nil && account.ID > 0 && s.accountRepo != nil {
 		snapshot := UpstreamModelMetadataSnapshot{
@@ -449,6 +472,14 @@ func mergeUpstreamModelMetadata(primary, fallback UpstreamModelMetadata) (Upstre
 	if merged.MaxOutputTokens <= 0 && fallback.MaxOutputTokens > 0 {
 		merged.MaxOutputTokens = fallback.MaxOutputTokens
 		changed = true
+	}
+	if len(fallback.CodexToolCapabilities) > 0 {
+		if merged.CodexToolCapabilities == nil {
+			merged.CodexToolCapabilities = make(map[string]json.RawMessage)
+		}
+		if applyCodexToolCapabilities(merged.CodexToolCapabilities, fallback.CodexToolCapabilities, false) {
+			changed = true
+		}
 	}
 	return merged, changed
 }
@@ -1280,6 +1311,11 @@ func extractUpstreamModelCatalog(body []byte, grok bool) ([]string, map[string]U
 		}
 		models = append(models, modelID)
 		entry := upstreamMetadataFromCapabilityEntry(modelID, capability)
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err == nil {
+			entry.CodexToolCapabilities = make(map[string]json.RawMessage)
+			applyCodexToolCapabilities(entry.CodexToolCapabilities, fields, true)
+		}
 		if upstreamModelMetadataIsUseful(entry) {
 			metadata[modelID] = entry
 		}
