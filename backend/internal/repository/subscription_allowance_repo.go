@@ -756,7 +756,7 @@ func (r *usageBillingRepository) ListRecoverableSubscriptionAllowances(ctx conte
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	records := make([]service.SubscriptionAllowanceReservation, 0)
 	for rows.Next() {
 		record, err := scanSubscriptionAllowance(rows)

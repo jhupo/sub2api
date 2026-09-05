@@ -338,11 +338,6 @@ func (r *schedulerFreshnessRequest) apply(ctx context.Context, account *Account)
 	return &clone, true
 }
 
-func schedulerFreshnessLookup(ctx context.Context, accountID int64) *Account {
-	account, _ := schedulerFreshnessLookupResult(ctx, accountID)
-	return account
-}
-
 func schedulerFreshnessLookupResult(ctx context.Context, accountID int64) (*Account, bool) {
 	state := schedulerFreshnessFromContext(ctx)
 	if state == nil || !state.enabled() || accountID <= 0 {

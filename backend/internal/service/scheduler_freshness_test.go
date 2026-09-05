@@ -244,12 +244,16 @@ func TestSchedulerHydratedAccountReturnsPrivateCopies(t *testing.T) {
 	}
 	rememberSchedulerHydratedAccount(ctx, original)
 	original.Credentials["token"] = "mutated-after-store"
-	original.Extra["nested"].(map[string]any)["enabled"] = false
+	originalNested, ok := original.Extra["nested"].(map[string]any)
+	require.True(t, ok)
+	originalNested["enabled"] = false
 
 	first, ok := schedulerHydratedAccount(ctx, original.ID)
 	require.True(t, ok)
 	require.Equal(t, "secret", first.Credentials["token"])
-	require.Equal(t, true, first.Extra["nested"].(map[string]any)["enabled"])
+	firstNested, ok := first.Extra["nested"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, true, firstNested["enabled"])
 
 	first.Credentials["token"] = "mutated-after-read"
 	second, ok := schedulerHydratedAccount(ctx, original.ID)

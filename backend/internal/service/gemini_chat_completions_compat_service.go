@@ -402,7 +402,7 @@ func (s *GeminiMessagesCompatService) buildGeminiChatCompletionsUpstreamRequestF
 	case AccountTypeOAuth:
 		return func(ctx context.Context) (*http.Request, string, string, error) {
 			if !account.HasSupportedGeminiOAuthType() {
-				return nil, "", "", errors.New("Gemini OAuth account must be re-authorized with a supported OAuth type")
+				return nil, "", "", errors.New("gemini OAuth account must be re-authorized with a supported OAuth type")
 			}
 			if s.tokenProvider == nil {
 				return nil, "", "", errors.New("gemini token provider not configured")

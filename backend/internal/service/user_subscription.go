@@ -166,11 +166,6 @@ func (s *UserSubscription) NeedsMonthlyResetAt(now time.Time) bool {
 	return !now.Before(s.MonthlyWindowStart.Add(30 * 24 * time.Hour))
 }
 
-func (s *UserSubscription) canAutomaticallyResetDailyAt(now time.Time) bool {
-	_, ok := s.automaticDailyWindowStartAt(now)
-	return ok
-}
-
 // automaticDailyWindowStartAt 计算日窗口按“配置时区日历日”对齐后的当前窗口起点。
 // 日额度固定在每天 0 点刷新（与周/月的期限对齐滚动窗口语义不同），因此只要持久化
 // 的窗口起点落在更早的日历日，就允许推进到今天 0 点。手动重置、激活等写入的任何
@@ -187,16 +182,6 @@ func (s *UserSubscription) automaticDailyWindowStartAt(now time.Time) (time.Time
 		return time.Time{}, false
 	}
 	return today, true
-}
-
-func (s *UserSubscription) canAutomaticallyResetWeeklyAt(now time.Time) bool {
-	_, ok := s.automaticWindowStartAt(s.WeeklyWindowStart, 7*24*time.Hour, now)
-	return ok
-}
-
-func (s *UserSubscription) canAutomaticallyResetMonthlyAt(now time.Time) bool {
-	_, ok := s.automaticWindowStartAt(s.MonthlyWindowStart, 30*24*time.Hour, now)
-	return ok
 }
 
 // windowResetAnchor 返回周/月窗口实际推进所依据的锚点。

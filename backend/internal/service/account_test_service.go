@@ -183,7 +183,7 @@ func (s *AccountTestService) ListGeminiCodeAssistModels(ctx context.Context, acc
 		return nil, errors.New("account is not a Gemini Code Assist OAuth account")
 	}
 	if s.codeAssistModelResolver == nil {
-		return nil, errors.New("Code Assist model resolver not configured")
+		return nil, errors.New("code assist model resolver not configured")
 	}
 	accessToken, err := s.geminiTokenProvider.GetAccessToken(ctx, account)
 	if err != nil {
@@ -2462,7 +2462,7 @@ func (s *AccountTestService) buildGeminiOAuthRequest(ctx context.Context, accoun
 		return req, nil
 	}
 	if !account.IsGeminiCloudCodeOAuth() {
-		return nil, fmt.Errorf("Gemini OAuth account must be re-authorized with a supported OAuth type")
+		return nil, errors.New("gemini OAuth account must be re-authorized with a supported OAuth type")
 	}
 	if projectID == "" {
 		return nil, ErrGeminiProjectIDRequired

@@ -222,7 +222,8 @@ func TestBuildGeminiCodeAssistRequestBody(t *testing.T) {
 	if !ok {
 		t.Fatalf("request envelope missing decoded request object")
 	}
-	if strings.TrimSpace(request["sessionId"].(string)) == "" {
+	sessionID, ok := request["sessionId"].(string)
+	if !ok || strings.TrimSpace(sessionID) == "" {
 		t.Fatal("request sessionId is empty")
 	}
 	labels, ok := request["labels"].(map[string]any)

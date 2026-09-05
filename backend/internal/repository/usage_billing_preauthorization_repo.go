@@ -204,7 +204,7 @@ func (r *usageBillingRepository) LoadGrokVideoPendingBilling(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var (
 		metadata, foundMetadata             []byte
 		requestID, authorization, source    string

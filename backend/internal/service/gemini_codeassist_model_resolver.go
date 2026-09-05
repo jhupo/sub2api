@@ -126,21 +126,21 @@ func (r *GeminiCodeAssistModelResolver) fetchAvailableModels(ctx context.Context
 		return nil, err
 	}
 	if models == nil || len(models.Models) == 0 {
-		return nil, errors.New("Code Assist returned no models")
+		return nil, errors.New("code assist returned no models")
 	}
 	return models.Models, nil
 }
 
 func (r *GeminiCodeAssistModelResolver) fetch(ctx context.Context, account *Account, accessToken string) (geminiCodeAssistCatalogEntry, error) {
 	if r.fetchModels == nil {
-		return geminiCodeAssistCatalogEntry{}, errors.New("Code Assist model fetcher is not configured")
+		return geminiCodeAssistCatalogEntry{}, errors.New("code assist model fetcher is not configured")
 	}
 	models, err := r.fetchModels(ctx, account, accessToken)
 	if err != nil {
 		return geminiCodeAssistCatalogEntry{}, err
 	}
 	if len(models) == 0 {
-		return geminiCodeAssistCatalogEntry{}, errors.New("Code Assist returned no models")
+		return geminiCodeAssistCatalogEntry{}, errors.New("code assist returned no models")
 	}
 	return r.store(r.cacheKey(account), models, r.now()), nil
 }
@@ -421,7 +421,7 @@ func (r *GeminiCodeAssistModelResolver) List(ctx context.Context, account *Accou
 	authorized := collapseGeminiCodeAssistModels(entry.models)
 	if account == nil || len(account.GetModelMapping()) == 0 {
 		if len(authorized) == 0 {
-			return nil, errors.New("Code Assist returned no usable models")
+			return nil, errors.New("code assist returned no usable models")
 		}
 		return authorized, err
 	}
@@ -468,7 +468,7 @@ func (r *GeminiCodeAssistModelResolver) ListAuthorized(ctx context.Context, acco
 	}
 	models := collapseGeminiCodeAssistModels(entry.models)
 	if len(models) == 0 {
-		return nil, errors.New("Code Assist returned no usable models")
+		return nil, errors.New("code assist returned no usable models")
 	}
 	return models, err
 }

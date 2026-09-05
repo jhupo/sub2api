@@ -848,11 +848,11 @@ func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionLimitExceededReturns429(t 
 
 	limit := 1.0
 	group := &service.Group{
-		ID:               77,
-		Name:             "gemini-sub",
-		Status:           service.StatusActive,
-		Platform:         service.PlatformGemini,
-		Hydrated:         true,
+		ID:       77,
+		Name:     "gemini-sub",
+		Status:   service.StatusActive,
+		Platform: service.PlatformGemini,
+		Hydrated: true,
 	}
 	user := &service.User{
 		ID:          999,
@@ -862,12 +862,12 @@ func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionLimitExceededReturns429(t 
 		Concurrency: 3,
 	}
 	apiKey := &service.APIKey{
-		ID:     501,
-		UserID: user.ID,
-		Key:    "google-sub-limit",
-		Status: service.StatusActive,
-		User:   user,
-		Group:  group,
+		ID:            501,
+		UserID:        user.ID,
+		Key:           "google-sub-limit",
+		Status:        service.StatusActive,
+		User:          user,
+		Group:         group,
 		FundingSource: service.FundingSourceSubscription,
 	}
 	apiKey.GroupID = &group.ID
@@ -886,17 +886,17 @@ func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionLimitExceededReturns429(t 
 
 	now := time.Now()
 	sub := &service.UserSubscription{
-		ID:               601,
-		UserID:           user.ID,
-		PlanID:           701,
-		PlanVersionID:    702,
-		Status:           service.SubscriptionStatusActive,
-		ExpiresAt:        now.Add(24 * time.Hour),
-		DailyWindowStart: &now,
-		WeeklyWindowStart: &now,
+		ID:                 601,
+		UserID:             user.ID,
+		PlanID:             701,
+		PlanVersionID:      702,
+		Status:             service.SubscriptionStatusActive,
+		ExpiresAt:          now.Add(24 * time.Hour),
+		DailyWindowStart:   &now,
+		WeeklyWindowStart:  &now,
 		MonthlyWindowStart: &now,
-		DailyUsageUSD:    10,
-		Plan: &service.SubscriptionPlan{DailyLimitUSD: &limit},
+		DailyUsageUSD:      10,
+		Plan:               &service.SubscriptionPlan{DailyLimitUSD: &limit},
 	}
 	subscriptionService := service.NewSubscriptionService(fakeGoogleSubscriptionRepo{
 		getByID: func(ctx context.Context, id int64) (*service.UserSubscription, error) {

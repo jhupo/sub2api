@@ -913,7 +913,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
 			if account.Platform == service.PlatformGemini && account.IsGeminiCloudCodeOAuth() {
 				if h.geminiCompatService == nil {
-					err = errors.New("Gemini compatibility service is not configured")
+					err = errors.New("gemini compatibility service is not configured")
 				} else {
 					result, err = h.geminiCompatService.Forward(requestCtx, c, account, attemptBody)
 				}

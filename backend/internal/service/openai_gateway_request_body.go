@@ -255,17 +255,16 @@ func trimOpenAIEncryptedReasoningItemsRaw(body []byte) ([]byte, bool, error) {
 			return updated, err == nil, err
 		}
 
-		var encoded bytes.Buffer
-		encoded.Grow(len(input.Raw))
-		encoded.WriteByte('[')
+		encoded := make([]byte, 0, len(input.Raw))
+		encoded = append(encoded, '[')
 		for i, item := range rebuilt {
 			if i > 0 {
-				encoded.WriteByte(',')
+				encoded = append(encoded, ',')
 			}
-			encoded.Write(item)
+			encoded = append(encoded, item...)
 		}
-		encoded.WriteByte(']')
-		updated, err := sjson.SetRawBytes(body, "input", encoded.Bytes())
+		encoded = append(encoded, ']')
+		updated, err := sjson.SetRawBytes(body, "input", encoded)
 		return updated, err == nil, err
 	}
 

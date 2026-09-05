@@ -191,8 +191,8 @@ func CodeAssistBaseURLs() []string {
 	// BaseURLs is intentionally mutable in tests and in deployments that use a
 	// private gateway. Preserve those explicit overrides instead of bypassing
 	// them with the built-in endpoint list.
-	if len(BaseURLs) > 0 && !(len(BaseURLs) == 2 &&
-		BaseURLs[0] == antigravityProdBaseURL && BaseURLs[1] == antigravityDailyBaseURL) {
+	if len(BaseURLs) > 0 && (len(BaseURLs) != 2 ||
+		BaseURLs[0] != antigravityProdBaseURL || BaseURLs[1] != antigravityDailyBaseURL) {
 		return append([]string(nil), BaseURLs...)
 	}
 	return []string{

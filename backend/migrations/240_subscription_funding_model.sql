@@ -769,9 +769,9 @@ SET entitlement_snapshot = jsonb_build_object(
     )
 FROM subscription_plans sp
 JOIN subscription_plan_versions spv
-  ON spv.id = po.plan_version_id
- AND spv.plan_id = sp.id
+  ON spv.plan_id = sp.id
 WHERE po.plan_id = sp.id
+  AND po.plan_version_id = spv.id
   AND po.order_type = 'subscription'
   AND (
       po.entitlement_snapshot IS NULL

@@ -76,7 +76,7 @@ func (p *GeminiTokenProvider) GetAccessToken(ctx context.Context, account *Accou
 		return p.getServiceAccountAccessToken(ctx, account)
 	}
 	if !account.HasSupportedGeminiOAuthType() {
-		return "", errors.New("Gemini OAuth account must be re-authorized with a supported OAuth type")
+		return "", errors.New("gemini OAuth account must be re-authorized with a supported OAuth type")
 	}
 
 	cacheKey := GeminiTokenCacheKey(account)

@@ -325,9 +325,10 @@ func (s *GeminiOAuthService) ExchangeCode(ctx context.Context, input *GeminiExch
 	logger.LegacyPrintf("service.gemini_oauth", "[GeminiOAuth] OAuth Type: %s", oauthType)
 	logger.LegacyPrintf("service.gemini_oauth", "[GeminiOAuth] Project ID from session: %s", session.ProjectID)
 
-	if oauthType == GeminiOAuthTypeCodeAssist {
+	switch oauthType {
+	case GeminiOAuthTypeCodeAssist:
 		redirectURI = geminicli.GeminiCLIRedirectURI
-	} else if oauthType == GeminiOAuthTypeAntigravity {
+	case GeminiOAuthTypeAntigravity:
 		redirectURI = antigravity.RedirectURI
 	}
 

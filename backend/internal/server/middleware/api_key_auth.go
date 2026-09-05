@@ -201,20 +201,20 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 					return
 				}
 			} else {
-			sub, subErr := subscriptionService.GetActiveSubscription(
-				c.Request.Context(),
-				*apiKey.SubscriptionID,
-				apiKey.User.ID,
-			)
-			if subErr != nil {
-				if !skipBilling {
-					AbortWithError(c, 403, "SUBSCRIPTION_NOT_FOUND", subErr.Error())
-					return
+				sub, subErr := subscriptionService.GetActiveSubscription(
+					c.Request.Context(),
+					*apiKey.SubscriptionID,
+					apiKey.User.ID,
+				)
+				if subErr != nil {
+					if !skipBilling {
+						AbortWithError(c, 403, "SUBSCRIPTION_NOT_FOUND", subErr.Error())
+						return
+					}
+					// skipBilling: 订阅不存在也放行，handler 会返回可用的数据
+				} else {
+					subscription = sub
 				}
-				// skipBilling: 订阅不存在也放行，handler 会返回可用的数据
-			} else {
-				subscription = sub
-			}
 			}
 		}
 

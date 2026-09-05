@@ -249,9 +249,10 @@ func (r *userSubscriptionRepository) List(ctx context.Context, params pagination
 		query = withSubscriptionRelations(query)
 	}
 	field := usersubscription.FieldCreatedAt
-	if sortBy == "expires_at" {
+	switch sortBy {
+	case "expires_at":
 		field = usersubscription.FieldExpiresAt
-	} else if sortBy == "status" {
+	case "status":
 		field = usersubscription.FieldStatus
 	}
 	if sortOrder == "asc" && sortBy != "" {

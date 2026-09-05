@@ -41,7 +41,7 @@ func TestSubscriptionFundingModelMigrationAllowsVersionedPlanWrites(t *testing.T
 	require.Contains(t, sql, "subscription payment order has an incomplete entitlement snapshot")
 	require.Contains(t, sql, "WITH recovered_assignments AS")
 	require.Contains(t, sql, "SET fulfilled_subscription_id = recovered_assignments.subscription_id")
-	require.Contains(t, sql, "spv.id = po.plan_version_id")
+	require.Contains(t, sql, "FROM subscription_plans sp JOIN subscription_plan_versions spv ON spv.plan_id = sp.id WHERE po.plan_id = sp.id AND po.plan_version_id = spv.id")
 	require.Contains(t, sql, "po.subscription_group_id")
 	require.Contains(t, sql, "pre-versioned payment flow")
 	require.Contains(t, sql, "subscription redeem code is missing plan_version_id")

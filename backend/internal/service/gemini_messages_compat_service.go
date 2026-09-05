@@ -163,7 +163,7 @@ func (s *GeminiMessagesCompatService) ListCodeAssistModels(ctx context.Context, 
 		return nil, errors.New("gemini token provider not configured")
 	}
 	if s.codeAssistModelResolver == nil {
-		return nil, errors.New("Code Assist model resolver not configured")
+		return nil, errors.New("code assist model resolver not configured")
 	}
 	accessToken, err := s.tokenProvider.GetAccessToken(ctx, account)
 	if err != nil {
@@ -272,21 +272,21 @@ func antigravityModelsForGeminiGroup(account *Account) []gemini.Model {
 
 func (s *GeminiMessagesCompatService) listAIStudioModels(ctx context.Context, account *Account) ([]gemini.Model, error) {
 	if s == nil || s.httpUpstream == nil {
-		return nil, errors.New("Gemini upstream client is not configured")
+		return nil, errors.New("gemini upstream client is not configured")
 	}
 	result, err := s.ForwardAIStudioGET(ctx, account, "/v1beta/models")
 	if err != nil {
 		return nil, err
 	}
 	if result.StatusCode < http.StatusOK || result.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("Gemini model catalog returned HTTP %d", result.StatusCode)
+		return nil, fmt.Errorf("gemini model catalog returned HTTP %d", result.StatusCode)
 	}
 	var catalog gemini.ModelsListResponse
 	if err := json.Unmarshal(result.Body, &catalog); err != nil {
 		return nil, fmt.Errorf("decode Gemini model catalog: %w", err)
 	}
 	if len(catalog.Models) == 0 {
-		return nil, errors.New("Gemini model catalog returned no models")
+		return nil, errors.New("gemini model catalog returned no models")
 	}
 	return applyGeminiCatalogMapping(catalog.Models, account), nil
 }
@@ -312,7 +312,7 @@ func geminiGroupModelCatalogKey(groupID *int64) string {
 
 func (s *GeminiMessagesCompatService) ListGroupModels(ctx context.Context, groupID *int64) ([]gemini.Model, error) {
 	if s == nil {
-		return nil, errors.New("Gemini compatibility service is not configured")
+		return nil, errors.New("gemini compatibility service is not configured")
 	}
 	key := geminiGroupModelCatalogKey(groupID)
 	if s.groupModelCatalogCache != nil {
@@ -344,7 +344,7 @@ func (s *GeminiMessagesCompatService) ListGroupModels(ctx context.Context, group
 	case result := <-resultCh:
 		models, ok := result.Val.([]gemini.Model)
 		if !ok && result.Err == nil {
-			return nil, errors.New("Gemini group model catalog returned an invalid result")
+			return nil, errors.New("gemini group model catalog returned an invalid result")
 		}
 		return cloneGeminiModels(models), result.Err
 	}
@@ -429,7 +429,7 @@ func (s *GeminiMessagesCompatService) listGroupModelsUncached(ctx context.Contex
 		if joinedErr != nil {
 			return nil, joinedErr
 		}
-		return nil, errors.New("Gemini accounts returned no models")
+		return nil, errors.New("gemini accounts returned no models")
 	}
 	if joinedErr != nil {
 		slog.Warn("gemini_group_model_catalog_partial", "group_id", derefGroupID(groupID), "error", joinedErr)
@@ -490,7 +490,7 @@ func buildGeminiCodeAssistRequestBody(projectID, model string, innerBody []byte)
 		return nil, fmt.Errorf("parse Gemini request: %w", err)
 	}
 	if request == nil {
-		return nil, errors.New("Gemini request must be a JSON object")
+		return nil, errors.New("gemini request must be a JSON object")
 	}
 	envelope := newGeminiCodeAssistRequestEnvelope(model)
 	if existingSessionID, ok := request["sessionId"].(string); ok && strings.TrimSpace(existingSessionID) != "" {
@@ -517,13 +517,13 @@ func prepareGeminiImageGenerationRequest(body []byte, model string) ([]byte, err
 		return nil, fmt.Errorf("parse Gemini image request: %w", err)
 	}
 	if request == nil {
-		return nil, errors.New("Gemini image request must be a JSON object")
+		return nil, errors.New("gemini image request must be a JSON object")
 	}
 
 	generationConfig, ok := request["generationConfig"].(map[string]any)
 	if !ok {
 		if value, exists := request["generationConfig"]; exists && value != nil {
-			return nil, errors.New("Gemini generationConfig must be a JSON object")
+			return nil, errors.New("gemini generationConfig must be a JSON object")
 		}
 		generationConfig = make(map[string]any)
 		request["generationConfig"] = generationConfig
@@ -536,7 +536,7 @@ func prepareGeminiImageGenerationRequest(body []byte, model string) ([]byte, err
 	} else {
 		imageConfig, ok := value.(map[string]any)
 		if !ok {
-			return nil, errors.New("Gemini imageConfig must be a JSON object")
+			return nil, errors.New("gemini imageConfig must be a JSON object")
 		}
 		if aspectRatio, exists := imageConfig["aspectRatio"]; !exists || aspectRatio == nil {
 			imageConfig["aspectRatio"] = "1:1"
@@ -1128,7 +1128,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	case AccountTypeOAuth:
 		buildReq = func(ctx context.Context) (*http.Request, string, error) {
 			if !account.HasSupportedGeminiOAuthType() {
-				return nil, "", errors.New("Gemini OAuth account must be re-authorized with a supported OAuth type")
+				return nil, "", errors.New("gemini OAuth account must be re-authorized with a supported OAuth type")
 			}
 			if s.tokenProvider == nil {
 				return nil, "", errors.New("gemini token provider not configured")
@@ -1722,7 +1722,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	case AccountTypeOAuth:
 		buildReq = func(ctx context.Context) (*http.Request, string, error) {
 			if !account.HasSupportedGeminiOAuthType() {
-				return nil, "", errors.New("Gemini OAuth account must be re-authorized with a supported OAuth type")
+				return nil, "", errors.New("gemini OAuth account must be re-authorized with a supported OAuth type")
 			}
 			if s.tokenProvider == nil {
 				return nil, "", errors.New("gemini token provider not configured")
