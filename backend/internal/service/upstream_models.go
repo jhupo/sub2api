@@ -517,7 +517,7 @@ func (s *AccountTestService) fetchModelsDevMetadata(
 			continue
 		}
 		entry := upstreamMetadataFromModelsDevModel(modelID, model)
-		if upstreamModelMetadataIsUseful(entry) || len(entry.CodexToolCapabilities) > 0 {
+		if upstreamModelMetadataIsUseful(entry) {
 			metadata[modelID] = entry
 		}
 	}
@@ -1315,7 +1315,7 @@ func extractUpstreamModelCatalog(body []byte, grok bool) ([]string, map[string]U
 			entry.CodexToolCapabilities = make(map[string]json.RawMessage)
 			applyCodexToolCapabilities(entry.CodexToolCapabilities, fields, true)
 		}
-		if upstreamModelMetadataIsUseful(entry) {
+		if upstreamModelMetadataIsUseful(entry) || len(entry.CodexToolCapabilities) > 0 {
 			metadata[modelID] = entry
 		}
 	}
