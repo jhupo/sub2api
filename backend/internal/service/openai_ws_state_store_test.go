@@ -79,6 +79,13 @@ func TestOpenAIWSStateStore_SessionTurnStateTTL(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestScopeOpenAIWSSessionHash_IsolatesAPIKeys(t *testing.T) {
+	require.Equal(t, "v2:key:11:session_hash", scopeOpenAIWSSessionHash(11, "session_hash"))
+	require.NotEqual(t, scopeOpenAIWSSessionHash(11, "session_hash"), scopeOpenAIWSSessionHash(12, "session_hash"))
+	require.Equal(t, "session_hash", scopeOpenAIWSSessionHash(0, "session_hash"))
+	require.Equal(t, "", scopeOpenAIWSSessionHash(11, "   "))
+}
+
 func TestOpenAIWSStateStore_SessionConnTTL(t *testing.T) {
 	store := NewOpenAIWSStateStore(nil)
 	store.BindSessionConn(9, "session_hash_conn_1", "conn_1", 30*time.Millisecond)

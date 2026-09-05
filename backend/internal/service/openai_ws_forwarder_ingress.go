@@ -536,14 +536,17 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	turnState := strings.TrimSpace(c.GetHeader(openAIWSTurnStateHeader))
 	stateStore := s.getOpenAIWSStateStore()
 	groupID := getOpenAIGroupIDFromContext(c)
+	apiKeyID := getAPIKeyIDFromContext(c)
 	storeDisabledConnMode := s.openAIWSStoreDisabledConnMode()
 	sessionHash := ""
+	stateSessionHash := ""
 	preferredConnID := ""
 	storeDisabled := false
 	refreshIngressRouteState := func(payload openAIWSClientPayload) {
 		sessionHash = s.GenerateSessionHash(c, payload.rawForHash)
-		if turnState == "" && stateStore != nil && sessionHash != "" {
-			if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, sessionHash); ok {
+		stateSessionHash = scopeOpenAIWSSessionHash(apiKeyID, sessionHash)
+		if turnState == "" && stateStore != nil && stateSessionHash != "" {
+			if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, stateSessionHash); ok {
 				turnState = savedTurnState
 			}
 		}
@@ -556,8 +559,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 
 		storeDisabled = s.isOpenAIWSStoreDisabledInRequestRaw(payload.payloadRaw, account)
-		if stateStore != nil && storeDisabled && payload.previousResponseID == "" && sessionHash != "" {
-			if connID, ok := stateStore.GetSessionConn(groupID, sessionHash); ok {
+		if stateStore != nil && storeDisabled && payload.previousResponseID == "" && stateSessionHash != "" {
+			if connID, ok := stateStore.GetSessionConn(groupID, stateSessionHash); ok {
 				preferredConnID = connID
 			}
 		}
@@ -713,8 +716,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			if bridgeTurnState := strings.TrimSpace(result.ResponseHeaders.Get(openAIWSTurnStateHeader)); bridgeTurnState != "" {
 				turnState = bridgeTurnState
-				if stateStore != nil && sessionHash != "" {
-					stateStore.BindSessionTurnState(groupID, sessionHash, bridgeTurnState, s.openAIWSSessionStickyTTL())
+				if stateStore != nil && stateSessionHash != "" {
+					stateStore.BindSessionTurnState(groupID, stateSessionHash, bridgeTurnState, s.openAIWSSessionStickyTTL())
 				}
 			}
 			responseID := strings.TrimSpace(result.RequestID)
@@ -903,8 +906,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		connID := strings.TrimSpace(lease.ConnID())
 		if handshakeTurnState := strings.TrimSpace(lease.HandshakeHeader(openAIWSTurnStateHeader)); handshakeTurnState != "" {
 			turnState = handshakeTurnState
-			if stateStore != nil && sessionHash != "" {
-				stateStore.BindSessionTurnState(groupID, sessionHash, handshakeTurnState, s.openAIWSSessionStickyTTL())
+			if stateStore != nil && stateSessionHash != "" {
+				stateStore.BindSessionTurnState(groupID, stateSessionHash, handshakeTurnState, s.openAIWSSessionStickyTTL())
 			}
 			updatedHeaders := cloneHeader(baseAcquireReq.Headers)
 			if updatedHeaders == nil {
@@ -1841,8 +1844,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, stateStore.BindResponseAccount(ctx, groupID, responseID, account.ID, ttl))
 			stateStore.BindResponseConn(responseID, connID, ttl)
 		}
-		if stateStore != nil && storeDisabled && sessionHash != "" {
-			stateStore.BindSessionConn(groupID, sessionHash, connID, s.openAIWSSessionStickyTTL())
+		if stateStore != nil && storeDisabled && stateSessionHash != "" {
+			stateStore.BindSessionConn(groupID, stateSessionHash, connID, s.openAIWSSessionStickyTTL())
 		}
 		if connID != "" {
 			preferredConnID = connID

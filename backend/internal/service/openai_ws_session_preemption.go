@@ -79,8 +79,9 @@ func (s *OpenAIGatewayService) BeginOpenAIWSIngressSessionPreemption(
 	}
 	if preemptedPrevious {
 		if stateStore := s.getOpenAIWSStateStore(); stateStore != nil {
-			stateStore.DeleteSessionTurnState(preemptGroupID, preemptSessionHash)
-			stateStore.DeleteSessionConn(preemptGroupID, preemptSessionHash)
+			stateSessionHash := scopeOpenAIWSSessionHash(getAPIKeyIDFromContext(c), preemptSessionHash)
+			stateStore.DeleteSessionTurnState(preemptGroupID, stateSessionHash)
+			stateStore.DeleteSessionConn(preemptGroupID, stateSessionHash)
 		}
 	}
 	return context.WithValue(preemptCtx, openAIWSSessionPreemptContextKey{}, true), cleanup, true
@@ -159,8 +160,9 @@ func (s *OpenAIGatewayService) beginOpenAIWSSessionPreemptContext(
 	preempt := func() {
 		preemptOnce.Do(func() {
 			if stateStore := s.getOpenAIWSStateStore(); stateStore != nil {
-				stateStore.DeleteSessionTurnState(key.groupID, key.sessionHash)
-				stateStore.DeleteSessionConn(key.groupID, key.sessionHash)
+				stateSessionHash := scopeOpenAIWSSessionHash(key.apiKeyID, key.sessionHash)
+				stateStore.DeleteSessionTurnState(key.groupID, stateSessionHash)
+				stateStore.DeleteSessionConn(key.groupID, stateSessionHash)
 			}
 			cancel(errOpenAIWSSessionPreempted)
 		})

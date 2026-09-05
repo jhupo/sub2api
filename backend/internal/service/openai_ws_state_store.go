@@ -543,6 +543,19 @@ func openAIWSSessionTurnStateKey(groupID int64, sessionHash string) string {
 	return fmt.Sprintf("%d:%s", groupID, hash)
 }
 
+// scopeOpenAIWSSessionHash isolates process-local WS continuation state by
+// downstream API key. The state store interface is shared by older callers, so
+// the scope is encoded into the session hash at the OpenAI WS boundary rather
+// than changing every store method signature. The version prefix intentionally
+// prevents fallback to pre-isolation state, which could cross user boundaries.
+func scopeOpenAIWSSessionHash(apiKeyID int64, sessionHash string) string {
+	hash := strings.TrimSpace(sessionHash)
+	if hash == "" || apiKeyID <= 0 {
+		return hash
+	}
+	return fmt.Sprintf("v2:key:%d:%s", apiKeyID, hash)
+}
+
 func withOpenAIWSStateStoreRedisTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	if ctx == nil {
 		ctx = context.Background()
