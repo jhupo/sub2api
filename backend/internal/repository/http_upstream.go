@@ -6,6 +6,7 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -129,6 +130,7 @@ type upstreamClientEntry struct {
 	proxyKey     string       // 代理标识（用于检测代理变更）
 	poolKey      string       // 连接池配置标识（用于检测配置变更）
 	protocolMode string       // 协议模式（default/openai_h1/openai_h2/openai_h1_fallback）
+	profileKey   string       // TLS 指纹摘要；变更后必须迁移连接池
 	lastUsed     int64        // 最后使用时间戳（纳秒），用于 LRU 淘汰
 	inFlight     int64        // 当前进行中的请求数，>0 时不可淘汰
 }
@@ -497,7 +499,8 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	settings := s.resolvePoolSettings(isolation, accountConcurrency)
 	settings = s.applyProfilePoolSettings(settings, upstreamProfile)
 	// TLS 指纹客户端使用独立的缓存键，加 "tls:" 前缀
-	cacheKey := "tls:" + buildCacheKey(isolation, proxyKey, accountID, upstreamProtocolModeDefault)
+	profileKey := tlsFingerprintProfileKey(profile)
+	cacheKey := "tls:" + buildCacheKey(isolation, proxyKey, accountID, upstreamProtocolModeDefault) + "|fp:" + profileKey
 	poolKey := buildPoolKey(settings, upstreamProtocolModeDefault) + ":tls"
 
 	now := time.Now()
@@ -505,7 +508,7 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 
 	// 读锁快速路径
 	s.mu.RLock()
-	if entry, ok := s.clients[cacheKey]; ok && s.shouldReuseEntry(entry, isolation, proxyKey, poolKey) {
+	if entry, ok := s.clients[cacheKey]; ok && s.shouldReuseEntry(entry, isolation, proxyKey, poolKey, profileKey) {
 		atomic.StoreInt64(&entry.lastUsed, nowUnix)
 		if markInFlight {
 			atomic.AddInt64(&entry.inFlight, 1)
@@ -519,7 +522,7 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	// 写锁慢路径
 	s.mu.Lock()
 	if entry, ok := s.clients[cacheKey]; ok {
-		if s.shouldReuseEntry(entry, isolation, proxyKey, poolKey) {
+		if s.shouldReuseEntry(entry, isolation, proxyKey, poolKey, profileKey) {
 			atomic.StoreInt64(&entry.lastUsed, nowUnix)
 			if markInFlight {
 				atomic.AddInt64(&entry.inFlight, 1)
@@ -561,9 +564,10 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	}
 
 	entry := &upstreamClientEntry{
-		client:   client,
-		proxyKey: proxyKey,
-		poolKey:  poolKey,
+		client:     client,
+		proxyKey:   proxyKey,
+		poolKey:    poolKey,
+		profileKey: profileKey,
 	}
 	atomic.StoreInt64(&entry.lastUsed, nowUnix)
 	if markInFlight {
@@ -732,7 +736,7 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 
 // shouldReuseEntry 判断缓存条目是否可复用
 // 若代理或连接池配置发生变化，则需要重建客户端
-func (s *httpUpstreamService) shouldReuseEntry(entry *upstreamClientEntry, isolation, proxyKey, poolKey string) bool {
+func (s *httpUpstreamService) shouldReuseEntry(entry *upstreamClientEntry, isolation, proxyKey, poolKey string, profileKey ...string) bool {
 	if entry == nil {
 		return false
 	}
@@ -742,7 +746,22 @@ func (s *httpUpstreamService) shouldReuseEntry(entry *upstreamClientEntry, isola
 	if entry.poolKey != poolKey {
 		return false
 	}
+	if len(profileKey) > 0 && entry.profileKey != profileKey[0] {
+		return false
+	}
 	return true
+}
+
+func tlsFingerprintProfileKey(profile *tlsfingerprint.Profile) string {
+	if profile == nil {
+		return "none"
+	}
+	payload, err := json.Marshal(profile)
+	if err != nil {
+		return "invalid"
+	}
+	digest := sha256.Sum256(payload)
+	return fmt.Sprintf("%x", digest[:8])
 }
 
 // removeClientLocked 移除客户端（需持有锁）

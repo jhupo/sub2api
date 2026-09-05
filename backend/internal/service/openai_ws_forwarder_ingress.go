@@ -89,6 +89,19 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
 		return err
 	}
+	// Establish one fingerprint snapshot for the entire client WS lifecycle.
+	// The handler reuses this gin context during account failover, so clear the
+	// prior attempt before resolving the selected account's IDs. Prefer the
+	// handshake session header, with the first response.create metadata as the
+	// fallback used by clients that omit that header.
+	stageCodexFingerprintIDs(c, nil)
+	if account.UsesOpenAICodexProtocol() {
+		var clientHeaders http.Header
+		if c.Request != nil {
+			clientHeaders = c.Request.Header
+		}
+		stageCodexFingerprintIDs(c, resolveCodexFingerprintIDsFromRequestAndBody(account, clientHeaders, firstClientMessage))
+	}
 	if err := validateOpenAIWSBearerToken(account, token); err != nil {
 		return err
 	}

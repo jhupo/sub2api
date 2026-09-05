@@ -151,6 +151,23 @@ func TestResolveCodexFingerprintIDsFromRequest_ExplicitOptInHonored(t *testing.T
 	}
 }
 
+func TestResolveCodexFingerprintIDsFromRequestAndBody_UsesBodySessionFallback(t *testing.T) {
+	account := newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "session"})
+	body := []byte(`{"type":"response.create","client_metadata":{"session_id":"body-session"}}`)
+	ids := resolveCodexFingerprintIDsFromRequestAndBody(account, nil, body)
+	require.NotNil(t, ids)
+	assert.Equal(t, resolveConvergedThreadID(testCodexFingerprintSeed, "body-session"), ids.threadID)
+}
+
+func TestResolveCodexFingerprintIDsFromRequestAndBody_PrefersHeaderSession(t *testing.T) {
+	account := newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "session"})
+	headers := http.Header{"Session-Id": []string{"header-session"}}
+	body := []byte(`{"client_metadata":{"session_id":"body-session"}}`)
+	ids := resolveCodexFingerprintIDsFromRequestAndBody(account, headers, body)
+	require.NotNil(t, ids)
+	assert.Equal(t, resolveConvergedThreadID(testCodexFingerprintSeed, "header-session"), ids.threadID)
+}
+
 func TestResolveCodexFingerprintIDsFromRequest_EnabledModesRequireValidSeed(t *testing.T) {
 	for _, tt := range []struct {
 		name  string

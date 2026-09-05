@@ -338,6 +338,14 @@ func extractClientSessionID(h http.Header) string {
 // 结合账号配置一次性解析收敛 ID 集合。调用方应将返回的 ids 同时传给
 // applyCodexFingerprintHeaders 和 applyCodexFingerprintClientMetadata。
 func resolveCodexFingerprintIDsFromRequest(account *Account, clientHeaders http.Header) *codexFingerprintIDs {
+	return resolveCodexFingerprintIDsFromRequestAndBody(account, clientHeaders, nil)
+}
+
+// resolveCodexFingerprintIDsFromRequestAndBody extends the HTTP/header resolver
+// for Responses WebSocket ingress. Some clients put the session identifier only
+// in the first response.create client_metadata object, so the WS connection must
+// use that value before projecting the first frame and all subsequent turns.
+func resolveCodexFingerprintIDsFromRequestAndBody(account *Account, clientHeaders http.Header, body []byte) *codexFingerprintIDs {
 	if account == nil {
 		return nil
 	}
@@ -348,6 +356,12 @@ func resolveCodexFingerprintIDsFromRequest(account *Account, clientHeaders http.
 	clientSessionID := ""
 	if clientHeaders != nil {
 		clientSessionID = extractClientSessionID(clientHeaders)
+	}
+	if clientSessionID == "" && len(body) > 0 && gjson.ValidBytes(body) {
+		bodySession := gjson.GetBytes(body, "client_metadata.session_id")
+		if bodySession.Type == gjson.String {
+			clientSessionID = strings.TrimSpace(bodySession.String())
+		}
 	}
 	return resolveCodexFingerprintIDs(account, clientSessionID, mode)
 }
