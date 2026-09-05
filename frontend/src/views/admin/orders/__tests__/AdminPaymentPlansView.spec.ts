@@ -40,6 +40,7 @@ const DataTableStub = {
   template: `
     <div>
       <div v-for="row in data" :key="row.id">
+        <slot name="cell-name" :value="row.name" :row="row" />
         <slot name="cell-price" :value="row.price" :row="row" />
       </div>
     </div>
@@ -55,6 +56,7 @@ describe('AdminPaymentPlansView', () => {
         {
           id: 1,
           name: 'CNY plan',
+          version: 1,
           group_id: 1,
           price: 499,
           original_price: 599,
@@ -102,5 +104,7 @@ describe('AdminPaymentPlansView', () => {
     expect(wrapper.text()).toContain('¥499.00CNY')
     expect(wrapper.text()).toContain('¥599.00')
     expect(wrapper.text()).toContain('$10.00')
+    expect(wrapper.text()).toContain('CNY plan')
+    expect(wrapper.text()).not.toContain('v1')
   })
 })

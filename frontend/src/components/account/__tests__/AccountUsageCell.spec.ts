@@ -1307,6 +1307,52 @@ describe('AccountUsageCell', () => {
 		expect(wrapper.text().trim()).toBe('-')
   })
 
+  it('shows Gemini OAuth billing even when no requests were made, plus daily and minute limits', async () => {
+    getUsage.mockResolvedValue({
+      gemini_shared_daily: { utilization: 0, resets_at: null, limit_requests: 1500 },
+      gemini_shared_minute: { utilization: 0, resets_at: null, limit_requests: 120 },
+      antigravity_quota: { 'gemini-3-pro': { utilization: 25, reset_time: null } }
+    })
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ platform: 'gemini', type: 'oauth', credentials: { oauth_type: 'antigravity', tier_id: 'google_ai_pro' } }),
+        todayStats: { requests: 0, tokens: 0, cost: 0, standard_cost: 0, user_cost: 0 }
+      }
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('A $0.00')
+    expect(wrapper.text()).toContain('U $0.00')
+    expect(wrapper.text()).toContain('0 / 1500 req')
+    expect(wrapper.text()).toContain('0 / 120 req')
+    expect(wrapper.text()).toContain('gemini-3-pro')
+    expect(wrapper.text()).toContain('25%')
+    expect(wrapper.text()).toContain('admin.accounts.gemini.localQuota')
+    expect(wrapper.text()).toContain('admin.accounts.gemini.upstreamQuota')
+    wrapper.unmount()
+  })
+
+  it('does not present missing Gemini quota as unlimited', async () => {
+    getUsage.mockResolvedValue({})
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ platform: 'gemini', type: 'oauth', credentials: { oauth_type: 'ai_studio' } }) }
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('admin.accounts.gemini.quotaUnavailable')
+    expect(wrapper.text()).not.toContain('admin.accounts.gemini.rateLimit.unlimited')
+    wrapper.unmount()
+  })
+
+  it('displays Gemini reauthorization state independently of zero billing', async () => {
+    getUsage.mockResolvedValue({ needs_reauth: true })
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ platform: 'gemini', type: 'oauth', credentials: { oauth_type: 'google_one' } }) }
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('admin.accounts.needsReauth')
+    expect(wrapper.text()).not.toContain('admin.accounts.gemini.rateLimit.unlimited')
+    wrapper.unmount()
+  })
+
   it('Vertex 账号会在 Gemini 用量窗口里展示 today stats 徽章', async () => {
 		const wrapper = mount(AccountUsageCell, {
 		  props: {

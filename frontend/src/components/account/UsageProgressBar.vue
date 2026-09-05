@@ -26,10 +26,10 @@
     </div>
 
     <!-- Progress bar row -->
-    <div class="flex items-center gap-1">
+    <div class="flex flex-wrap items-center gap-1">
       <!-- Label badge (fixed width for alignment) -->
       <span
-        :class="['w-[32px] shrink-0 rounded px-1 text-center text-[10px] font-medium', labelClass]"
+        :class="['min-w-[32px] shrink-0 rounded px-1 text-center text-[10px] font-medium', labelClass]"
       >
         {{ label }}
       </span>
@@ -45,6 +45,10 @@
       <!-- Percentage -->
       <span :class="['w-[32px] shrink-0 text-right text-[10px] font-medium', textClass]">
         {{ displayPercent }}
+      </span>
+
+      <span v-if="limitRequests != null && limitRequests > 0" class="text-[10px] tabular-nums text-gray-600 dark:text-gray-400">
+        {{ usedRequests ?? 0 }} / {{ limitRequests }} req
       </span>
 
       <!-- Reset time -->
@@ -70,6 +74,8 @@ const props = defineProps<{
   windowStats?: WindowStats | null
   showNowWhenIdle?: boolean
   remainingCapacity?: boolean
+  usedRequests?: number
+  limitRequests?: number
 }>()
 
 const { t } = useI18n()

@@ -193,6 +193,38 @@ describe('admin RedeemView batch update', () => {
     expect(showSuccess).toHaveBeenCalledWith('admin.redeem.batchUpdateSuccess')
   })
 
+  it('shows the plan name while generating codes for its frozen version ID', async () => {
+    getSubscriptionPlans.mockResolvedValue({ data: [{ id: 7, name: 'Monthly', version: 1, published_version_id: 91 }] })
+    const wrapper = mount(RedeemView, {
+      attachTo: document.body,
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          Select: SelectStub,
+          Icon: true,
+          Teleport: true
+        }
+      }
+    })
+    await flushPromises()
+    await wrapper.get('[data-test="generate-open"]').trigger('click')
+    const typeSelect = wrapper.findAllComponents(SelectStub).find(select => select.props('modelValue') === 'balance')!
+    typeSelect.vm.$emit('update:modelValue', 'subscription')
+    await flushPromises()
+    const plans = wrapper.findAllComponents(SelectStub).find(select => select.props('options').some((option: { value: number }) => option.value === 91))!
+    expect(plans.text()).toBe('Monthly')
+    plans.vm.$emit('update:modelValue', 91)
+    await wrapper.get('[data-test="generate-count"]').setValue(1)
+    await wrapper.get('[data-test="generate-form"]').trigger('submit')
+    await flushPromises()
+    expect(generateRedeemCodes).toHaveBeenCalledWith(1, 'subscription', 10, 91, undefined)
+    wrapper.unmount()
+  })
+
   it('allows generating up to 1000 redeem codes', async () => {
     const wrapper = mount(RedeemView, {
       attachTo: document.body,

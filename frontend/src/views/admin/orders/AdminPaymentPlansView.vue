@@ -11,10 +11,9 @@
 
       <!-- Plans Table -->
       <DataTable :columns="planColumns" :data="plans" :loading="plansLoading">
-        <template #cell-name="{ value, row }">
+        <template #cell-name="{ value }">
           <div>
             <span class="text-sm font-medium text-gray-900 dark:text-white">{{ value }}</span>
-            <span class="ml-2 text-xs text-gray-400">v{{ row.version }}</span>
           </div>
         </template>
         <template #cell-allowances="{ row }">

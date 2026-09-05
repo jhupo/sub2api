@@ -81,7 +81,11 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 	}
 
 	// Fetch published plans.
-	plans, _ := h.configService.ListPlansForSale(ctx)
+	plans, err := h.configService.ListPlansForSale(ctx)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	planList := make([]checkoutPlan, 0, len(plans))
 	for _, p := range plans {
 		planList = append(planList, checkoutPlan{

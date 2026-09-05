@@ -383,7 +383,7 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 
 	if account.Platform == PlatformGemini {
 		usage, err := s.getGeminiUsage(ctx, account)
-		if err == nil {
+		if err == nil && usage != nil && usage.Error == "" && !usage.IsForbidden && !usage.NeedsReauth {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
 		return usage, err
@@ -1058,6 +1058,21 @@ func (s *AccountUsageService) getGeminiUsage(ctx context.Context, account *Accou
 	usage := &UsageInfo{
 		UpdatedAt: &now,
 	}
+	if account.Type == AccountTypeOAuth {
+		if !account.HasSupportedGeminiOAuthType() {
+			usage.NeedsReauth = true
+			return usage, nil
+		}
+		if account.IsGeminiAntigravity() {
+			upstream, err := s.getAntigravityUsage(ctx, account)
+			if err != nil {
+				return nil, err
+			}
+			// Local counters change independently of the cached upstream quota.
+			copy := *upstream
+			usage = &copy
+		}
+	}
 
 	if s.geminiQuotaService == nil || s.usageLogRepo == nil {
 		return usage, nil
@@ -1074,19 +1089,8 @@ func (s *AccountUsageService) getGeminiUsage(ctx context.Context, account *Accou
 		return nil, fmt.Errorf("get gemini usage stats failed: %w", err)
 	}
 
-	dayTotals := geminiAggregateUsage(stats)
 	dailyResetAt := geminiDailyResetTime(now)
-
-	// Daily window (RPD)
-	if quota.SharedRPD > 0 {
-		totalReq := dayTotals.ProRequests + dayTotals.FlashRequests
-		totalTokens := dayTotals.ProTokens + dayTotals.FlashTokens
-		totalCost := dayTotals.ProCost + dayTotals.FlashCost
-		usage.GeminiSharedDaily = buildGeminiUsageProgress(totalReq, quota.SharedRPD, dailyResetAt, totalTokens, totalCost, now)
-	} else {
-		usage.GeminiProDaily = buildGeminiUsageProgress(dayTotals.ProRequests, quota.ProRPD, dailyResetAt, dayTotals.ProTokens, dayTotals.ProCost, now)
-		usage.GeminiFlashDaily = buildGeminiUsageProgress(dayTotals.FlashRequests, quota.FlashRPD, dailyResetAt, dayTotals.FlashTokens, dayTotals.FlashCost, now)
-	}
+	usage.GeminiSharedDaily, usage.GeminiProDaily, usage.GeminiFlashDaily = buildGeminiUsageWindows(stats, quota.SharedRPD, quota.ProRPD, quota.FlashRPD, dailyResetAt, now)
 
 	// Minute window (RPM) - fixed-window approximation: current minute [truncate(now), truncate(now)+1m)
 	minuteStart := now.Truncate(time.Minute)
@@ -1095,17 +1099,7 @@ func (s *AccountUsageService) getGeminiUsage(ctx context.Context, account *Accou
 	if err != nil {
 		return nil, fmt.Errorf("get gemini minute usage stats failed: %w", err)
 	}
-	minuteTotals := geminiAggregateUsage(minuteStats)
-
-	if quota.SharedRPM > 0 {
-		totalReq := minuteTotals.ProRequests + minuteTotals.FlashRequests
-		totalTokens := minuteTotals.ProTokens + minuteTotals.FlashTokens
-		totalCost := minuteTotals.ProCost + minuteTotals.FlashCost
-		usage.GeminiSharedMinute = buildGeminiUsageProgress(totalReq, quota.SharedRPM, minuteResetAt, totalTokens, totalCost, now)
-	} else {
-		usage.GeminiProMinute = buildGeminiUsageProgress(minuteTotals.ProRequests, quota.ProRPM, minuteResetAt, minuteTotals.ProTokens, minuteTotals.ProCost, now)
-		usage.GeminiFlashMinute = buildGeminiUsageProgress(minuteTotals.FlashRequests, quota.FlashRPM, minuteResetAt, minuteTotals.FlashTokens, minuteTotals.FlashCost, now)
-	}
+	usage.GeminiSharedMinute, usage.GeminiProMinute, usage.GeminiFlashMinute = buildGeminiUsageWindows(minuteStats, quota.SharedRPM, quota.ProRPM, quota.FlashRPM, minuteResetAt, now)
 
 	return usage, nil
 }
@@ -1849,12 +1843,31 @@ func (s *AccountUsageService) estimateSetupTokenUsage(account *Account) *UsageIn
 	return info
 }
 
-func buildGeminiUsageProgress(used, limit int64, resetAt time.Time, tokens int64, cost float64, now time.Time) *UsageProgress {
+func buildGeminiUsageWindows(stats []usagestats.ModelStat, sharedLimit, proLimit, flashLimit int64, resetAt, now time.Time) (shared, pro, flash *UsageProgress) {
+	var proStats, flashStats WindowStats
+	for _, stat := range stats {
+		target := &proStats
+		if sharedLimit <= 0 && geminiModelClassFromName(stat.Model) == geminiModelFlash {
+			target = &flashStats
+		}
+		target.Requests += stat.Requests
+		target.Tokens += stat.TotalTokens
+		target.Cost += stat.AccountCost
+		target.StandardCost += stat.Cost
+		target.UserCost += stat.ActualCost
+	}
+	if sharedLimit > 0 {
+		return buildGeminiUsageProgress(sharedLimit, resetAt, proStats, now), nil, nil
+	}
+	return nil, buildGeminiUsageProgress(proLimit, resetAt, proStats, now), buildGeminiUsageProgress(flashLimit, resetAt, flashStats, now)
+}
+
+func buildGeminiUsageProgress(limit int64, resetAt time.Time, stats WindowStats, now time.Time) *UsageProgress {
 	// limit <= 0 means "no local quota window" (unknown or unlimited).
 	if limit <= 0 {
 		return nil
 	}
-	utilization := (float64(used) / float64(limit)) * 100
+	utilization := (float64(stats.Requests) / float64(limit)) * 100
 	remainingSeconds := int(resetAt.Sub(now).Seconds())
 	if remainingSeconds < 0 {
 		remainingSeconds = 0
@@ -1864,13 +1877,9 @@ func buildGeminiUsageProgress(used, limit int64, resetAt time.Time, tokens int64
 		Utilization:      utilization,
 		ResetsAt:         &resetCopy,
 		RemainingSeconds: remainingSeconds,
-		UsedRequests:     used,
+		UsedRequests:     stats.Requests,
 		LimitRequests:    limit,
-		WindowStats: &WindowStats{
-			Requests: used,
-			Tokens:   tokens,
-			Cost:     cost,
-		},
+		WindowStats:      &stats,
 	}
 }
 

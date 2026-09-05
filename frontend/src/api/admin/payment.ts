@@ -149,9 +149,9 @@ export const adminPaymentAPI = {
 
   // ==================== Subscription Plans ====================
 
-  /** Get all subscription plans */
-  getPlans() {
-    return apiClient.get<SubscriptionPlan[]>('/admin/payment/plans')
+  /** Historical references are included only for existing configuration and filters. */
+  getPlans(params?: { include_historical: boolean }) {
+    return apiClient.get<SubscriptionPlan[]>('/admin/payment/plans', { params })
   },
 
   /** Create a subscription plan */

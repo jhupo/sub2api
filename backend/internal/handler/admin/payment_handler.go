@@ -275,10 +275,16 @@ func (h *PaymentHandler) QueryAndFinalizeRefund(c *gin.Context) {
 
 // --- Subscription Plans ---
 
-// ListPlans returns all subscription plans.
+// ListPlans returns catalog products; historical references are opt-in.
 // GET /api/v1/admin/payment/plans
 func (h *PaymentHandler) ListPlans(c *gin.Context) {
-	plans, err := h.configService.ListPlans(c.Request.Context())
+	var plans []*service.SubscriptionPlan
+	var err error
+	if c.Query("include_historical") == "true" {
+		plans, err = h.configService.ListPlansIncludingHistorical(c.Request.Context())
+	} else {
+		plans, err = h.configService.ListPlans(c.Request.Context())
+	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

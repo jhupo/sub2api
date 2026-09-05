@@ -1178,6 +1178,7 @@ export default {
         // Gemini specific
 	        gemini: {
 	          title: 'Gemini Account Authorization',
+	          failedToLoadCapabilities: 'Failed to load Gemini authorization settings',
 	          followSteps: 'Follow these steps to authorize your Gemini account:',
 	          step1GenerateUrl: 'Generate the authorization URL',
 	          generateAuthUrl: 'Generate Auth URL',
@@ -1255,6 +1256,9 @@ export default {
                   }
                 },      // Gemini specific (platform-wide)
       gemini: {
+        upstreamQuota: 'Upstream quota used',
+        localQuota: 'Local request limits',
+        quotaUnavailable: 'Quota unavailable',
         helpButton: 'Help',
         helpDialog: {
           title: 'Gemini Usage Guide',
@@ -1351,7 +1355,7 @@ export default {
             aiStudio: 'AI Studio Pricing',
             vertex: 'Vertex AI Quotas'
           },
-          simulatedNote: 'Simulated quota, for reference only',
+          simulatedNote: 'Counts requests through this site; actual upstream quota is reported by Google',
           rows: {
             antigravity: {
               channel: 'Antigravity OAuth (Google AI personal subscription)',

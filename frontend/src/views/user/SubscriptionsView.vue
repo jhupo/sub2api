@@ -41,9 +41,6 @@
                   <h3 class="font-semibold text-gray-900 dark:text-white">
                     {{ subscription.plan?.name || `Plan #${subscription.plan_id}` }}
                   </h3>
-                  <span class="rounded border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:border-dark-600 dark:text-gray-400">
-                    v{{ subscription.plan?.version || 1 }}
-                  </span>
                 </div>
                 <p v-if="subscription.plan?.description" class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
                   {{ subscription.plan.description }}

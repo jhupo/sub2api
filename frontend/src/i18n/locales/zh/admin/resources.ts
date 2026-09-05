@@ -312,7 +312,7 @@ export default {
       failedToDeleteUnused: '删除未使用的兑换码失败',
       failedToCopy: '复制失败',
       selectPlan: '选择套餐',
-      selectPlanPlaceholder: '选择要冻结的套餐版本',
+      selectPlanPlaceholder: '选择套餐',
       codeExpiry: '兑换码过期',
       neverExpires: '永不过期',
       expiryPresetDays: '{days} 天',

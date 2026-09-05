@@ -29,6 +29,8 @@ type SubscriptionPlan struct {
 	ProductName string `json:"product_name,omitempty"`
 	// ForSale holds the value of the "for_sale" field.
 	ForSale bool `json:"for_sale,omitempty"`
+	// IsHistorical holds the value of the "is_historical" field.
+	IsHistorical bool `json:"is_historical,omitempty"`
 	// SortOrder holds the value of the "sort_order" field.
 	SortOrder int `json:"sort_order,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
@@ -75,7 +77,7 @@ func (*SubscriptionPlan) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case subscriptionplan.FieldForSale:
+		case subscriptionplan.FieldForSale, subscriptionplan.FieldIsHistorical:
 			values[i] = new(sql.NullBool)
 		case subscriptionplan.FieldID, subscriptionplan.FieldPublishedVersionID, subscriptionplan.FieldSortOrder:
 			values[i] = new(sql.NullInt64)
@@ -140,6 +142,12 @@ func (_m *SubscriptionPlan) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field for_sale", values[i])
 			} else if value.Valid {
 				_m.ForSale = value.Bool
+			}
+		case subscriptionplan.FieldIsHistorical:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field is_historical", values[i])
+			} else if value.Valid {
+				_m.IsHistorical = value.Bool
 			}
 		case subscriptionplan.FieldSortOrder:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -224,6 +232,9 @@ func (_m *SubscriptionPlan) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("for_sale=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ForSale))
+	builder.WriteString(", ")
+	builder.WriteString("is_historical=")
+	builder.WriteString(fmt.Sprintf("%v", _m.IsHistorical))
 	builder.WriteString(", ")
 	builder.WriteString("sort_order=")
 	builder.WriteString(fmt.Sprintf("%v", _m.SortOrder))

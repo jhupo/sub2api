@@ -26,6 +26,18 @@ func NewGeminiOAuthClient(cfg *config.Config) service.GeminiOAuthClient {
 	}
 }
 
+func (c *geminiOAuthClient) GetEmail(ctx context.Context, accessToken, proxyURL string) (string, error) {
+	client, err := antigravity.NewClient(proxyURL)
+	if err != nil {
+		return "", err
+	}
+	info, err := client.GetUserInfo(ctx, accessToken)
+	if err != nil {
+		return "", err
+	}
+	return info.Email, nil
+}
+
 func (c *geminiOAuthClient) ExchangeCode(ctx context.Context, oauthType, code, codeVerifier, redirectURI, proxyURL string) (*geminicli.TokenResponse, error) {
 	if oauthType == service.GeminiOAuthTypeAntigravity {
 		client, err := antigravity.NewClient(proxyURL)

@@ -41806,6 +41806,7 @@ type SubscriptionPlanMutation struct {
 	features                *string
 	product_name            *string
 	for_sale                *bool
+	is_historical           *bool
 	sort_order              *int
 	addsort_order           *int
 	created_at              *time.Time
@@ -42170,6 +42171,42 @@ func (m *SubscriptionPlanMutation) ResetForSale() {
 	m.for_sale = nil
 }
 
+// SetIsHistorical sets the "is_historical" field.
+func (m *SubscriptionPlanMutation) SetIsHistorical(b bool) {
+	m.is_historical = &b
+}
+
+// IsHistorical returns the value of the "is_historical" field in the mutation.
+func (m *SubscriptionPlanMutation) IsHistorical() (r bool, exists bool) {
+	v := m.is_historical
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIsHistorical returns the old "is_historical" field's value of the SubscriptionPlan entity.
+// If the SubscriptionPlan object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SubscriptionPlanMutation) OldIsHistorical(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIsHistorical is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIsHistorical requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIsHistorical: %w", err)
+	}
+	return oldValue.IsHistorical, nil
+}
+
+// ResetIsHistorical resets all changes to the "is_historical" field.
+func (m *SubscriptionPlanMutation) ResetIsHistorical() {
+	m.is_historical = nil
+}
+
 // SetSortOrder sets the "sort_order" field.
 func (m *SubscriptionPlanMutation) SetSortOrder(i int) {
 	m.sort_order = &i
@@ -42440,7 +42477,7 @@ func (m *SubscriptionPlanMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SubscriptionPlanMutation) Fields() []string {
-	fields := make([]string, 0, 9)
+	fields := make([]string, 0, 10)
 	if m.name != nil {
 		fields = append(fields, subscriptionplan.FieldName)
 	}
@@ -42458,6 +42495,9 @@ func (m *SubscriptionPlanMutation) Fields() []string {
 	}
 	if m.for_sale != nil {
 		fields = append(fields, subscriptionplan.FieldForSale)
+	}
+	if m.is_historical != nil {
+		fields = append(fields, subscriptionplan.FieldIsHistorical)
 	}
 	if m.sort_order != nil {
 		fields = append(fields, subscriptionplan.FieldSortOrder)
@@ -42488,6 +42528,8 @@ func (m *SubscriptionPlanMutation) Field(name string) (ent.Value, bool) {
 		return m.ProductName()
 	case subscriptionplan.FieldForSale:
 		return m.ForSale()
+	case subscriptionplan.FieldIsHistorical:
+		return m.IsHistorical()
 	case subscriptionplan.FieldSortOrder:
 		return m.SortOrder()
 	case subscriptionplan.FieldCreatedAt:
@@ -42515,6 +42557,8 @@ func (m *SubscriptionPlanMutation) OldField(ctx context.Context, name string) (e
 		return m.OldProductName(ctx)
 	case subscriptionplan.FieldForSale:
 		return m.OldForSale(ctx)
+	case subscriptionplan.FieldIsHistorical:
+		return m.OldIsHistorical(ctx)
 	case subscriptionplan.FieldSortOrder:
 		return m.OldSortOrder(ctx)
 	case subscriptionplan.FieldCreatedAt:
@@ -42571,6 +42615,13 @@ func (m *SubscriptionPlanMutation) SetField(name string, value ent.Value) error 
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetForSale(v)
+		return nil
+	case subscriptionplan.FieldIsHistorical:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIsHistorical(v)
 		return nil
 	case subscriptionplan.FieldSortOrder:
 		v, ok := value.(int)
@@ -42695,6 +42746,9 @@ func (m *SubscriptionPlanMutation) ResetField(name string) error {
 		return nil
 	case subscriptionplan.FieldForSale:
 		m.ResetForSale()
+		return nil
+	case subscriptionplan.FieldIsHistorical:
+		m.ResetIsHistorical()
 		return nil
 	case subscriptionplan.FieldSortOrder:
 		m.ResetSortOrder()

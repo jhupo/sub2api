@@ -157,6 +157,7 @@ type GeminiExchangeCodeInput struct {
 }
 
 type GeminiTokenInfo struct {
+	Email        string `json:"email,omitempty"`
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int64  `json:"expires_in"`
@@ -440,6 +441,7 @@ func (s *GeminiOAuthService) ExchangeCode(ctx context.Context, input *GeminiExch
 	logger.LegacyPrintf("service.gemini_oauth", "[GeminiOAuth] ========== Account Type Detection END ==========")
 
 	result := &GeminiTokenInfo{
+		Email:        s.fetchEmail(ctx, tokenResp.AccessToken, proxyURL),
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: tokenResp.RefreshToken,
 		TokenType:    tokenResp.TokenType,
@@ -549,6 +551,10 @@ func (s *GeminiOAuthService) RefreshAccountToken(ctx context.Context, account *A
 	}
 
 	tokenInfo.OAuthType = oauthType
+	tokenInfo.Email = strings.TrimSpace(account.GetCredential("email"))
+	if tokenInfo.Email == "" {
+		tokenInfo.Email = s.fetchEmail(ctx, tokenInfo.AccessToken, proxyURL)
+	}
 
 	existingProjectID := strings.TrimSpace(account.GetCredential("project_id"))
 	if existingProjectID != "" {
@@ -599,6 +605,9 @@ func (s *GeminiOAuthService) BuildAccountCredentials(tokenInfo *GeminiTokenInfo)
 	if tokenInfo.RefreshToken != "" {
 		creds["refresh_token"] = tokenInfo.RefreshToken
 	}
+	if tokenInfo.Email != "" {
+		creds["email"] = tokenInfo.Email
+	}
 	if tokenInfo.TokenType != "" {
 		creds["token_type"] = tokenInfo.TokenType
 	}
@@ -626,6 +635,18 @@ func (s *GeminiOAuthService) BuildAccountCredentials(tokenInfo *GeminiTokenInfo)
 
 func (s *GeminiOAuthService) Stop() {
 	s.sessionStore.Stop()
+}
+
+func (s *GeminiOAuthService) fetchEmail(ctx context.Context, accessToken, proxyURL string) string {
+	// Identity enrichment must not discard a successfully issued token.
+	infoCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	email, err := s.oauthClient.GetEmail(infoCtx, accessToken, proxyURL)
+	if err != nil {
+		logger.LegacyPrintf("service.gemini_oauth", "[GeminiOAuth] Google userinfo unavailable; email will be retried on token refresh")
+		return ""
+	}
+	return strings.TrimSpace(email)
 }
 
 func (s *GeminiOAuthService) fetchProjectID(ctx context.Context, accessToken, proxyURL string) (string, string, error) {

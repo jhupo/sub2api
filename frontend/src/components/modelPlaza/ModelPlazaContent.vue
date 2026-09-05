@@ -86,7 +86,7 @@ const authStore = useAuthStore()
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 
 const selectedPlatform = ref<string>('all')
-const selectedGroupId = ref<number | 'all'>('all')
+const selectedGroupId = ref<number | null>(null)
 const selectedRate = ref<number | 'all'>('all')
 const searchQuery = ref('')
 
@@ -113,7 +113,7 @@ const groupOptions = computed(() =>
     name: g.name,
     platform: g.platform,
     rate: effectiveRate(g)
-  }))
+  })).sort((a, b) => a.rate - b.rate || a.name.localeCompare(b.name))
 )
 
 /** 全量生效倍率;当前组合下不可用的项由 FilterBar 置灰而非隐藏。 */
@@ -128,14 +128,58 @@ watch(rates, (list) => {
   }
 })
 
+/**
+ * 分组是模型广场的主选择且始终必选。平台、倍率或可见分组变化后，保留仍然
+ * 有效的当前分组；否则切到当前筛选下倍率最低、名称最前的分组。
+ */
+watch(
+  [groupOptions, selectedPlatform, selectedRate],
+  ([groups]) => {
+    if (groups.length === 0) {
+      selectedGroupId.value = null
+      return
+    }
+
+    let platform = selectedPlatform.value
+    let rate = selectedRate.value
+    if (platform !== 'all' && !groups.some((g) => g.platform === platform)) {
+      selectedPlatform.value = 'all'
+      platform = 'all'
+    }
+    if (rate !== 'all' && !groups.some((g) => g.rate === rate)) {
+      selectedRate.value = 'all'
+      rate = 'all'
+    }
+
+    let candidates = groups.filter(
+      (g) =>
+        (platform === 'all' || g.platform === platform) &&
+        (rate === 'all' || g.rate === rate)
+    )
+    // 数据刷新可能让原平台/倍率组合失效。优先保留平台，再回退到全量分组。
+    if (candidates.length === 0 && rate !== 'all') {
+      selectedRate.value = 'all'
+      candidates = groups.filter((g) => platform === 'all' || g.platform === platform)
+    }
+    if (candidates.length === 0) {
+      selectedPlatform.value = 'all'
+      candidates = groups
+    }
+
+    if (!candidates.some((g) => g.id === selectedGroupId.value)) {
+      selectedGroupId.value = candidates[0].id
+    }
+  },
+  { immediate: true }
+)
+
 const filteredGroups = computed(() => {
+  if (selectedGroupId.value == null) return []
   let groups = props.response?.groups ?? []
   if (selectedPlatform.value !== 'all') {
     groups = groups.filter((g) => g.platform === selectedPlatform.value)
   }
-  if (selectedGroupId.value !== 'all') {
-    groups = groups.filter((g) => g.id === selectedGroupId.value)
-  }
+  groups = groups.filter((g) => g.id === selectedGroupId.value)
   if (selectedRate.value !== 'all') {
     groups = groups.filter((g) => effectiveRate(g) === selectedRate.value)
   }
@@ -146,10 +190,7 @@ const filteredGroups = computed(() => {
       .map((g) => ({ ...g, models: g.models.filter((m) => m.name.toLowerCase().includes(q)) }))
       .filter((g) => g.models.length > 0)
   }
-  // 专属倍率会改变生效值,不能只依赖后端按默认倍率的排序。
-  return [...groups].sort(
-    (a, b) => effectiveRate(a) - effectiveRate(b) || a.name.localeCompare(b.name)
-  )
+  return groups
 })
 </script>
 

@@ -442,7 +442,7 @@ const subscriptionPlans = ref<SubscriptionPlan[]>([])
 
 async function loadSubscriptionPlans() {
   try {
-    subscriptionPlans.value = (await adminAPI.payment.getPlans()).data
+    subscriptionPlans.value = (await adminAPI.payment.getPlans({ include_historical: true })).data
   } catch (error: any) {
     console.error('Error loading subscription plans:', error)
     // not fatal

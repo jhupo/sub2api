@@ -10059,12 +10059,16 @@ async function saveWebSearchConfig(): Promise<boolean> {
   }
 }
 
-const defaultSubscriptionPlanOptions = computed(() =>
-  subscriptionPlans.value.map((plan) => ({
+const defaultSubscriptionPlanOptions = computed(() => {
+  const configuredIDs = new Set([
+    ...form.default_subscriptions.map((item) => item.plan_id),
+    ...Object.values(authSourceDefaults).flatMap((source) => source.subscriptions.map((item) => item.plan_id)),
+  ]);
+  return subscriptionPlans.value.filter((plan) => !plan.is_historical || configuredIDs.has(plan.id)).map((plan) => ({
     value: plan.id,
-    label: `${plan.name} (v${plan.version})`,
-  })),
-);
+    label: plan.name,
+  }));
+});
 
 const registrationEmailSuffixWhitelistSeparatorKeys = new Set([
   " ",
@@ -10795,7 +10799,7 @@ async function loadSettings() {
 
 async function loadSubscriptionPlans() {
   try {
-    subscriptionPlans.value = (await adminAPI.payment.getPlans()).data;
+    subscriptionPlans.value = (await adminAPI.payment.getPlans({ include_historical: true })).data;
   } catch (_error: unknown) {
     subscriptionPlans.value = [];
   }
@@ -10805,7 +10809,7 @@ function findNextAvailableSubscriptionPlan(
   existingPlanIDs: number[],
 ): SubscriptionPlan | undefined {
   const existing = new Set(existingPlanIDs);
-  return subscriptionPlans.value.find((plan) => !existing.has(plan.id));
+  return subscriptionPlans.value.find((plan) => !plan.is_historical && !existing.has(plan.id));
 }
 
 function addDefaultSubscription() {

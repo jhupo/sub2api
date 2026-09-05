@@ -14,11 +14,8 @@ import (
 
 // SubscriptionPlan holds the schema definition for the SubscriptionPlan entity.
 //
-// 删除策略：硬删除
-// SubscriptionPlan 使用硬删除而非软删除，原因如下：
-//   - 套餐为管理员维护的商品配置，删除即表示下架移除
-//   - 通过 for_sale 字段控制是否在售，删除仅用于彻底移除
-//   - 已购买的订阅记录保存在 UserSubscription 中，不受套餐删除影响
+// Historical entitlements retain their plan and immutable terms. Catalog
+// removal must not delete records referenced by subscriptions or redeem codes.
 type SubscriptionPlan struct {
 	ent.Schema
 }
@@ -48,6 +45,9 @@ func (SubscriptionPlan) Fields() []ent.Field {
 			Default(""),
 		field.Bool("for_sale").
 			Default(true),
+		field.Bool("is_historical").
+			Default(false).
+			Immutable(),
 		field.Int("sort_order").
 			Default(0),
 		field.Time("created_at").

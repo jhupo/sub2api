@@ -321,7 +321,7 @@ export default {
         admin_concurrency: 'Concurrency (Admin)'
       },
       selectPlan: 'Select Plan',
-      selectPlanPlaceholder: 'Choose the plan version to freeze',
+      selectPlanPlaceholder: 'Choose a plan',
       codeExpiry: 'Code Expiry',
       neverExpires: 'Never expires',
       expiryPresetDays: '{days} days',

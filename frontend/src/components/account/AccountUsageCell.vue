@@ -532,25 +532,39 @@
         <div v-else-if="error" class="text-xs text-red-500">
           {{ error }}
         </div>
-        <!-- Gemini: show daily usage bars when available -->
-        <div v-else-if="geminiUsageAvailable" class="space-y-1">
-          <UsageProgressBar
-            v-for="bar in geminiUsageBars"
-            :key="bar.key"
-            :label="bar.label"
-            :utilization="bar.utilization"
-            :resets-at="bar.resetsAt"
-            :window-stats="bar.windowStats"
-            :color="bar.color"
-          />
-          <p class="mt-1 text-[9px] leading-tight text-gray-400 dark:text-gray-500 italic">
-            * {{ t('admin.accounts.gemini.quotaPolicy.simulatedNote') || 'Simulated quota' }}
-          </p>
-        </div>
-        <!-- AI Studio Client OAuth: show unlimited flow (no usage tracking) -->
-        <div v-else class="text-xs text-gray-400">
-          {{ t('admin.accounts.gemini.rateLimit.unlimited') }}
-        </div>
+        <template v-else>
+          <div v-if="needsReauth" class="text-xs text-amber-600">{{ t('admin.accounts.needsReauth') }}</div>
+          <div v-else-if="isForbidden" class="text-xs text-red-500">{{ forbiddenLabel }}</div>
+          <div v-else-if="usageInfo?.error" class="text-xs text-amber-600">{{ usageErrorLabel }}</div>
+          <div v-else-if="geminiUpstreamQuotaBars.length" class="space-y-1">
+            <div class="text-[10px] text-gray-500">{{ t('admin.accounts.gemini.upstreamQuota') }}</div>
+            <div v-for="bar in geminiUpstreamQuotaBars" :key="bar.model" class="space-y-0.5">
+              <div class="break-words text-[10px] text-gray-600 dark:text-gray-400">{{ bar.model }}</div>
+              <UsageProgressBar label="API" :utilization="bar.utilization" :resets-at="bar.reset_time" color="emerald" />
+            </div>
+          </div>
+          <div v-else-if="isGeminiAntigravity" class="text-xs text-gray-400">{{ t('admin.accounts.gemini.quotaUnavailable') }}</div>
+          <div v-if="geminiUsageBars.length" class="space-y-1">
+            <div class="text-[10px] text-gray-500">{{ t('admin.accounts.gemini.localQuota') }}</div>
+            <UsageProgressBar
+              v-for="bar in geminiUsageBars"
+              :key="bar.key"
+              :label="bar.label"
+              :utilization="bar.utilization"
+              :resets-at="bar.resetsAt"
+              :window-stats="bar.windowStats"
+              :color="bar.color"
+              :used-requests="bar.usedRequests"
+              :limit-requests="bar.limitRequests"
+            />
+            <p class="mt-1 text-[9px] leading-tight text-gray-400 dark:text-gray-500 italic">
+              {{ t('admin.accounts.gemini.quotaPolicy.simulatedNote') }}
+            </p>
+          </div>
+          <div v-else-if="!isGeminiAntigravity && !needsReauth && !isForbidden && !usageInfo?.error" class="text-xs text-gray-400">
+            {{ t('admin.accounts.gemini.quotaUnavailable') }}
+          </div>
+        </template>
       </div>
     </template>
 
@@ -756,18 +770,7 @@ const cnBalanceCellVisible = computed(() => cnBalanceCellVisibleFn(props.account
 const isBatchManaged = computed(() => typeof props.requestBatchedUsage === 'function')
 
 const showGeminiTodayStats = computed(() => {
-  return props.account.platform === 'gemini' && props.account.type === 'service_account'
-})
-
-const geminiUsageAvailable = computed(() => {
-  return (
-    !!usageInfo.value?.gemini_shared_daily ||
-    !!usageInfo.value?.gemini_pro_daily ||
-    !!usageInfo.value?.gemini_flash_daily ||
-    !!usageInfo.value?.gemini_shared_minute ||
-    !!usageInfo.value?.gemini_pro_minute ||
-    !!usageInfo.value?.gemini_flash_minute
-  )
+  return props.account.platform === 'gemini'
 })
 
 const hasOpenAIUsageFallback = computed(() => {
@@ -1038,70 +1041,35 @@ const geminiQuotaPolicyDocsUrl = computed(() => {
   return 'https://ai.google.dev/pricing'
 })
 
-const geminiUsesSharedDaily = computed(() => {
-  if (props.account.platform !== 'gemini') return false
-  // Antigravity and GCP use shared RPD pools (no per-model breakdown).
-  return (
-    !!usageInfo.value?.gemini_shared_daily ||
-    !!usageInfo.value?.gemini_shared_minute ||
-    isGeminiAntigravity.value ||
-    isGeminiCodeAssist.value
-  )
-})
+const geminiUpstreamQuotaBars = computed(() =>
+  Object.entries(usageInfo.value?.antigravity_quota ?? {})
+    .filter(([model]) => model.toLowerCase().startsWith('gemini'))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([model, quota]) => ({ model, ...quota }))
+)
 
 const geminiUsageBars = computed(() => {
   if (props.account.platform !== 'gemini') return []
-  if (!usageInfo.value) return []
-
-  const bars: Array<{
-    key: string
-    label: string
-    utilization: number
-    resetsAt: string | null
-    windowStats?: WindowStats | null
-    color: 'indigo' | 'emerald'
-  }> = []
-
-  if (geminiUsesSharedDaily.value) {
-    const sharedDaily = usageInfo.value.gemini_shared_daily
-    if (sharedDaily) {
-      bars.push({
-        key: 'shared_daily',
-        label: '1d',
-        utilization: sharedDaily.utilization,
-        resetsAt: sharedDaily.resets_at,
-        windowStats: sharedDaily.window_stats,
-        color: 'indigo'
-      })
-    }
-    return bars
-  }
-
-  const pro = usageInfo.value.gemini_pro_daily
-  if (pro) {
-    bars.push({
-      key: 'pro_daily',
-      label: 'pro',
-      utilization: pro.utilization,
-      resetsAt: pro.resets_at,
-      windowStats: pro.window_stats,
-      color: 'indigo'
-      })
-  }
-
-  const flash = usageInfo.value.gemini_flash_daily
-  if (flash) {
-    bars.push({
-      key: 'flash_daily',
-      label: 'flash',
-      utilization: flash.utilization,
-      resetsAt: flash.resets_at,
-      windowStats: flash.window_stats,
-      color: 'emerald'
-    })
-  }
-
-  return bars
+  const info = usageInfo.value
+  if (!info) return []
+  const windows = [
+    { key: 'shared_daily', label: '1d', progress: info.gemini_shared_daily },
+    { key: 'pro_daily', label: 'Pro/d', progress: info.gemini_pro_daily },
+    { key: 'flash_daily', label: 'Flash/d', progress: info.gemini_flash_daily },
+    { key: 'shared_minute', label: '1m', progress: info.gemini_shared_minute },
+    { key: 'pro_minute', label: 'Pro/m', progress: info.gemini_pro_minute },
+    { key: 'flash_minute', label: 'Flash/m', progress: info.gemini_flash_minute }
+  ]
+  return windows.flatMap(({ key, label, progress }) => progress ? [{
+    key,
+    label,
+    utilization: progress.utilization,
+    resetsAt: progress.resets_at,
+    usedRequests: progress.used_requests,
+    limitRequests: progress.limit_requests,
+    windowStats: progress.window_stats,
+    color: key.includes('minute') ? 'emerald' as const : 'indigo' as const
+  }] : [])
 })
 
 interface GrokQuotaBarInfo {

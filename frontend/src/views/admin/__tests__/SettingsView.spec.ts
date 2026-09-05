@@ -29,6 +29,7 @@ const {
   getGroups,
   listProxies,
   getProviders,
+  getPlans,
   updateProvider,
   createProvider,
   deleteProvider,
@@ -70,6 +71,7 @@ const {
   getGroups: vi.fn(),
   listProxies: vi.fn(),
   getProviders: vi.fn(),
+  getPlans: vi.fn().mockResolvedValue({ data: [] }),
   updateProvider: vi.fn(),
   createProvider: vi.fn(),
   deleteProvider: vi.fn(),
@@ -112,6 +114,7 @@ vi.mock("@/api", () => ({
     },
     payment: {
       getProviders,
+      getPlans,
       updateProvider,
       createProvider,
       deleteProvider,
@@ -628,6 +631,7 @@ describe("admin SettingsView email domain quota copy", () => {
 
 describe("admin SettingsView payment visible method controls", () => {
   beforeEach(() => {
+    getPlans.mockReset().mockResolvedValue({ data: [] });
     getSettings.mockReset();
     updateSettings.mockReset();
     getWebSearchEmulationConfig.mockReset();
@@ -734,6 +738,32 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({ compact_home_enabled: true }),
     );
+  });
+
+  it("preserves a configured historical entitlement while adding only catalog products", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      default_subscriptions: [{ plan_id: 32 }],
+    });
+    getPlans.mockResolvedValue({ data: [
+      { id: 32, name: "Existing entitlement", is_historical: true },
+      { id: 33, name: "Unused historical entitlement", is_historical: true },
+      { id: 9, name: "Monthly product", is_historical: false },
+    ] });
+    const wrapper = mountView();
+    await flushPromises();
+    await openUsersTab(wrapper);
+    expect(getPlans).toHaveBeenCalledWith({ include_historical: true });
+    expect(wrapper.text()).toContain("Existing entitlement");
+    expect(wrapper.text()).not.toContain("Unused historical entitlement");
+    const addButton = wrapper.findAll("button").find(node => node.text() === "admin.settings.defaults.addDefaultSubscription");
+    expect(addButton).toBeDefined();
+    await addButton!.trigger("click");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      default_subscriptions: [{ plan_id: 32 }, { plan_id: 9 }],
+    }));
   });
 
   it("loads and saves the balance preauthorization toggle", async () => {

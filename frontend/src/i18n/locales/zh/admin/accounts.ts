@@ -1264,6 +1264,7 @@ export default {
           redirectUriNotConfirmed: '请确认 Redirect URI 已在 Google OAuth Client 中正确配置',
           missingRedirectUri: '缺少 Redirect URI',
           failedToGenerateUrl: '生成 Gemini 授权链接失败',
+          failedToLoadCapabilities: '加载 Gemini 授权配置失败',
           missingExchangeParams: '缺少 code / session_id / state',
           failedToExchangeCode: 'Gemini 授权码兑换失败',
           missingProjectId:
@@ -1315,6 +1316,9 @@ export default {
       },
       // Gemini specific (platform-wide)
       gemini: {
+        upstreamQuota: '上游已用额度',
+        localQuota: '本站请求限额',
+        quotaUnavailable: '暂未获取配额',
         helpButton: '使用帮助',
         helpDialog: {
           title: 'Gemini 使用指南',
@@ -1409,7 +1413,7 @@ export default {
             aiStudio: 'AI Studio 定价',
             vertex: 'Vertex AI 配额'
           },
-          simulatedNote: '本地模拟配额，仅供参考',
+          simulatedNote: '仅统计本站请求，上游实际额度以 Google 返回为准',
           rows: {
             antigravity: {
               channel: 'Antigravity OAuth（Google AI 个人订阅）',

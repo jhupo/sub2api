@@ -5,6 +5,7 @@ import { adminAPI } from '@/api/admin'
 import type { GeminiOAuthCapabilities } from '@/api/admin/gemini'
 
 export interface GeminiTokenInfo {
+  email?: string
   access_token?: string
   refresh_token?: string
   token_type?: string
@@ -123,6 +124,7 @@ export function useGeminiOAuth() {
     }
 
     return {
+      email: tokenInfo.email,
       access_token: tokenInfo.access_token,
       refresh_token: tokenInfo.refresh_token,
       token_type: tokenInfo.token_type,
@@ -138,7 +140,7 @@ export function useGeminiOAuth() {
     try {
       return await adminAPI.gemini.getCapabilities()
     } catch (err: any) {
-      // Capabilities are optional for older servers; don't block the UI.
+      appStore.showError(err.response?.data?.message || t('admin.accounts.oauth.gemini.failedToLoadCapabilities'))
       return null
     }
   }

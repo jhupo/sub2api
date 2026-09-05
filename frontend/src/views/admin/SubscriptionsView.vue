@@ -196,9 +196,6 @@
               <div class="font-medium text-gray-900 dark:text-white">
                 {{ row.plan.name }}
               </div>
-              <div class="text-xs text-gray-500 dark:text-gray-400">
-                v{{ row.plan.version }}
-              </div>
             </div>
             <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
           </template>
@@ -948,9 +945,9 @@ const planFilterOptions = computed(() => [
 ])
 
 const planAssignOptions = computed(() =>
-  plans.value.map((plan) => ({
+  plans.value.filter((plan) => !plan.is_historical).map((plan) => ({
     value: plan.id,
-    label: `${plan.name} (v${plan.version})`
+    label: plan.name
   }))
 )
 
@@ -1003,7 +1000,7 @@ const loadSubscriptions = async () => {
 
 const loadPlans = async () => {
   try {
-    plans.value = (await adminAPI.payment.getPlans()).data
+    plans.value = (await adminAPI.payment.getPlans({ include_historical: true })).data
   } catch (error) {
     console.error('Error loading subscription plans:', error)
   }

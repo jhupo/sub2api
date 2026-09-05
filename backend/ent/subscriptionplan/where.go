@@ -85,6 +85,11 @@ func ForSale(v bool) predicate.SubscriptionPlan {
 	return predicate.SubscriptionPlan(sql.FieldEQ(FieldForSale, v))
 }
 
+// IsHistorical applies equality check predicate on the "is_historical" field. It's identical to IsHistoricalEQ.
+func IsHistorical(v bool) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldEQ(FieldIsHistorical, v))
+}
+
 // SortOrder applies equality check predicate on the "sort_order" field. It's identical to SortOrderEQ.
 func SortOrder(v int) predicate.SubscriptionPlan {
 	return predicate.SubscriptionPlan(sql.FieldEQ(FieldSortOrder, v))
@@ -418,6 +423,16 @@ func ForSaleEQ(v bool) predicate.SubscriptionPlan {
 // ForSaleNEQ applies the NEQ predicate on the "for_sale" field.
 func ForSaleNEQ(v bool) predicate.SubscriptionPlan {
 	return predicate.SubscriptionPlan(sql.FieldNEQ(FieldForSale, v))
+}
+
+// IsHistoricalEQ applies the EQ predicate on the "is_historical" field.
+func IsHistoricalEQ(v bool) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldEQ(FieldIsHistorical, v))
+}
+
+// IsHistoricalNEQ applies the NEQ predicate on the "is_historical" field.
+func IsHistoricalNEQ(v bool) predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldNEQ(FieldIsHistorical, v))
 }
 
 // SortOrderEQ applies the EQ predicate on the "sort_order" field.

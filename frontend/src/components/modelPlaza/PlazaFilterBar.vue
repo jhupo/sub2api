@@ -29,17 +29,10 @@
       </span>
       <div class="flex flex-wrap items-center gap-2">
         <button
-          type="button"
-          class="rounded-lg px-3 py-1.5 text-sm font-medium transition"
-          :class="chipClass(groupId === 'all')"
-          @click="$emit('update:groupId', 'all')"
-        >
-          {{ t('modelPlaza.filters.all') }}
-        </button>
-        <button
           v-for="g in groups"
           :key="`group-${g.id}`"
           type="button"
+          data-group-option
           class="rounded-lg px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 disabled:grayscale"
           :class="groupId === g.id ? 'chip-tinted-active' : 'chip-tinted'"
           :style="{ '--chip-accent': platformAccentColor(g.platform) }"
@@ -125,7 +118,7 @@ const props = defineProps<{
   /** 全量生效倍率去重升序。 */
   rates: number[]
   platform: string
-  groupId: number | 'all'
+  groupId: number | null
   rate: number | 'all'
   /** 模型名搜索词(纯前端过滤)。 */
   search: string
@@ -133,7 +126,7 @@ const props = defineProps<{
 
 defineEmits<{
   'update:platform': [value: string]
-  'update:groupId': [value: number | 'all']
+  'update:groupId': [value: number]
   'update:rate': [value: number | 'all']
   'update:search': [value: string]
 }>()
@@ -141,14 +134,13 @@ defineEmits<{
 const { t } = useI18n()
 
 /**
- * 三个维度互为约束(faceted):某选项可点 ⟺ 在「其他两维」当前选择下仍有分组命中。
- * 「全部」永远可点,作为解除本维约束的出口;可点项组合恒有结果,无需选择修正。
+ * 平台和倍率互相约束可选范围；分组始终必选，由父组件在筛选变化后自动重选。
+ * 这里不能再用当前分组限制平台/倍率，否则选中一个分组后将无法切换到其他平台。
  */
 function platformEnabled(p: string): boolean {
   return props.groups.some(
     (g) =>
       g.platform === p &&
-      (props.groupId === 'all' || g.id === props.groupId) &&
       (props.rate === 'all' || g.rate === props.rate)
   )
 }
@@ -164,8 +156,7 @@ function rateEnabled(r: number): boolean {
   return props.groups.some(
     (g) =>
       g.rate === r &&
-      (props.platform === 'all' || g.platform === props.platform) &&
-      (props.groupId === 'all' || g.id === props.groupId)
+      (props.platform === 'all' || g.platform === props.platform)
   )
 }
 

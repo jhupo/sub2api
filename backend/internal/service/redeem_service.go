@@ -148,11 +148,19 @@ func validateRedeemPlanVersion(ctx context.Context, client *dbent.Client, codeTy
 	if client == nil {
 		return infraerrors.InternalServer("PLAN_STORE_UNAVAILABLE", "subscription plan store is unavailable")
 	}
-	if _, err := client.SubscriptionPlanVersion.Get(ctx, *planVersionID); err != nil {
+	version, err := client.SubscriptionPlanVersion.Get(ctx, *planVersionID)
+	if err != nil {
 		if dbent.IsNotFound(err) {
 			return infraerrors.BadRequest("REDEEM_CODE_PLAN_VERSION_NOT_FOUND", "subscription plan version not found")
 		}
 		return err
+	}
+	plan, err := client.SubscriptionPlan.Get(ctx, version.PlanID)
+	if err != nil {
+		return err
+	}
+	if plan.IsHistorical {
+		return infraerrors.BadRequest("REDEEM_CODE_PLAN_HISTORICAL", "historical subscription plans cannot be used for new redeem codes")
 	}
 	return nil
 }
@@ -347,13 +355,7 @@ func (s *RedeemService) BatchUpdate(ctx context.Context, input *RedeemCodeBatchU
 		if input.Fields.PlanVersionID.Value == nil || *input.Fields.PlanVersionID.Value <= 0 {
 			return nil, infraerrors.BadRequest("REDEEM_CODE_PLAN_VERSION_ID_INVALID", "plan_version_id must be positive")
 		}
-		if s.entClient == nil {
-			return nil, infraerrors.InternalServer("PLAN_STORE_UNAVAILABLE", "subscription plan store is unavailable")
-		}
-		if _, err := s.entClient.SubscriptionPlanVersion.Get(ctx, *input.Fields.PlanVersionID.Value); err != nil {
-			if dbent.IsNotFound(err) {
-				return nil, infraerrors.BadRequest("REDEEM_CODE_PLAN_VERSION_NOT_FOUND", "subscription plan version not found")
-			}
+		if err := validateRedeemPlanVersion(ctx, s.entClient, RedeemTypeSubscription, input.Fields.PlanVersionID.Value); err != nil {
 			return nil, err
 		}
 		nonSubscriptionCount, err := s.entClient.RedeemCode.Query().

@@ -39,7 +39,10 @@ func NewAntigravityQuotaFetcher(proxyRepo ProxyRepository, cfg *config.Config) *
 
 // CanFetch 检查是否可以获取此账户的额度
 func (f *AntigravityQuotaFetcher) CanFetch(account *Account) bool {
-	if account.Platform != PlatformAntigravity {
+	if account == nil {
+		return false
+	}
+	if account.Platform != PlatformAntigravity && !account.IsGeminiAntigravity() {
 		return false
 	}
 	accessToken := account.GetCredential("access_token")

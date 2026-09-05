@@ -33,6 +33,7 @@ type SubscriptionPlan struct {
 	Features           string    `json:"features"`
 	ProductName        string    `json:"product_name"`
 	ForSale            bool      `json:"for_sale"`
+	IsHistorical       bool      `json:"is_historical"`
 	SortOrder          int       `json:"sort_order"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
@@ -98,15 +99,24 @@ func validatePlanPatch(req UpdatePlanRequest) error {
 }
 
 func (s *PaymentConfigService) ListPlans(ctx context.Context) ([]*SubscriptionPlan, error) {
-	return s.listPlans(ctx, false)
+	return s.listPlans(ctx, false, false)
+}
+
+// Historical plans are needed when editing existing grants and announcement
+// targeting, or filtering issued subscriptions.
+func (s *PaymentConfigService) ListPlansIncludingHistorical(ctx context.Context) ([]*SubscriptionPlan, error) {
+	return s.listPlans(ctx, false, true)
 }
 
 func (s *PaymentConfigService) ListPlansForSale(ctx context.Context) ([]*SubscriptionPlan, error) {
-	return s.listPlans(ctx, true)
+	return s.listPlans(ctx, true, false)
 }
 
-func (s *PaymentConfigService) listPlans(ctx context.Context, forSaleOnly bool) ([]*SubscriptionPlan, error) {
+func (s *PaymentConfigService) listPlans(ctx context.Context, forSaleOnly, includeHistorical bool) ([]*SubscriptionPlan, error) {
 	query := s.entClient.SubscriptionPlan.Query()
+	if !includeHistorical {
+		query = query.Where(subscriptionplan.IsHistoricalEQ(false))
+	}
 	if forSaleOnly {
 		query = query.Where(subscriptionplan.ForSaleEQ(true))
 	}
@@ -216,6 +226,9 @@ func (s *PaymentConfigService) UpdatePlan(ctx context.Context, id int64, req Upd
 	}
 	if plan.PublishedVersionID == nil {
 		return nil, fmt.Errorf("plan %d has no published version", plan.ID)
+	}
+	if plan.IsHistorical {
+		return nil, infraerrors.Conflict("PLAN_HISTORICAL_READ_ONLY", "historical subscription plans cannot be edited")
 	}
 	version, err := tx.SubscriptionPlanVersion.Get(ctx, *plan.PublishedVersionID)
 	if err != nil {
@@ -340,7 +353,7 @@ func subscriptionPlanFromEntities(plan *dbent.SubscriptionPlan, version *dbent.S
 	return &SubscriptionPlan{
 		ID: plan.ID, PublishedVersionID: version.ID, Version: version.Version,
 		Name: plan.Name, Description: plan.Description, Features: plan.Features, ProductName: plan.ProductName,
-		ForSale: plan.ForSale, SortOrder: plan.SortOrder, CreatedAt: plan.CreatedAt, UpdatedAt: plan.UpdatedAt,
+		ForSale: plan.ForSale, IsHistorical: plan.IsHistorical, SortOrder: plan.SortOrder, CreatedAt: plan.CreatedAt, UpdatedAt: plan.UpdatedAt,
 		Price: version.Price, OriginalPrice: version.OriginalPrice, Currency: version.Currency,
 		ValidityDays: version.ValidityDays, ValidityUnit: version.ValidityUnit,
 		DailyLimitUSD: version.DailyLimitUsd, WeeklyLimitUSD: version.WeeklyLimitUsd, MonthlyLimitUSD: version.MonthlyLimitUsd,

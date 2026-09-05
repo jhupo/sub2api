@@ -127,6 +127,7 @@ export interface SubscriptionPlan {
   features: string[]
   product_name?: string
   for_sale: boolean
+  is_historical?: boolean
   sort_order: number
 }
 

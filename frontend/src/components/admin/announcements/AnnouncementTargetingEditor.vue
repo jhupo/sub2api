@@ -116,7 +116,6 @@
                       @change="togglePlan(groupIndex, condIndex, plan.id)"
                     />
                     <span class="min-w-0 flex-1 truncate">{{ plan.name }}</span>
-                    <span class="text-xs text-gray-400">v{{ plan.version }}</span>
                   </label>
                   <div v-if="plans.length === 0" class="px-2 py-3 text-sm text-gray-400">
                     {{ t('common.noData') }}

@@ -670,8 +670,16 @@ func TestGeminiOAuthService_Stop_NoPanic(t *testing.T) {
 // =====================
 
 type mockGeminiOAuthClient struct {
+	getEmailFunc     func(ctx context.Context, accessToken, proxyURL string) (string, error)
 	exchangeCodeFunc func(ctx context.Context, oauthType, code, codeVerifier, redirectURI, proxyURL string) (*geminicli.TokenResponse, error)
 	refreshTokenFunc func(ctx context.Context, oauthType, refreshToken, proxyURL string) (*geminicli.TokenResponse, error)
+}
+
+func (m *mockGeminiOAuthClient) GetEmail(ctx context.Context, accessToken, proxyURL string) (string, error) {
+	if m.getEmailFunc != nil {
+		return m.getEmailFunc(ctx, accessToken, proxyURL)
+	}
+	return "", nil
 }
 
 func (m *mockGeminiOAuthClient) ExchangeCode(ctx context.Context, oauthType, code, codeVerifier, redirectURI, proxyURL string) (*geminicli.TokenResponse, error) {

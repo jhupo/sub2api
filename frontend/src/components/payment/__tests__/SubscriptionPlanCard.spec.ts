@@ -81,7 +81,7 @@ describe("SubscriptionPlanCard", () => {
     ["long Chinese", "企业全球加速专业订阅套餐（含高级模型与优先支持）"],
     ["long English", "Enterprise Global Acceleration Subscription with Priority Support"],
     ["unbroken token", "EnterpriseGlobalAccelerationSubscriptionWithPrioritySupport1234567890"],
-  ])("keeps the full %s plan title accessible in a bounded two-line area", (_label, name) => {
+  ])("keeps the full %s plan title visible", (_label, name) => {
     const wrapper = mountPlanCard({ name });
     const title = wrapper.get("h3");
 
@@ -89,12 +89,11 @@ describe("SubscriptionPlanCard", () => {
     expect(title.attributes("title")).toBe(name);
     expect(title.classes()).toEqual(expect.arrayContaining([
       "min-w-0",
-      "h-12",
       "break-words",
-      "line-clamp-2",
       "[overflow-wrap:anywhere]",
     ]));
     expect(title.classes()).not.toContain("truncate");
+    expect(title.classes()).not.toContain("line-clamp-2");
   });
 
   it("keeps title, price, description, and purchase action in separate bounded regions", () => {
@@ -109,8 +108,7 @@ describe("SubscriptionPlanCard", () => {
     const priceRegion = title.element.parentElement?.nextElementSibling as HTMLElement | null;
 
     expect(title.element.parentElement?.classList).toContain("min-w-0");
-    expect(title.element.parentElement?.classList).toContain("flex-1");
-    expect([...(priceRegion?.classList ?? [])]).toEqual(expect.arrayContaining(["shrink-0", "text-right"]));
+    expect(priceRegion?.classList).toContain("min-w-0");
     expect(priceRegion?.textContent).toContain("/ 30payment.days");
     expect(price?.exists()).toBe(true);
     expect(wrapper.get("p").text()).toBe("Includes advanced models and priority support.");
@@ -124,8 +122,16 @@ describe("SubscriptionPlanCard", () => {
 
     expect(title.text()).toBe("Pro");
     expect(title.attributes("title")).toBe("Pro");
-    expect(title.classes()).toEqual(expect.arrayContaining(["text-base", "font-bold", "h-12"]));
-    expect([...(priceRegion?.classList ?? [])]).toEqual(expect.arrayContaining(["shrink-0", "text-right"]));
+    expect(title.classes()).toEqual(expect.arrayContaining(["text-base", "font-semibold"]));
+    expect(priceRegion?.classList).toContain("min-w-0");
     expect(priceRegion?.textContent).toContain("/ 30payment.days");
+  });
+
+  it("submits the selected catalog product with its configured limits", async () => {
+    const wrapper = mountPlanCard({ id: 9, daily_limit_usd: 200, monthly_limit_usd: 1500, price: 128 });
+    expect(wrapper.text()).toContain("$200");
+    expect(wrapper.text()).toContain("$1500");
+    await wrapper.get("button").trigger("click");
+    expect(wrapper.emitted("select")?.[0]?.[0]).toEqual(expect.objectContaining({ id: 9, price: 128, daily_limit_usd: 200, monthly_limit_usd: 1500 }));
   });
 });

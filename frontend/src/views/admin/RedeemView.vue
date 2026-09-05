@@ -133,7 +133,7 @@
               <template v-if="row.type === 'balance'">${{ value.toFixed(2) }}</template>
               <template v-else-if="row.type === 'subscription'">
                 <span v-if="row.plan">
-                  {{ row.plan.name }} (v{{ row.plan.version }})
+                  {{ row.plan.name }}
                 </span>
                 <span v-else class="text-gray-400">#{{ row.plan_version_id }}</span>
               </template>
@@ -614,7 +614,7 @@ const subscriptionPlanOptions = computed(() =>
     .filter((plan) => plan.published_version_id != null)
     .map((plan) => ({
       value: plan.published_version_id!,
-      label: `${plan.name} (v${plan.version})`
+      label: plan.name
     }))
 )
 

@@ -521,7 +521,7 @@ func subscriptionPlanEntityToService(plan *dbent.SubscriptionPlan, version *dben
 	return &service.SubscriptionPlan{
 		ID: plan.ID, PublishedVersionID: version.ID, Version: version.Version,
 		Name: plan.Name, Description: plan.Description, Features: plan.Features, ProductName: plan.ProductName,
-		ForSale: plan.ForSale, SortOrder: plan.SortOrder, CreatedAt: plan.CreatedAt, UpdatedAt: plan.UpdatedAt,
+		ForSale: plan.ForSale, IsHistorical: plan.IsHistorical, SortOrder: plan.SortOrder, CreatedAt: plan.CreatedAt, UpdatedAt: plan.UpdatedAt,
 		Price: version.Price, OriginalPrice: version.OriginalPrice, Currency: version.Currency,
 		ValidityDays: version.ValidityDays, ValidityUnit: version.ValidityUnit,
 		DailyLimitUSD: version.DailyLimitUsd, WeeklyLimitUSD: version.WeeklyLimitUsd, MonthlyLimitUSD: version.MonthlyLimitUsd,
