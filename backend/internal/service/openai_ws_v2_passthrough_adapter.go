@@ -788,6 +788,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if accountScoped {
 		firstClientMessage = accountScopedFirst
 	}
+	if fingerprinted, fingerprintChanged, fingerprintErr := applyCodexFingerprintClientMetadataRaw(firstClientMessage, stagedCodexFingerprintIDs(c, account)); fingerprintErr != nil {
+		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket fingerprint metadata", fingerprintErr)
+	} else if fingerprintChanged {
+		firstClientMessage = fingerprinted
+	}
 	// Client→upstream filtering and relay callbacks run in separate goroutines.
 	// Keep the session model synchronized when a client sends session.update,
 	// so failure accounting and synthesized terminal events never race with the
@@ -1050,6 +1055,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				}
 				if accountScoped {
 					payload = accountScopedPayload
+				}
+				if fingerprinted, fingerprintChanged, fingerprintErr := applyCodexFingerprintClientMetadataRaw(payload, stagedCodexFingerprintIDs(c, account)); fingerprintErr != nil {
+					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket fingerprint metadata", fingerprintErr)
+				} else if fingerprintChanged {
+					payload = fingerprinted
 				}
 			}
 			if isResponseCreate {

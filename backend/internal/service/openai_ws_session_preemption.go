@@ -64,7 +64,7 @@ func (s *OpenAIGatewayService) BeginOpenAIWSIngressSessionPreemption(
 	preemptSessionHash := ""
 	preemptGroupID := getOpenAIGroupIDFromContext(c)
 	if account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth {
-		preemptSessionHash = s.GenerateSessionHash(c, firstClientMessage)
+		preemptSessionHash = s.GenerateScopedSessionHash(c, firstClientMessage)
 	}
 	preemptCtx, cleanup, armed, preemptedPrevious := s.beginOpenAIWSSessionPreemptContext(
 		ctx,
@@ -79,7 +79,7 @@ func (s *OpenAIGatewayService) BeginOpenAIWSIngressSessionPreemption(
 	}
 	if preemptedPrevious {
 		if stateStore := s.getOpenAIWSStateStore(); stateStore != nil {
-			stateSessionHash := scopeOpenAIWSSessionHash(getAPIKeyIDFromContext(c), preemptSessionHash)
+			stateSessionHash := preemptSessionHash
 			stateStore.DeleteSessionTurnState(preemptGroupID, stateSessionHash)
 			stateStore.DeleteSessionConn(preemptGroupID, stateSessionHash)
 		}
@@ -160,7 +160,7 @@ func (s *OpenAIGatewayService) beginOpenAIWSSessionPreemptContext(
 	preempt := func() {
 		preemptOnce.Do(func() {
 			if stateStore := s.getOpenAIWSStateStore(); stateStore != nil {
-				stateSessionHash := scopeOpenAIWSSessionHash(key.apiKeyID, key.sessionHash)
+				stateSessionHash := key.sessionHash
 				stateStore.DeleteSessionTurnState(key.groupID, stateSessionHash)
 				stateStore.DeleteSessionConn(key.groupID, stateSessionHash)
 			}

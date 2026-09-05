@@ -168,6 +168,22 @@ func TestResolveCodexFingerprintIDsFromRequestAndBody_PrefersHeaderSession(t *te
 	assert.Equal(t, resolveConvergedThreadID(testCodexFingerprintSeed, "header-session"), ids.threadID)
 }
 
+func TestResolveCodexFingerprintIDsForAPIKey_IsolatesSharedSessions(t *testing.T) {
+	account := newTestOAuthAccount(1701, map[string]any{codexFingerprintModeExtraKey: "session"})
+	headers := http.Header{"Session-Id": []string{"same-client-session"}}
+	first := resolveCodexFingerprintIDsFromRequestAndBodyForAPIKey(account, headers, nil, 11)
+	second := resolveCodexFingerprintIDsFromRequestAndBodyForAPIKey(account, headers, nil, 12)
+	require.NotNil(t, first)
+	require.NotNil(t, second)
+	assert.NotEqual(t, first.threadID, second.threadID, "同一原始 session 在不同 API Key 下必须得到不同 thread")
+
+	anonymousFirst := resolveCodexFingerprintIDsFromRequestAndBodyForAPIKey(account, nil, nil, 11)
+	anonymousSecond := resolveCodexFingerprintIDsFromRequestAndBodyForAPIKey(account, nil, nil, 12)
+	require.NotNil(t, anonymousFirst)
+	require.NotNil(t, anonymousSecond)
+	assert.NotEqual(t, anonymousFirst.threadID, anonymousSecond.threadID, "缺失 session 时也不得跨 API Key 合并线程")
+}
+
 func TestResolveCodexFingerprintIDsFromRequest_EnabledModesRequireValidSeed(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
@@ -944,4 +960,37 @@ func TestApplyCodexFingerprintClientMetadataRaw_NonObjectBodyUntouched(t *testin
 		assert.False(t, changed, "非 JSON 对象 body 不应被改写: %s", body)
 		assert.Equal(t, []byte(body), out)
 	}
+}
+
+func TestStagedCodexFingerprintMetadataMatchesHeadersAndRejectsStaleAccount(t *testing.T) {
+	account := newTestOAuthAccount(4250, map[string]any{codexFingerprintModeExtraKey: "session"})
+	ids := resolveCodexFingerprintIDs(account, "client-session", codexFingerprintSession)
+	require.NotNil(t, ids)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	stageCodexFingerprintIDs(c, ids)
+
+	body := []byte(`{"type":"response.create","prompt_cache_key":"client-session","client_metadata":{"session_id":"client-session","thread_id":"client-thread","trace":"keep"}}`)
+	updated, changed, err := applyCodexFingerprintClientMetadataRaw(body, stagedCodexFingerprintIDs(c, account))
+	require.NoError(t, err)
+	require.True(t, changed)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(updated, &decoded))
+	metadata, ok := decoded["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, ids.installationID, metadata["x-codex-installation-id"])
+	assert.Equal(t, ids.sessionID, metadata["session_id"])
+	assert.Equal(t, ids.threadID, metadata["thread_id"])
+	assert.Equal(t, ids.sessionID, decoded["prompt_cache_key"])
+	assert.Equal(t, "keep", metadata["trace"])
+
+	headers := http.Header{"x-codex-installation-id": {"client-installation"}}
+	applyStagedCodexFingerprintHeaders(c, account, headers)
+	assert.Equal(t, ids.installationID, headers.Get("x-codex-installation-id"))
+
+	otherAccount := newTestOAuthAccount(4251, map[string]any{codexFingerprintModeExtraKey: "session"})
+	unchanged, changed, err := applyCodexFingerprintClientMetadataRaw(body, stagedCodexFingerprintIDs(c, otherAccount))
+	require.NoError(t, err)
+	assert.False(t, changed)
+	assert.Equal(t, body, unchanged, "账号切换后不得复用旧账号的指纹快照")
 }

@@ -100,7 +100,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		if c.Request != nil {
 			clientHeaders = c.Request.Header
 		}
-		stageCodexFingerprintIDs(c, resolveCodexFingerprintIDsFromRequestAndBody(account, clientHeaders, firstClientMessage))
+		stageCodexFingerprintIDs(c, resolveCodexFingerprintIDsFromRequestAndBodyForAPIKey(account, clientHeaders, firstClientMessage, getAPIKeyIDFromContext(c)))
 	}
 	if err := validateOpenAIWSBearerToken(account, token); err != nil {
 		return err
@@ -536,15 +536,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	turnState := strings.TrimSpace(c.GetHeader(openAIWSTurnStateHeader))
 	stateStore := s.getOpenAIWSStateStore()
 	groupID := getOpenAIGroupIDFromContext(c)
-	apiKeyID := getAPIKeyIDFromContext(c)
 	storeDisabledConnMode := s.openAIWSStoreDisabledConnMode()
 	sessionHash := ""
 	stateSessionHash := ""
 	preferredConnID := ""
 	storeDisabled := false
 	refreshIngressRouteState := func(payload openAIWSClientPayload) {
-		sessionHash = s.GenerateSessionHash(c, payload.rawForHash)
-		stateSessionHash = scopeOpenAIWSSessionHash(apiKeyID, sessionHash)
+		sessionHash = s.GenerateScopedSessionHash(c, payload.rawForHash)
+		stateSessionHash = sessionHash
 		if turnState == "" && stateStore != nil && stateSessionHash != "" {
 			if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, stateSessionHash); ok {
 				turnState = savedTurnState

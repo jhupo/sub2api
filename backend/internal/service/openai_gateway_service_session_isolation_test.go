@@ -48,3 +48,9 @@ func TestIsolateOpenAISessionID(t *testing.T) {
 		assert.NotEqual(t, result, other)
 	})
 }
+
+func TestScopeOpenAIStickySessionHash(t *testing.T) {
+	assert.Equal(t, "v2:key:7:abc", scopeOpenAIStickySessionHash(7, "abc"))
+	assert.NotEqual(t, scopeOpenAIStickySessionHash(7, "abc"), scopeOpenAIStickySessionHash(8, "abc"))
+	assert.Equal(t, "abc", scopeOpenAIStickySessionHash(0, "abc"))
+}

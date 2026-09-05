@@ -36,6 +36,14 @@ func DeriveSessionHashFromSeed(seed string) string {
 	return currentHash
 }
 
+func scopeOpenAIStickySessionHash(apiKeyID int64, sessionHash string) string {
+	hash := strings.TrimSpace(sessionHash)
+	if hash == "" || apiKeyID <= 0 {
+		return hash
+	}
+	return fmt.Sprintf("v2:key:%d:%s", apiKeyID, hash)
+}
+
 func deriveOpenAISessionHashes(sessionID string) (currentHash string, legacyHash string) {
 	normalized := strings.TrimSpace(sessionID)
 	if normalized == "" {

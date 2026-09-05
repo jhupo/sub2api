@@ -341,6 +341,35 @@ func resolveCodexFingerprintIDsFromRequest(account *Account, clientHeaders http.
 	return resolveCodexFingerprintIDsFromRequestAndBody(account, clientHeaders, nil)
 }
 
+// resolveCodexFingerprintIDsFromRequestAndBodyForAPIKey keeps session-mode
+// thread derivation isolated when multiple downstream API keys share one OAuth
+// account. The raw client session remains stable within one API key, while an
+// absent session receives a deterministic API-key-specific fallback.
+func resolveCodexFingerprintIDsFromRequestAndBodyForAPIKey(account *Account, clientHeaders http.Header, body []byte, apiKeyID int64) *codexFingerprintIDs {
+	if apiKeyID <= 0 {
+		return resolveCodexFingerprintIDsFromRequestAndBody(account, clientHeaders, body)
+	}
+	clientSessionID := ""
+	if clientHeaders != nil {
+		clientSessionID = extractClientSessionID(clientHeaders)
+	}
+	if clientSessionID == "" && len(body) > 0 && gjson.ValidBytes(body) {
+		bodySession := gjson.GetBytes(body, "client_metadata.session_id")
+		if bodySession.Type == gjson.String {
+			clientSessionID = strings.TrimSpace(bodySession.String())
+		}
+	}
+	if clientSessionID == "" {
+		clientSessionID = fmt.Sprintf("api-key:%d:anonymous", apiKeyID)
+	} else {
+		clientSessionID = isolateOpenAISessionID(apiKeyID, clientSessionID)
+	}
+	if account == nil {
+		return nil
+	}
+	return resolveCodexFingerprintIDs(account, clientSessionID, account.GetCodexFingerprintMode())
+}
+
 // resolveCodexFingerprintIDsFromRequestAndBody extends the HTTP/header resolver
 // for Responses WebSocket ingress. Some clients put the session identifier only
 // in the first response.create client_metadata object, so the WS connection must

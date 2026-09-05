@@ -182,6 +182,15 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) 
 	return currentHash
 }
 
+// GenerateScopedSessionHash derives the scheduler affinity key and scopes it
+// to the authenticated downstream API key. The unscoped method remains for
+// compatibility with non-OpenAI callers; OpenAI gateway paths use this method
+// so equal client session IDs cannot share an account binding across users.
+func (s *OpenAIGatewayService) GenerateScopedSessionHash(c *gin.Context, body []byte) string {
+	hash := s.GenerateSessionHash(c, body)
+	return s.scopeSessionHashForAPIKey(c, hash)
+}
+
 // grokStickyAffinitySeed scopes sticky routing by model without changing the
 // upstream prompt_cache_key written by applyGrokResponsesCacheIdentity.
 func grokStickyAffinitySeed(sessionID string, body []byte) string {
@@ -216,6 +225,28 @@ func (s *OpenAIGatewayService) GenerateSessionHashWithFallback(c *gin.Context, b
 	currentHash, legacyHash := deriveOpenAISessionHashes(seed)
 	attachOpenAILegacySessionHashToGin(c, legacyHash)
 	return currentHash
+}
+
+func (s *OpenAIGatewayService) GenerateScopedSessionHashWithFallback(c *gin.Context, body []byte, fallbackSeed string) string {
+	hash := s.GenerateSessionHashWithFallback(c, body, fallbackSeed)
+	return s.scopeSessionHashForAPIKey(c, hash)
+}
+
+// ScopeSessionHash applies the same API-key scope to a hash derived by a
+// compatibility-specific resolver (for example Claude metadata.user_id).
+func (s *OpenAIGatewayService) ScopeSessionHash(c *gin.Context, hash string) string {
+	return s.scopeSessionHashForAPIKey(c, hash)
+}
+
+func (s *OpenAIGatewayService) scopeSessionHashForAPIKey(c *gin.Context, hash string) string {
+	apiKeyID := getAPIKeyIDFromContext(c)
+	if apiKeyID <= 0 || strings.TrimSpace(hash) == "" {
+		return hash
+	}
+	scoped := scopeOpenAIStickySessionHash(apiKeyID, hash)
+	_, legacyHash := deriveOpenAISessionHashes(scoped)
+	attachOpenAILegacySessionHashToGin(c, legacyHash)
+	return scoped
 }
 
 func resolveOpenAIUpstreamOriginator(c *gin.Context, isOfficialClient bool) string {

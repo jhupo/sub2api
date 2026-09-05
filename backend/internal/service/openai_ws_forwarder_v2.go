@@ -123,14 +123,14 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 
 	stateStore := s.getOpenAIWSStateStore()
 	groupID := getOpenAIGroupIDFromContext(c)
-	apiKeyID := getAPIKeyIDFromContext(c)
-	sessionHash := s.GenerateSessionHash(c, nil)
+	sessionHash := s.GenerateScopedSessionHash(c, nil)
 	if sessionHash == "" {
 		var legacySessionHash string
 		sessionHash, legacySessionHash = openAIWSSessionHashesFromID(promptCacheKey)
 		attachOpenAILegacySessionHashToGin(c, legacySessionHash)
+		sessionHash = s.ScopeSessionHash(c, sessionHash)
 	}
-	stateSessionHash := scopeOpenAIWSSessionHash(apiKeyID, sessionHash)
+	stateSessionHash := sessionHash
 	if turnState == "" && stateStore != nil && stateSessionHash != "" {
 		if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, stateSessionHash); ok {
 			turnState = savedTurnState
