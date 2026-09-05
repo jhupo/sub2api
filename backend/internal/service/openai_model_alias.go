@@ -110,7 +110,7 @@ func normalizeKnownOpenAICodexModel(model string) string {
 
 func isOpenAIGPT6AstraModel(model string) bool {
 	normalized := canonicalizeOpenAIModelAliasSpelling(model)
-	return normalized == "gpt-6" || normalized == "gpt-6-astra"
+	return normalized == "gpt-6" || normalized == "gpt-6-astra" || strings.HasPrefix(normalized, "gpt-6-astra-")
 }
 
 // isOpenAIGPT56Model 判断是否 GPT-5.6 系列模型；入参可为原始模型名
