@@ -2297,9 +2297,6 @@ func completeAPIKeyCodexModelsManifestMetadata(body []byte, completeAll bool, ac
 		}
 
 		capabilities := accountCodexToolCapabilities(account, slug)
-		for _, field := range codexToolCapabilityFields {
-			delete(defaults, field)
-		}
 
 		modelChanged := false
 		if completeDescriptor {
