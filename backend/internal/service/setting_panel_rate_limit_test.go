@@ -129,12 +129,32 @@ func TestGetPanelRateLimitSettingsNormalizesValues(t *testing.T) {
 	require.False(t, settings.ExemptAdmin)
 }
 
+func TestGetPanelRateLimitSettingsDefaultsBruteForceFieldsForExistingRecord(t *testing.T) {
+	repo := &panelRateLimitSettingRepo{values: map[string]string{
+		SettingKeyPanelRateLimitSettings: `{"enabled":true,"user_rpm":100,"heavy_rpm":20,"exempt_admin":true,"public_ip_rpm":50}`,
+	}}
+	svc := newPanelRateLimitTestService(repo)
+
+	settings, err := svc.GetPanelRateLimitSettings(context.Background())
+	require.NoError(t, err)
+	require.True(t, settings.LoginBruteForceEnabled)
+	require.Equal(t, loginBruteForceThresholdDefault, settings.LoginBruteForceThreshold)
+	require.Equal(t, loginBruteForceWindowSecondsDefault, settings.LoginBruteForceWindowSeconds)
+	require.Equal(t, loginBruteForceBlockSecondsDefault, settings.LoginBruteForceBlockSeconds)
+}
+
 func TestSetPanelRateLimitSettingsValidation(t *testing.T) {
 	svc := newPanelRateLimitTestService(&panelRateLimitSettingRepo{})
 
 	require.Error(t, svc.SetPanelRateLimitSettings(context.Background(), nil))
 	require.Error(t, svc.SetPanelRateLimitSettings(context.Background(), &PanelRateLimitSettings{UserRPM: -1}))
 	require.Error(t, svc.SetPanelRateLimitSettings(context.Background(), &PanelRateLimitSettings{HeavyRPM: panelRateLimitRPMMax + 1}))
+	require.Error(t, svc.SetPanelRateLimitSettings(context.Background(), &PanelRateLimitSettings{
+		LoginBruteForceEnabled:       true,
+		LoginBruteForceThreshold:     0,
+		LoginBruteForceWindowSeconds: 600,
+		LoginBruteForceBlockSeconds:  3600,
+	}))
 }
 
 func TestSetPanelRateLimitSettingsRoundTripAndCacheRefresh(t *testing.T) {

@@ -453,11 +453,15 @@ type RateLimit429CooldownSettings struct {
 
 // PanelRateLimitSettings 面板 API 限流配置 DTO
 type PanelRateLimitSettings struct {
-	Enabled     bool `json:"enabled"`
-	UserRPM     int  `json:"user_rpm"`
-	HeavyRPM    int  `json:"heavy_rpm"`
-	ExemptAdmin bool `json:"exempt_admin"`
-	PublicIPRPM int  `json:"public_ip_rpm"`
+	Enabled                      bool `json:"enabled"`
+	UserRPM                      int  `json:"user_rpm"`
+	HeavyRPM                     int  `json:"heavy_rpm"`
+	ExemptAdmin                  bool `json:"exempt_admin"`
+	PublicIPRPM                  int  `json:"public_ip_rpm"`
+	LoginBruteForceEnabled       bool `json:"login_bruteforce_enabled"`
+	LoginBruteForceThreshold     int  `json:"login_bruteforce_threshold"`
+	LoginBruteForceWindowSeconds int  `json:"login_bruteforce_window_seconds"`
+	LoginBruteForceBlockSeconds  int  `json:"login_bruteforce_block_seconds"`
 }
 
 // StreamTimeoutSettings 流超时处理配置 DTO

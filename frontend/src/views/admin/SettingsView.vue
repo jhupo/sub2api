@@ -1989,6 +1989,82 @@
                     </div>
                     <Toggle v-model="panelRateLimitForm.exempt_admin" />
                   </div>
+
+                  <div class="space-y-5 border-t border-gray-100 pt-4 dark:border-dark-700">
+                    <div class="flex items-center justify-between">
+                      <div>
+                        <label class="font-medium text-gray-900 dark:text-white">{{
+                          t("admin.settings.panelRateLimit.loginBruteForceEnabled")
+                        }}</label>
+                        <p class="text-sm text-gray-500 dark:text-gray-400">
+                          {{ t("admin.settings.panelRateLimit.loginBruteForceEnabledHint") }}
+                        </p>
+                      </div>
+                      <Toggle v-model="panelRateLimitForm.login_bruteforce_enabled" />
+                    </div>
+
+                    <div
+                      v-if="panelRateLimitForm.login_bruteforce_enabled"
+                      class="grid grid-cols-1 gap-6 sm:grid-cols-3"
+                    >
+                      <div>
+                        <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          {{ t("admin.settings.panelRateLimit.loginBruteForceThreshold") }}
+                        </label>
+                        <div class="flex items-center gap-2">
+                          <input
+                            v-model.number="panelRateLimitForm.login_bruteforce_threshold"
+                            type="number"
+                            min="1"
+                            max="1000"
+                            class="input w-32"
+                          />
+                          <span class="text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.panelRateLimit.attempts") }}</span>
+                        </div>
+                        <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                          {{ t("admin.settings.panelRateLimit.loginBruteForceThresholdHint") }}
+                        </p>
+                      </div>
+
+                      <div>
+                        <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          {{ t("admin.settings.panelRateLimit.loginBruteForceWindow") }}
+                        </label>
+                        <div class="flex items-center gap-2">
+                          <input
+                            v-model.number="panelRateLimitForm.login_bruteforce_window_seconds"
+                            type="number"
+                            min="10"
+                            max="86400"
+                            class="input w-32"
+                          />
+                          <span class="text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.panelRateLimit.seconds") }}</span>
+                        </div>
+                        <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                          {{ t("admin.settings.panelRateLimit.loginBruteForceWindowHint") }}
+                        </p>
+                      </div>
+
+                      <div>
+                        <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          {{ t("admin.settings.panelRateLimit.loginBruteForceBlock") }}
+                        </label>
+                        <div class="flex items-center gap-2">
+                          <input
+                            v-model.number="panelRateLimitForm.login_bruteforce_block_seconds"
+                            type="number"
+                            min="10"
+                            max="604800"
+                            class="input w-32"
+                          />
+                          <span class="text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.panelRateLimit.seconds") }}</span>
+                        </div>
+                        <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                          {{ t("admin.settings.panelRateLimit.loginBruteForceBlockHint") }}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <div
@@ -8866,6 +8942,10 @@ const panelRateLimitForm = reactive({
   heavy_rpm: 60,
   exempt_admin: true,
   public_ip_rpm: 300,
+  login_bruteforce_enabled: true,
+  login_bruteforce_threshold: 10,
+  login_bruteforce_window_seconds: 600,
+  login_bruteforce_block_seconds: 3600,
 });
 
 // Stream Timeout 状态
@@ -11719,6 +11799,10 @@ async function savePanelRateLimitSettings() {
       heavy_rpm: panelRateLimitForm.heavy_rpm,
       exempt_admin: panelRateLimitForm.exempt_admin,
       public_ip_rpm: panelRateLimitForm.public_ip_rpm,
+      login_bruteforce_enabled: panelRateLimitForm.login_bruteforce_enabled,
+      login_bruteforce_threshold: panelRateLimitForm.login_bruteforce_threshold,
+      login_bruteforce_window_seconds: panelRateLimitForm.login_bruteforce_window_seconds,
+      login_bruteforce_block_seconds: panelRateLimitForm.login_bruteforce_block_seconds,
     });
     Object.assign(panelRateLimitForm, updated);
     appStore.showSuccess(t("admin.settings.panelRateLimit.saved"));

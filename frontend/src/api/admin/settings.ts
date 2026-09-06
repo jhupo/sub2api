@@ -1328,6 +1328,10 @@ export interface PanelRateLimitSettings {
   heavy_rpm: number;
   exempt_admin: boolean;
   public_ip_rpm: number;
+  login_bruteforce_enabled: boolean;
+  login_bruteforce_threshold: number;
+  login_bruteforce_window_seconds: number;
+  login_bruteforce_block_seconds: number;
 }
 
 export async function getPanelRateLimitSettings(): Promise<PanelRateLimitSettings> {

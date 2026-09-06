@@ -24,10 +24,27 @@ type PanelRateLimitSettings struct {
 	ExemptAdmin bool `json:"exempt_admin"`
 	// PublicIPRPM 无需认证的公开接口每 IP 每分钟上限（0 = 不限制）
 	PublicIPRPM int `json:"public_ip_rpm"`
+	// LoginBruteForceEnabled 是否启用登录失败按 IP 封禁。
+	LoginBruteForceEnabled bool `json:"login_bruteforce_enabled"`
+	// LoginBruteForceThreshold 封禁前允许的失败次数。
+	LoginBruteForceThreshold int `json:"login_bruteforce_threshold"`
+	// LoginBruteForceWindowSeconds 失败计数窗口（秒）。
+	LoginBruteForceWindowSeconds int `json:"login_bruteforce_window_seconds"`
+	// LoginBruteForceBlockSeconds 达到阈值后的封禁时长（秒）。
+	LoginBruteForceBlockSeconds int `json:"login_bruteforce_block_seconds"`
 }
 
 // 面板限流 RPM 的取值上限，防止配置异常大的值失去意义。
 const panelRateLimitRPMMax = 100000
+
+const (
+	loginBruteForceThresholdDefault     = 10
+	loginBruteForceWindowSecondsDefault = 10 * 60
+	loginBruteForceBlockSecondsDefault  = 60 * 60
+	loginBruteForceThresholdMax         = 1000
+	loginBruteForceWindowSecondsMax     = 24 * 60 * 60
+	loginBruteForceBlockSecondsMax      = 7 * 24 * 60 * 60
+)
 
 const (
 	panelRateLimitCacheTTL  = 60 * time.Second
@@ -45,11 +62,15 @@ type cachedPanelRateLimitSettings struct {
 // 默认启用但阈值宽松：正常前端交互远达不到，仅拦截脚本高频刷接口打爆数据库的行为。
 func DefaultPanelRateLimitSettings() *PanelRateLimitSettings {
 	return &PanelRateLimitSettings{
-		Enabled:     true,
-		UserRPM:     240,
-		HeavyRPM:    60,
-		ExemptAdmin: true,
-		PublicIPRPM: 300,
+		Enabled:                      true,
+		UserRPM:                      240,
+		HeavyRPM:                     60,
+		ExemptAdmin:                  true,
+		PublicIPRPM:                  300,
+		LoginBruteForceEnabled:       true,
+		LoginBruteForceThreshold:     loginBruteForceThresholdDefault,
+		LoginBruteForceWindowSeconds: loginBruteForceWindowSecondsDefault,
+		LoginBruteForceBlockSeconds:  loginBruteForceBlockSecondsDefault,
 	}
 }
 
@@ -76,6 +97,24 @@ func normalizePanelRateLimitSettings(s *PanelRateLimitSettings) {
 	if s.PublicIPRPM > panelRateLimitRPMMax {
 		s.PublicIPRPM = panelRateLimitRPMMax
 	}
+	if s.LoginBruteForceThreshold < 0 {
+		s.LoginBruteForceThreshold = 0
+	}
+	if s.LoginBruteForceWindowSeconds < 0 {
+		s.LoginBruteForceWindowSeconds = 0
+	}
+	if s.LoginBruteForceBlockSeconds < 0 {
+		s.LoginBruteForceBlockSeconds = 0
+	}
+	if s.LoginBruteForceThreshold > loginBruteForceThresholdMax {
+		s.LoginBruteForceThreshold = loginBruteForceThresholdMax
+	}
+	if s.LoginBruteForceWindowSeconds > loginBruteForceWindowSecondsMax {
+		s.LoginBruteForceWindowSeconds = loginBruteForceWindowSecondsMax
+	}
+	if s.LoginBruteForceBlockSeconds > loginBruteForceBlockSecondsMax {
+		s.LoginBruteForceBlockSeconds = loginBruteForceBlockSecondsMax
+	}
 }
 
 // GetPanelRateLimitSettings 获取面板 API 限流配置（直读 DB，供管理端读写路径使用）。
@@ -98,6 +137,24 @@ func (s *SettingService) GetPanelRateLimitSettings(ctx context.Context) (*PanelR
 			"error", err, "key", SettingKeyPanelRateLimitSettings)
 		return DefaultPanelRateLimitSettings(), nil
 	}
+	// Existing records predate the login brute-force fields. Apply defaults only
+	// when those fields are absent; an explicit zero remains an intentional disable.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(value), &fields); err == nil {
+		defaults := DefaultPanelRateLimitSettings()
+		if _, ok := fields["login_bruteforce_enabled"]; !ok {
+			settings.LoginBruteForceEnabled = defaults.LoginBruteForceEnabled
+		}
+		if _, ok := fields["login_bruteforce_threshold"]; !ok {
+			settings.LoginBruteForceThreshold = defaults.LoginBruteForceThreshold
+		}
+		if _, ok := fields["login_bruteforce_window_seconds"]; !ok {
+			settings.LoginBruteForceWindowSeconds = defaults.LoginBruteForceWindowSeconds
+		}
+		if _, ok := fields["login_bruteforce_block_seconds"]; !ok {
+			settings.LoginBruteForceBlockSeconds = defaults.LoginBruteForceBlockSeconds
+		}
+	}
 	normalizePanelRateLimitSettings(settings)
 	return settings, nil
 }
@@ -113,6 +170,17 @@ func (s *SettingService) SetPanelRateLimitSettings(ctx context.Context, settings
 	}
 	if settings.UserRPM > panelRateLimitRPMMax || settings.HeavyRPM > panelRateLimitRPMMax || settings.PublicIPRPM > panelRateLimitRPMMax {
 		return fmt.Errorf("rate limit values must be at most %d", panelRateLimitRPMMax)
+	}
+	if settings.LoginBruteForceEnabled {
+		if settings.LoginBruteForceThreshold < 1 || settings.LoginBruteForceThreshold > loginBruteForceThresholdMax {
+			return fmt.Errorf("login brute-force threshold must be between 1 and %d", loginBruteForceThresholdMax)
+		}
+		if settings.LoginBruteForceWindowSeconds < 10 || settings.LoginBruteForceWindowSeconds > loginBruteForceWindowSecondsMax {
+			return fmt.Errorf("login brute-force window must be between 10 and %d seconds", loginBruteForceWindowSecondsMax)
+		}
+		if settings.LoginBruteForceBlockSeconds < 10 || settings.LoginBruteForceBlockSeconds > loginBruteForceBlockSecondsMax {
+			return fmt.Errorf("login brute-force block duration must be between 10 and %d seconds", loginBruteForceBlockSecondsMax)
+		}
 	}
 
 	data, err := json.Marshal(settings)
