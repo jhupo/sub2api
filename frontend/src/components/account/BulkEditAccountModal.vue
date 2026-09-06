@@ -1236,7 +1236,7 @@
                 v-model="mapping.from"
                 type="text"
                 class="input flex-1"
-                :placeholder="t('admin.accounts.fromModel')"
+                :placeholder="t('admin.accounts.requestModel')"
                 data-testid="bulk-edit-openai-compact-model-mapping-input"
               />
               <span class="text-gray-400">→</span>
@@ -1244,7 +1244,7 @@
                 v-model="mapping.to"
                 type="text"
                 class="input flex-1"
-                :placeholder="t('admin.accounts.toModel')"
+                :placeholder="t('admin.accounts.actualModel')"
                 data-testid="bulk-edit-openai-compact-model-mapping-input"
               />
               <button

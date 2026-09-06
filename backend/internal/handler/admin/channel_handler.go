@@ -17,12 +17,11 @@ import (
 type ChannelHandler struct {
 	channelService *service.ChannelService
 	billingService *service.BillingService
-	pricingService *service.PricingService
 }
 
 // NewChannelHandler creates a new admin channel handler
-func NewChannelHandler(channelService *service.ChannelService, billingService *service.BillingService, pricingService *service.PricingService) *ChannelHandler {
-	return &ChannelHandler{channelService: channelService, billingService: billingService, pricingService: pricingService}
+func NewChannelHandler(channelService *service.ChannelService, billingService *service.BillingService) *ChannelHandler {
+	return &ChannelHandler{channelService: channelService, billingService: billingService}
 }
 
 // --- Request / Response types ---
@@ -626,20 +625,7 @@ func (h *ChannelHandler) GetModelDefaultPricing(c *gin.Context) {
 	})
 }
 
-// platformToLiteLLMProvider maps a channel platform name to the corresponding
-// LiteLLM provider string used as the key in the pricing catalog.
-var platformToLiteLLMProvider = map[string]string{
-	service.PlatformAnthropic:   "anthropic",
-	service.PlatformOpenAI:      "openai",
-	service.PlatformGemini:      "gemini",
-	service.PlatformAntigravity: "anthropic",
-	service.PlatformGrok:        "xai",
-	service.PlatformKimi:        "moonshot",
-	service.PlatformZhipu:       "zhipu",
-	service.PlatformDeepseek:    "deepseek",
-}
-
-// SyncPricingModels 返回 LiteLLM 定价目录中指定平台的最新模型列表
+// SyncPricingModels returns the models exposed by sub2api for a platform.
 // GET /api/v1/admin/channels/pricing/sync-models?platform=anthropic
 func (h *ChannelHandler) SyncPricingModels(c *gin.Context) {
 	platform := strings.ToLower(strings.TrimSpace(c.Query("platform")))
@@ -649,14 +635,13 @@ func (h *ChannelHandler) SyncPricingModels(c *gin.Context) {
 		return
 	}
 
-	provider, ok := platformToLiteLLMProvider[platform]
-	if !ok {
+	models := service.BuiltInModelIDsForPlatform(platform)
+	if models == nil || platform == service.PlatformComposite {
 		response.ErrorFrom(c, infraerrors.BadRequest("UNSUPPORTED_PLATFORM",
 			fmt.Sprintf("unsupported platform: %s", platform)).
 			WithMetadata(map[string]string{"param": "platform"}))
 		return
 	}
 
-	models := h.pricingService.ListModelNamesByProvider(provider)
 	response.Success(c, gin.H{"models": models})
 }

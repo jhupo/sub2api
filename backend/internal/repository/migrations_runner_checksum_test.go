@@ -3,6 +3,7 @@ package repository
 import (
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/migrations"
 	"github.com/stretchr/testify/require"
 )
 
@@ -158,6 +159,29 @@ func TestIsMigrationChecksumCompatible(t *testing.T) {
 			"119_enforce_payment_orders_out_trade_no_unique.sql",
 			"ebd2c67cce0116393fb4f1b5d5116a67c6aceb73820dfb5133d1ff6f36d72d34",
 			"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		)
+		require.False(t, ok)
+	})
+
+	t.Run("232兼容Wei-Shaw v0.2.1历史checksum", func(t *testing.T) {
+		const name = "232_add_usage_log_upstream_request_id.sql"
+		currentSQL, err := migrations.FS.ReadFile(name)
+		require.NoError(t, err)
+		require.Equal(t, migrationChecksumCompatibilityRules[name].fileChecksum, migrationChecksum(string(currentSQL)))
+
+		ok := isMigrationChecksumCompatible(
+			name,
+			"12c37559a68e6708a36d7f4c020fb20dfa07906639f1eeb3396d60a8069b864d",
+			"dc8b5167f51723aaedc91157cd34fdb5696a7459fe07b9875a972dab1cae2407",
+		)
+		require.True(t, ok)
+	})
+
+	t.Run("232未知checksum不兼容", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"232_add_usage_log_upstream_request_id.sql",
+			"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+			"dc8b5167f51723aaedc91157cd34fdb5696a7459fe07b9875a972dab1cae2407",
 		)
 		require.False(t, ok)
 	})

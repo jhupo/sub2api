@@ -512,17 +512,16 @@ func TestPricingToResponse_TimePricingNil(t *testing.T) {
 // 3. SyncPricingModels handler
 // ---------------------------------------------------------------------------
 
-func setupSyncPricingModelsRouter(pricingSvc *service.PricingService) *gin.Engine {
+func setupSyncPricingModelsRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	h := &ChannelHandler{pricingService: pricingSvc}
+	h := &ChannelHandler{}
 	router.GET("/channels/pricing/sync-models", h.SyncPricingModels)
 	return router
 }
 
 func TestSyncPricingModels_MissingPlatform(t *testing.T) {
-	svc := service.NewPricingService(nil, nil)
-	router := setupSyncPricingModelsRouter(svc)
+	router := setupSyncPricingModelsRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/channels/pricing/sync-models", nil)
 	w := httptest.NewRecorder()
@@ -532,19 +531,19 @@ func TestSyncPricingModels_MissingPlatform(t *testing.T) {
 }
 
 func TestSyncPricingModels_UnsupportedPlatform(t *testing.T) {
-	svc := service.NewPricingService(nil, nil)
-	router := setupSyncPricingModelsRouter(svc)
+	router := setupSyncPricingModelsRouter()
 
-	req := httptest.NewRequest(http.MethodGet, "/channels/pricing/sync-models?platform=unknown", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	for _, platform := range []string{"unknown", service.PlatformComposite} {
+		req := httptest.NewRequest(http.MethodGet, "/channels/pricing/sync-models?platform="+platform, nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Equal(t, http.StatusBadRequest, w.Code, "platform=%s", platform)
+	}
 }
 
-func TestSyncPricingModels_ValidPlatform_EmptyService(t *testing.T) {
-	svc := service.NewPricingService(nil, nil)
-	router := setupSyncPricingModelsRouter(svc)
+func TestSyncPricingModels_ReturnsBuiltInPlatformCatalog(t *testing.T) {
+	router := setupSyncPricingModelsRouter()
 
 	for _, platform := range []string{"anthropic", "openai", "gemini", "antigravity", "grok", "kimi", "zhipu", "deepseek"} {
 		req := httptest.NewRequest(http.MethodGet, "/channels/pricing/sync-models?platform="+platform, nil)
@@ -559,7 +558,7 @@ func TestSyncPricingModels_ValidPlatform_EmptyService(t *testing.T) {
 			} `json:"data"`
 		}
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-		require.NotNil(t, body.Data.Models, "models must not be null for platform=%s", platform)
+		require.Equal(t, service.BuiltInModelIDsForPlatform(platform), body.Data.Models, "platform=%s", platform)
 	}
 }
 

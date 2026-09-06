@@ -1086,9 +1086,9 @@
           <!-- Mapping Mode -->
           <div v-else class="space-y-3">
             <div v-for="(mapping, index) in modelMappings" :key="getModelMappingKey(mapping)" class="flex items-center gap-2">
-              <input v-model="mapping.from" type="text" class="input flex-1" :placeholder="t('admin.accounts.fromModel')" />
+              <input v-model="mapping.from" type="text" class="input flex-1" :placeholder="t('admin.accounts.requestModel')" />
               <span class="text-gray-400">→</span>
-              <input v-model="mapping.to" type="text" class="input flex-1" :placeholder="t('admin.accounts.toModel')" />
+              <input v-model="mapping.to" type="text" class="input flex-1" :placeholder="t('admin.accounts.actualModel')" />
               <button type="button" @click="modelMappings.splice(index, 1)" class="text-red-500 hover:text-red-700">
                 <Icon name="trash" size="sm" />
               </button>
@@ -2177,14 +2177,14 @@
                 v-model="mapping.from"
                 type="text"
                 class="input flex-1"
-                :placeholder="t('admin.accounts.fromModel')"
+                :placeholder="t('admin.accounts.requestModel')"
               />
               <span class="text-gray-400">→</span>
               <input
                 v-model="mapping.to"
                 type="text"
                 class="input flex-1"
-                :placeholder="t('admin.accounts.toModel')"
+                :placeholder="t('admin.accounts.actualModel')"
               />
               <button type="button" @click="removeOpenAICompactModelMapping(index)" class="text-red-500 hover:text-red-700">
                 <Icon name="trash" size="sm" />

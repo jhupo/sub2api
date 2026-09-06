@@ -89,6 +89,7 @@ export default {
     id: 'ID',
     apiKey: 'API Key',
     group: 'Group',
+    payment: 'Payment',
     currentConcurrency: 'Current Concurrency',
     noGroup: 'No group',
     searchGroup: 'Search groups...',

@@ -90,20 +90,20 @@ func newGatewayModelsHandlerForTest(repo service.AccountRepository) *GatewayHand
 }
 
 func TestDefaultModelIDsForCompositeIncludesAntigravityDefaults(t *testing.T) {
-	antigravityIDs := defaultModelIDsForPlatform(service.PlatformAntigravity)
+	antigravityIDs := service.BuiltInModelIDsForPlatform(service.PlatformAntigravity)
 	require.NotEmpty(t, antigravityIDs)
 
-	compositeIDs := defaultModelIDsForPlatform(service.PlatformComposite)
+	compositeIDs := service.BuiltInModelIDsForPlatform(service.PlatformComposite)
 	require.Contains(t, compositeIDs, antigravityIDs[0])
 }
 
 // Scenario: Anthropic defaults contain only Claude while Antigravity keeps its own Gemini models.
 func TestDefaultModelIDsForAnthropicExcludeAntigravityGemini(t *testing.T) {
-	anthropicIDs := defaultModelIDsForPlatform(service.PlatformAnthropic)
+	anthropicIDs := service.BuiltInModelIDsForPlatform(service.PlatformAnthropic)
 	require.Contains(t, anthropicIDs, "claude-opus-4-6")
 	require.NotContains(t, anthropicIDs, "gemini-2.5-flash")
 
-	antigravityIDs := defaultModelIDsForPlatform(service.PlatformAntigravity)
+	antigravityIDs := service.BuiltInModelIDsForPlatform(service.PlatformAntigravity)
 	require.Contains(t, antigravityIDs, "gemini-2.5-flash")
 }
 
@@ -757,7 +757,7 @@ func TestGatewayModels_CompositeUnmappedAccountsFallbackToLinkedPlatformsOnly(t 
 }
 
 // CN 供应商没有静态默认模型列表：composite 下无映射的可调度 CN 账号不得把
-// defaultModelIDsForPlatform default 分支的 Claude 列表挂到 CN 平台名下。
+// BuiltInModelIDsForPlatform 的 Claude 兼容列表挂到 CN 平台名下。
 func TestGatewayModels_CompositeUnmappedCNAccountsContributeNoDefaults(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -802,13 +802,13 @@ func TestDefaultModelIDsForPlatform_CNProvidersKeepClaudeDefaults(t *testing.T) 
 		want = append(want, model.ID)
 	}
 	for _, platform := range []string{service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek} {
-		require.Equal(t, want, defaultModelIDsForPlatform(platform), "platform=%s", platform)
+		require.Equal(t, want, service.BuiltInModelIDsForPlatform(platform), "platform=%s", platform)
 	}
 }
 
 func TestDefaultCodexModelIDsForPlatform_DeepSeekUsesDeepSeekModels(t *testing.T) {
-	require.Equal(t, []string{"deepseek-v4-pro", "deepseek-v4-flash"}, defaultCodexModelIDsForPlatform(service.PlatformDeepseek))
-	require.Equal(t, defaultModelIDsForPlatform(service.PlatformAnthropic), defaultCodexModelIDsForPlatform(service.PlatformAnthropic))
+	require.Equal(t, []string{"deepseek-v4-pro", "deepseek-v4-flash"}, service.BuiltInCodexModelIDsForPlatform(service.PlatformDeepseek))
+	require.Equal(t, service.BuiltInModelIDsForPlatform(service.PlatformAnthropic), service.BuiltInCodexModelIDsForPlatform(service.PlatformAnthropic))
 }
 
 func TestGatewayCodexModels_DeepSeekWithoutMappingUsesDeepSeekDefaults(t *testing.T) {

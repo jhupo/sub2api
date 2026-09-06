@@ -1157,7 +1157,7 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	if platform == service.PlatformComposite {
 		availableModels := h.compositeAvailableModels(c.Request.Context(), groupID)
 		if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
-			availableModels = filterModelsByCustomList(availableModels, defaultModelIDsForPlatform(service.PlatformComposite), apiKey.Group.ModelsListConfig.Models)
+			availableModels = filterModelsByCustomList(availableModels, service.BuiltInModelIDsForPlatform(service.PlatformComposite), apiKey.Group.ModelsListConfig.Models)
 			writeCustomModelsList(c, service.PlatformComposite, availableModels)
 			return
 		}
@@ -1165,7 +1165,7 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 			writeModelsList(c, service.PlatformComposite, availableModels)
 			return
 		}
-		writeModelsList(c, service.PlatformComposite, defaultModelIDsForPlatform(service.PlatformComposite))
+		writeModelsList(c, service.PlatformComposite, service.BuiltInModelIDsForPlatform(service.PlatformComposite))
 		return
 	}
 
@@ -1190,7 +1190,7 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		availableModels = h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, platform)
 	}
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
-		fallbackModels := defaultModelIDsForPlatform(platform)
+		fallbackModels := service.BuiltInModelIDsForPlatform(platform)
 		availableModels = filterModelsByCustomList(customModelsListSource(platform, availableModels, fallbackModels), fallbackModels, apiKey.Group.ModelsListConfig.Models)
 		writeCustomModelsList(c, platform, availableModels)
 		return
@@ -1276,7 +1276,7 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 	}
 	if platform == service.PlatformComposite {
 		availableModels := h.compositeAvailableModels(ctx, groupID)
-		fallbackModels := defaultCodexModelIDsForPlatform(service.PlatformComposite)
+		fallbackModels := service.BuiltInCodexModelIDsForPlatform(service.PlatformComposite)
 		if group.CustomModelsListEnabled() {
 			return filterModelsByCustomList(availableModels, fallbackModels, group.ModelsListConfig.Models)
 		}
@@ -1287,7 +1287,7 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 	}
 
 	availableModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
-	fallbackModels := defaultCodexModelIDsForPlatform(platform)
+	fallbackModels := service.BuiltInCodexModelIDsForPlatform(platform)
 	if group.CustomModelsListEnabled() {
 		return filterModelsByCustomList(
 			customModelsListSource(platform, availableModels, fallbackModels),
@@ -1311,10 +1311,10 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 	for _, platform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek} {
 		platformModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
 		if len(platformModels) == 0 {
-			// CN 供应商没有静态默认模型列表（defaultModelIDsForPlatform 的
-			// default 分支是 Claude 列表），composite 下只暴露账号映射键。
+			// CN providers use Claude-compatible public aliases as standalone
+			// fallbacks, but composite groups only expose their explicit mappings.
 			if _, ok := schedulablePlatforms[platform]; ok && !service.IsCNProvider(platform) {
-				platformModels = defaultModelIDsForPlatform(platform)
+				platformModels = service.BuiltInModelIDsForPlatform(platform)
 			}
 		}
 		for _, model := range platformModels {
@@ -1514,58 +1514,6 @@ func customModelsListAllowsModel(availablePatterns []string, model string) bool 
 		}
 	}
 	return false
-}
-
-func defaultCodexModelIDsForPlatform(platform string) []string {
-	switch platform {
-	case service.PlatformDeepseek:
-		return []string{"deepseek-v4-pro", "deepseek-v4-flash"}
-	default:
-		return defaultModelIDsForPlatform(platform)
-	}
-}
-
-func defaultModelIDsForPlatform(platform string) []string {
-	switch platform {
-	case service.PlatformOpenAI:
-		return openai.DefaultModelIDs()
-	case service.PlatformGemini:
-		ids := make([]string, 0, len(geminicli.DefaultModels))
-		for _, model := range geminicli.DefaultModels {
-			ids = append(ids, model.ID)
-		}
-		return ids
-	case service.PlatformAntigravity:
-		models := antigravity.DefaultModels()
-		ids := make([]string, 0, len(models))
-		for _, model := range models {
-			ids = append(ids, model.ID)
-		}
-		return ids
-	case service.PlatformAnthropic:
-		return claude.DefaultModelIDs()
-	case service.PlatformGrok:
-		return xai.DefaultModelIDs()
-	case service.PlatformComposite:
-		ids := make([]string, 0)
-		seen := make(map[string]struct{})
-		for _, concretePlatform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek} {
-			for _, id := range defaultModelIDsForPlatform(concretePlatform) {
-				if _, ok := seen[id]; ok {
-					continue
-				}
-				seen[id] = struct{}{}
-				ids = append(ids, id)
-			}
-		}
-		return ids
-	default:
-		ids := make([]string, 0, len(claude.DefaultModels))
-		for _, model := range claude.DefaultModels {
-			ids = append(ids, model.ID)
-		}
-		return ids
-	}
 }
 
 func mergeModelIDs(primary, secondary []string) []string {

@@ -193,7 +193,7 @@ export interface SyncPricingModelsResult {
 }
 
 /**
- * Fetch the latest model names from the LiteLLM pricing catalog for the given platform
+ * Fetch the model names exposed by sub2api for the given platform
  */
 export async function syncPricingModels(platform: string): Promise<SyncPricingModelsResult> {
   const { data } = await apiClient.get<SyncPricingModelsResult>('/admin/channels/pricing/sync-models', {
