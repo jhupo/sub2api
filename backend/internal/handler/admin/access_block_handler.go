@@ -9,7 +9,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -21,11 +20,11 @@ const (
 // centralized block-management page.
 type AccessBlockHandler struct {
 	settingService *service.SettingService
-	redis          *redis.Client
+	blocks         *accessmiddleware.AccessBlockManager
 }
 
-func NewAccessBlockHandler(settingService *service.SettingService, redisClient *redis.Client) *AccessBlockHandler {
-	return &AccessBlockHandler{settingService: settingService, redis: redisClient}
+func NewAccessBlockHandler(settingService *service.SettingService, blocks *accessmiddleware.AccessBlockManager) *AccessBlockHandler {
+	return &AccessBlockHandler{settingService: settingService, blocks: blocks}
 }
 
 type accessBlockItemDTO struct {
@@ -136,7 +135,7 @@ func (h *AccessBlockHandler) List(c *gin.Context) {
 	if !ok {
 		return
 	}
-	blocks, err := accessmiddleware.ListAccessBlocks(c.Request.Context(), h.redis)
+	blocks, err := h.blocks.List(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -200,9 +199,8 @@ func (h *AccessBlockHandler) Add(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	if err := accessmiddleware.AddAccessIPBlock(
+	if err := h.blocks.Add(
 		c.Request.Context(),
-		h.redis,
 		req.IP,
 		req.Permanent,
 		time.Duration(req.DurationSeconds)*time.Second,
@@ -223,7 +221,7 @@ func (h *AccessBlockHandler) Remove(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	if err := accessmiddleware.RemoveAccessBlock(c.Request.Context(), h.redis, req.IP); err != nil {
+	if err := h.blocks.Remove(c.Request.Context(), req.IP); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}

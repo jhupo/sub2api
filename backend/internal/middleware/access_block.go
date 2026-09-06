@@ -38,6 +38,35 @@ type AccessBlock struct {
 	Source           string
 }
 
+// AccessBlockManager exposes administrative block operations without leaking
+// the Redis client into the handler layer.
+type AccessBlockManager struct {
+	redis *redis.Client
+}
+
+func NewAccessBlockManager(redisClient *redis.Client) *AccessBlockManager {
+	return &AccessBlockManager{redis: redisClient}
+}
+
+func (m *AccessBlockManager) client() *redis.Client {
+	if m == nil {
+		return nil
+	}
+	return m.redis
+}
+
+func (m *AccessBlockManager) List(ctx context.Context) ([]AccessBlock, error) {
+	return ListAccessBlocks(ctx, m.client())
+}
+
+func (m *AccessBlockManager) Add(ctx context.Context, ip string, permanent bool, duration time.Duration) error {
+	return AddAccessIPBlock(ctx, m.client(), ip, permanent, duration)
+}
+
+func (m *AccessBlockManager) Remove(ctx context.Context, ip string) error {
+	return RemoveAccessBlock(ctx, m.client(), ip)
+}
+
 var loginBruteForceRecordScript = redis.NewScript(`
 local count = redis.call('INCR', KEYS[1])
 local ttl = redis.call('PTTL', KEYS[1])

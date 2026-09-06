@@ -3,6 +3,7 @@ package handler
 import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
+	accessmiddleware "github.com/Wei-Shaw/sub2api/internal/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -289,6 +290,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewAffiliateHandler,
 	admin.NewComplianceHandler,
 	admin.NewAuditLogHandler,
+	accessmiddleware.NewAccessBlockManager,
 	admin.NewAccessBlockHandler,
 
 	// AdminHandlers and Handlers constructors
