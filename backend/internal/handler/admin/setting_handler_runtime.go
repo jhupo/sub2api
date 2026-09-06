@@ -164,29 +164,21 @@ func (h *SettingHandler) GetPanelRateLimitSettings(c *gin.Context) {
 	}
 
 	response.Success(c, dto.PanelRateLimitSettings{
-		Enabled:                      settings.Enabled,
-		UserRPM:                      settings.UserRPM,
-		HeavyRPM:                     settings.HeavyRPM,
-		ExemptAdmin:                  settings.ExemptAdmin,
-		PublicIPRPM:                  settings.PublicIPRPM,
-		LoginBruteForceEnabled:       settings.LoginBruteForceEnabled,
-		LoginBruteForceThreshold:     settings.LoginBruteForceThreshold,
-		LoginBruteForceWindowSeconds: settings.LoginBruteForceWindowSeconds,
-		LoginBruteForceBlockSeconds:  settings.LoginBruteForceBlockSeconds,
+		Enabled:     settings.Enabled,
+		UserRPM:     settings.UserRPM,
+		HeavyRPM:    settings.HeavyRPM,
+		ExemptAdmin: settings.ExemptAdmin,
+		PublicIPRPM: settings.PublicIPRPM,
 	})
 }
 
 // UpdatePanelRateLimitSettingsRequest 更新面板 API 限流配置请求
 type UpdatePanelRateLimitSettingsRequest struct {
-	Enabled                      bool `json:"enabled"`
-	UserRPM                      int  `json:"user_rpm"`
-	HeavyRPM                     int  `json:"heavy_rpm"`
-	ExemptAdmin                  bool `json:"exempt_admin"`
-	PublicIPRPM                  int  `json:"public_ip_rpm"`
-	LoginBruteForceEnabled       bool `json:"login_bruteforce_enabled"`
-	LoginBruteForceThreshold     int  `json:"login_bruteforce_threshold"`
-	LoginBruteForceWindowSeconds int  `json:"login_bruteforce_window_seconds"`
-	LoginBruteForceBlockSeconds  int  `json:"login_bruteforce_block_seconds"`
+	Enabled     bool `json:"enabled"`
+	UserRPM     int  `json:"user_rpm"`
+	HeavyRPM    int  `json:"heavy_rpm"`
+	ExemptAdmin bool `json:"exempt_admin"`
+	PublicIPRPM int  `json:"public_ip_rpm"`
 }
 
 // UpdatePanelRateLimitSettings 更新面板 API 限流配置
@@ -199,15 +191,11 @@ func (h *SettingHandler) UpdatePanelRateLimitSettings(c *gin.Context) {
 	}
 
 	settings := &service.PanelRateLimitSettings{
-		Enabled:                      req.Enabled,
-		UserRPM:                      req.UserRPM,
-		HeavyRPM:                     req.HeavyRPM,
-		ExemptAdmin:                  req.ExemptAdmin,
-		PublicIPRPM:                  req.PublicIPRPM,
-		LoginBruteForceEnabled:       req.LoginBruteForceEnabled,
-		LoginBruteForceThreshold:     req.LoginBruteForceThreshold,
-		LoginBruteForceWindowSeconds: req.LoginBruteForceWindowSeconds,
-		LoginBruteForceBlockSeconds:  req.LoginBruteForceBlockSeconds,
+		Enabled:     req.Enabled,
+		UserRPM:     req.UserRPM,
+		HeavyRPM:    req.HeavyRPM,
+		ExemptAdmin: req.ExemptAdmin,
+		PublicIPRPM: req.PublicIPRPM,
 	}
 
 	if err := h.settingService.SetPanelRateLimitSettings(c.Request.Context(), settings); err != nil {
@@ -222,15 +210,11 @@ func (h *SettingHandler) UpdatePanelRateLimitSettings(c *gin.Context) {
 	}
 
 	response.Success(c, dto.PanelRateLimitSettings{
-		Enabled:                      updatedSettings.Enabled,
-		UserRPM:                      updatedSettings.UserRPM,
-		HeavyRPM:                     updatedSettings.HeavyRPM,
-		ExemptAdmin:                  updatedSettings.ExemptAdmin,
-		PublicIPRPM:                  updatedSettings.PublicIPRPM,
-		LoginBruteForceEnabled:       updatedSettings.LoginBruteForceEnabled,
-		LoginBruteForceThreshold:     updatedSettings.LoginBruteForceThreshold,
-		LoginBruteForceWindowSeconds: updatedSettings.LoginBruteForceWindowSeconds,
-		LoginBruteForceBlockSeconds:  updatedSettings.LoginBruteForceBlockSeconds,
+		Enabled:     updatedSettings.Enabled,
+		UserRPM:     updatedSettings.UserRPM,
+		HeavyRPM:    updatedSettings.HeavyRPM,
+		ExemptAdmin: updatedSettings.ExemptAdmin,
+		PublicIPRPM: updatedSettings.PublicIPRPM,
 	})
 }
 

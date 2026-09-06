@@ -14,6 +14,13 @@ export default {
         payment: '支付设置',
       },
       features: {
+        accessBlock: {
+          title: '访问封禁',
+          description: '统一控制登录失败防护、请求头封禁、手动 IP 封禁和面板超限拉黑。',
+          configureLink: '前往封禁管理配置策略和处理名单',
+          enabled: '启用访问封禁',
+          enabledHint: '关闭后停止执行所有封禁规则，但保留已配置策略和当前名单。',
+        },
         balancePreauthorization: {
           title: '余额预授权',
           description: '在请求前预留预计费用，防止并发超额消费。',
@@ -195,16 +202,6 @@ export default {
         perMinute: '次/分钟',
         exemptAdmin: '管理员豁免',
         exemptAdminHint: '开启后管理员账号不受面板限流约束，避免批量运维操作被误拦。',
-        loginBruteForceEnabled: '登录爆破防护',
-        loginBruteForceEnabledHint: '同一 IP 在窗口内连续输错密码达到阈值后临时封禁，封禁期间直接返回 429。',
-        loginBruteForceThreshold: '失败次数阈值',
-        loginBruteForceThresholdHint: '仅统计登录接口返回 401 的错误密码或不存在账号。',
-        loginBruteForceWindow: '统计窗口',
-        loginBruteForceWindowHint: '失败次数在此时间内累计，最小 10 秒。',
-        loginBruteForceBlock: '封禁时长',
-        loginBruteForceBlockHint: '达到失败阈值后，IP 在此时间内不能再次登录。',
-        attempts: '次',
-        seconds: '秒',
         saved: '面板接口限流配置已保存',
         saveFailed: '保存面板接口限流配置失败'
       },

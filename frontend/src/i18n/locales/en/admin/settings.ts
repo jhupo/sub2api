@@ -14,6 +14,13 @@ export default {
         payment: 'Payment',
       },
       features: {
+        accessBlock: {
+          title: 'Access Blocking',
+          description: 'Control login-failure protection, exact header rules, manual IP blocks, and panel-abuse blacklisting.',
+          configureLink: 'Open Block Management to configure policies and manage the list',
+          enabled: 'Enable access blocking',
+          enabledHint: 'Disabling stops enforcement while keeping the configured policy and active list.',
+        },
         balancePreauthorization: {
           title: 'Balance preauthorization',
           description: 'Reserves estimated balance before requests to prevent overspending.',
@@ -195,16 +202,6 @@ export default {
         perMinute: 'req/min',
         exemptAdmin: 'Exempt administrators',
         exemptAdminHint: 'When enabled, admin accounts bypass panel rate limits so bulk operations are never throttled.',
-        loginBruteForceEnabled: 'Login brute-force protection',
-        loginBruteForceEnabledHint: 'Temporarily block an IP after repeated invalid-password responses within the configured window.',
-        loginBruteForceThreshold: 'Failure threshold',
-        loginBruteForceThresholdHint: 'Only HTTP 401 responses from the login endpoint are counted.',
-        loginBruteForceWindow: 'Failure window',
-        loginBruteForceWindowHint: 'Failures are accumulated for this duration; minimum 10 seconds.',
-        loginBruteForceBlock: 'Block duration',
-        loginBruteForceBlockHint: 'The IP cannot attempt login again during this duration after reaching the threshold.',
-        attempts: 'attempts',
-        seconds: 'seconds',
         saved: 'Panel rate limit settings saved',
         saveFailed: 'Failed to save panel rate limit settings'
       },

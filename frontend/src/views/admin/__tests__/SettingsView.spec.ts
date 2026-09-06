@@ -19,6 +19,8 @@ const {
   updateRateLimit429CooldownSettings,
   getPanelRateLimitSettings,
   updatePanelRateLimitSettings,
+  getAccessBlockSettings,
+  updateAccessBlockSettings,
   getStreamTimeoutSettings,
   getRectifierSettings,
   getBetaPolicySettings,
@@ -54,6 +56,28 @@ const {
     public_ip_rpm: 300,
   }),
   updatePanelRateLimitSettings: vi.fn().mockImplementation(async (payload) => payload),
+  getAccessBlockSettings: vi.fn().mockResolvedValue({
+    enabled: true,
+    login_protection_enabled: true,
+    login_failure_threshold: 10,
+    login_failure_window_seconds: 600,
+    login_temporary_block_seconds: 3600,
+    blocked_headers: [],
+    panel_blacklist_enabled: false,
+    panel_blacklist_threshold: 10,
+    panel_blacklist_window_seconds: 600,
+  }),
+  updateAccessBlockSettings: vi.fn().mockImplementation(async (payload) => ({
+    enabled: payload.enabled,
+    login_protection_enabled: true,
+    login_failure_threshold: 10,
+    login_failure_window_seconds: 600,
+    login_temporary_block_seconds: 3600,
+    blocked_headers: [],
+    panel_blacklist_enabled: false,
+    panel_blacklist_threshold: 10,
+    panel_blacklist_window_seconds: 600,
+  })),
   getStreamTimeoutSettings: vi.fn(),
   getRectifierSettings: vi.fn(),
   getBetaPolicySettings: vi.fn(),
@@ -105,6 +129,10 @@ vi.mock("@/api", () => ({
       updateUpstreamBillingProbeSettings,
       getOllamaCloudUsageSettings,
       updateOllamaCloudUsageSettings,
+    },
+    accessBlocks: {
+      getSettings: getAccessBlockSettings,
+      updateSettings: updateAccessBlockSettings,
     },
     groups: {
       getAll: getGroups,
@@ -553,6 +581,7 @@ function mountView() {
         AppLayout: AppLayoutStub,
         Select: SelectStub,
         Toggle: ToggleStub,
+        RouterLink: true,
         Icon: true,
         ConfirmDialog: true,
         PaymentProviderList: true,
@@ -640,6 +669,28 @@ describe("admin SettingsView payment visible method controls", () => {
     getOverloadCooldownSettings.mockReset();
     getRateLimit429CooldownSettings.mockReset();
     updateRateLimit429CooldownSettings.mockReset();
+    getAccessBlockSettings.mockReset().mockResolvedValue({
+      enabled: true,
+      login_protection_enabled: true,
+      login_failure_threshold: 10,
+      login_failure_window_seconds: 600,
+      login_temporary_block_seconds: 3600,
+      blocked_headers: [],
+      panel_blacklist_enabled: false,
+      panel_blacklist_threshold: 10,
+      panel_blacklist_window_seconds: 600,
+    });
+    updateAccessBlockSettings.mockReset().mockImplementation(async (payload) => ({
+      enabled: payload.enabled,
+      login_protection_enabled: true,
+      login_failure_threshold: 10,
+      login_failure_window_seconds: 600,
+      login_temporary_block_seconds: 3600,
+      blocked_headers: [],
+      panel_blacklist_enabled: false,
+      panel_blacklist_threshold: 10,
+      panel_blacklist_window_seconds: 600,
+    }));
     getStreamTimeoutSettings.mockReset();
     getRectifierSettings.mockReset();
     getBetaPolicySettings.mockReset();
@@ -783,6 +834,52 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({ balance_preauthorization_enabled: true }),
     );
+  });
+
+  it("saves access blocking through the feature switch without changing panel limits", async () => {
+    getAccessBlockSettings.mockResolvedValueOnce({
+      enabled: false,
+      login_protection_enabled: true,
+      login_failure_threshold: 10,
+      login_failure_window_seconds: 600,
+      login_temporary_block_seconds: 3600,
+      blocked_headers: [],
+      panel_blacklist_enabled: false,
+      panel_blacklist_threshold: 10,
+      panel_blacklist_window_seconds: 600,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const toggle = wrapper.get('[data-testid="access-block-enabled"]');
+    expect((toggle.element as HTMLInputElement).checked).toBe(false);
+    await toggle.setValue(true);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateAccessBlockSettings).toHaveBeenCalledWith({ enabled: true });
+    expect(updatePanelRateLimitSettings).not.toHaveBeenCalled();
+  });
+
+  it("does not rewrite access blocking when an unrelated setting is saved", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalled();
+    expect(updateAccessBlockSettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps the settings page usable when access blocking cannot be loaded", async () => {
+    getAccessBlockSettings.mockRejectedValueOnce(new Error("access block unavailable"));
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.find("form").exists()).toBe(true);
+    expect(wrapper.get('[data-testid="access-block-enabled"]').attributes("disabled")).toBeDefined();
+    expect(showError).toHaveBeenCalled();
   });
 
   it("renders panel rate limit card and saves settings", async () => {
@@ -1282,6 +1379,7 @@ describe("admin SettingsView payment visible method controls", () => {
           AppLayout: AppLayoutStub,
           Select: SelectStub,
           Toggle: ToggleStub,
+          RouterLink: true,
           Icon: true,
           ConfirmDialog: true,
           PaymentProviderList: PaymentProviderListStub,
@@ -1559,6 +1657,7 @@ describe("admin SettingsView payment visible method controls", () => {
           AppLayout: AppLayoutStub,
           Select: SelectStub,
           Toggle: ToggleStub,
+          RouterLink: true,
           Icon: true,
           ConfirmDialog: true,
           PaymentProviderList: PaymentProviderListCapture,

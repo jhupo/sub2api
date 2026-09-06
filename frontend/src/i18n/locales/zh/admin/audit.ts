@@ -17,6 +17,7 @@ export default {
       result: '结果',
       resultSuccess: '成功',
       resultFailure: '失败',
+      resultBlocked: '封禁',
       startTime: '开始时间',
       endTime: '结束时间'
     },

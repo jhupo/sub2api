@@ -438,6 +438,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/access-blocks',
+    name: 'AdminAccessBlocks',
+    component: () => import('@/views/admin/AccessBlocksView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Block Management',
+      titleKey: 'admin.accessBlocks.title',
+      descriptionKey: 'admin.accessBlocks.description'
+    }
+  },
+  {
     path: '/admin/users',
     name: 'AdminUsers',
     component: () => import('@/views/admin/UsersView.vue'),

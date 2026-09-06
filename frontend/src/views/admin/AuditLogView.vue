@@ -491,7 +491,8 @@ const authMethodOptions = computed(() => [
 const resultOptions = computed(() => [
   { value: '', label: t('admin.audit.filters.all') },
   { value: 'true', label: t('admin.audit.filters.resultSuccess') },
-  { value: 'false', label: t('admin.audit.filters.resultFailure') }
+  { value: 'false', label: t('admin.audit.filters.resultFailure') },
+  { value: 'blocked', label: t('admin.audit.filters.resultBlocked') }
 ])
 
 function authMethodLabel(method: string): string {
@@ -519,16 +520,17 @@ function buildTimeRangeQuery(): { start_time?: string; end_time?: string } {
 }
 
 function buildQuery() {
+  const blockedOnly = filters.success === 'blocked'
   return {
     page: page.value,
     page_size: pageSize.value,
     q: filters.q || undefined,
     actor_email: filters.actor_email || undefined,
-    action: filters.action || undefined,
+    action: blockedOnly ? 'security.access.blocked' : (filters.action || undefined),
     client_ip: filters.client_ip || undefined,
     method: filters.method || undefined,
     auth_method: filters.auth_method || undefined,
-    success: filters.success || undefined,
+    success: blockedOnly ? undefined : (filters.success || undefined),
     ...buildTimeRangeQuery()
   }
 }

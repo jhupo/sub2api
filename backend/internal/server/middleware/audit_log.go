@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	accessmiddleware "github.com/Wei-Shaw/sub2api/internal/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -157,6 +158,7 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 	"POST /api/v1/admin/prompt-audit/events/batch-delete":       {},
 	"POST /api/v1/admin/prompt-audit/events/delete-preview":     {},
 	"POST /api/v1/admin/prompt-audit/events/delete-by-filter":   {},
+	"PATCH /api/v1/admin/access-blocks/settings":                {},
 }
 
 // NewAuditLogMiddleware 创建审计中间件。
@@ -212,6 +214,9 @@ func NewAuditLogMiddleware(auditService *service.AuditLogService) AuditLogMiddle
 		}
 
 		status := c.Writer.Status()
+		if accessmiddleware.IsAccessBlocked(c) {
+			action = service.AuditActionAccessBlocked
+		}
 		// token 刷新成功属于高频常规操作，只记录失败（潜在攻击信号）。
 		if routeKey == "POST /api/v1/auth/refresh" && status < 400 {
 			return

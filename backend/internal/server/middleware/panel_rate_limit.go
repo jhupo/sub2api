@@ -151,6 +151,7 @@ func isPubliclyRoutableClientIP(clientIP string) bool {
 }
 
 func abortPanelRateLimited(c *gin.Context, retryAfter time.Duration) {
+	markPanelRateLimitExceeded(c)
 	if retryAfter <= 0 {
 		retryAfter = panelRateLimitWindow
 	}

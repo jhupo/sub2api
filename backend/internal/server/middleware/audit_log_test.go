@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	accessmiddleware "github.com/Wei-Shaw/sub2api/internal/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -150,6 +151,31 @@ func TestPasskeyLoginAuditUsesCanonicalLoginActionAndOmitsCredentialBody(t *test
 	route := "POST /api/v1/auth/passkey/login/finish"
 	require.Equal(t, service.AuditActionLogin, auditActionOverrides[route])
 	require.Contains(t, auditBodyOmittedRoutes, route)
+}
+
+func TestBlockedRequestUsesAggregatedSecurityAuditAction(t *testing.T) {
+	require.Contains(t, auditBodyOmittedRoutes, "PATCH /api/v1/admin/access-blocks/settings")
+	gin.SetMode(gin.TestMode)
+	repository := &auditCaptureRepository{}
+	auditService := service.NewAuditLogService(repository, nil)
+	auditService.Start()
+
+	router := gin.New()
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(auditService)))
+	router.POST("/api/v1/auth/login", func(c *gin.Context) {
+		accessmiddleware.SetAccessBlocked(c)
+		c.AbortWithStatus(http.StatusForbidden)
+	})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil))
+	auditService.Stop()
+
+	repository.mu.Lock()
+	logs := append([]*service.AuditLog(nil), repository.logs...)
+	repository.mu.Unlock()
+	require.Len(t, logs, 1)
+	require.Equal(t, service.AuditActionAccessBlocked, logs[0].Action)
+	require.Equal(t, http.StatusForbidden, logs[0].StatusCode)
 }
 
 // Ollama 会话保存的请求体整体就是浏览器 Cookie 明文，键级脱敏清单曾漏掉裸键

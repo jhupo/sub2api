@@ -17,6 +17,7 @@ export default {
       result: 'Result',
       resultSuccess: 'Success',
       resultFailure: 'Failure',
+      resultBlocked: 'Blocked',
       startTime: 'Start Time',
       endTime: 'End Time'
     },

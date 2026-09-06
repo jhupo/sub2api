@@ -19,12 +19,14 @@ func RegisterAdminRoutes(
 	stepUpAuth middleware.StepUpAuthMiddleware,
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
+	accessBlockGuard *middleware.AccessBlockGuard,
 ) {
 	// 插件 UI 使用短时能力 URL，仅提供经过安装校验的静态资源。
 	v1.GET("/plugin-ui/:token/*path", h.Admin.Plugin.ServeUIAsset)
 
 	admin := v1.Group("/admin")
 	admin.Use(gin.HandlerFunc(adminAuth))
+	admin.Use(accessBlockGuard.Handler())
 	// 面板全局按用户限流（默认管理员豁免，可在系统设置中关闭豁免）
 	admin.Use(panelRateLimiter.Global())
 	// 审计中间件挂在认证之后：所有管理面变更类操作 + 敏感读取入审计日志
@@ -590,6 +592,14 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		adminSettings.PUT("/web-search-emulation", h.Admin.Setting.UpdateWebSearchEmulationConfig)
 		adminSettings.POST("/web-search-emulation/test", h.Admin.Setting.TestWebSearchEmulation)
 		adminSettings.POST("/web-search-emulation/reset-usage", h.Admin.Setting.ResetWebSearchUsage)
+	}
+	accessBlocks := admin.Group("/access-blocks")
+	{
+		accessBlocks.GET("/settings", h.Admin.AccessBlock.GetSettings)
+		accessBlocks.PATCH("/settings", h.Admin.AccessBlock.UpdateSettings)
+		accessBlocks.GET("", h.Admin.AccessBlock.List)
+		accessBlocks.POST("", h.Admin.AccessBlock.Add)
+		accessBlocks.POST("/remove", h.Admin.AccessBlock.Remove)
 	}
 }
 

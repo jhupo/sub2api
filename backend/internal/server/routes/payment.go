@@ -21,11 +21,13 @@ func RegisterPaymentRoutes(
 	auditLog middleware.AuditLogMiddleware,
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
+	accessBlockGuard *middleware.AccessBlockGuard,
 ) {
 	// --- User-facing payment endpoints (authenticated) ---
 	authenticated := v1.Group("/payment")
 	authenticated.Use(gin.HandlerFunc(jwtAuth))
 	authenticated.Use(middleware.BackendModeUserGuard(settingService))
+	authenticated.Use(accessBlockGuard.Handler())
 	// 面板全局按用户限流
 	authenticated.Use(panelRateLimiter.Global())
 	{
@@ -51,6 +53,7 @@ func RegisterPaymentRoutes(
 	// The legacy anonymous out_trade_no verify endpoint remains available as a
 	// persisted-state compatibility path for staggered upgrades.
 	public := v1.Group("/payment/public")
+	public.Use(accessBlockGuard.Handler())
 	public.Use(panelRateLimiter.PublicIP())
 	{
 		public.POST("/orders/verify", paymentHandler.VerifyOrderPublic)
@@ -59,6 +62,8 @@ func RegisterPaymentRoutes(
 
 	// --- Webhook endpoints (no auth) ---
 	webhook := v1.Group("/payment/webhook")
+	// Provider callbacks retain the existing rate limiter but never consume or
+	// enforce client block-list state.
 	webhook.Use(panelRateLimiter.PublicIP())
 	{
 		// EasyPay sends GET callbacks with query params

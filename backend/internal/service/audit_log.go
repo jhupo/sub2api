@@ -31,6 +31,7 @@ const (
 // 内置审计动作名（认证/安全事件与特殊操作使用固定值，普通请求由路由自动推导）。
 const (
 	AuditActionLogin                  = "auth.login"
+	AuditActionAccessBlocked          = "security.access.blocked"
 	AuditActionLogin2FA               = "auth.login.2fa"
 	AuditActionRegister               = "auth.register"
 	AuditActionTokenRefresh           = "auth.token.refresh"

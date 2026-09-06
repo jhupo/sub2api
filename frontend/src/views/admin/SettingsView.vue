@@ -1990,81 +1990,6 @@
                     <Toggle v-model="panelRateLimitForm.exempt_admin" />
                   </div>
 
-                  <div class="space-y-5 border-t border-gray-100 pt-4 dark:border-dark-700">
-                    <div class="flex items-center justify-between">
-                      <div>
-                        <label class="font-medium text-gray-900 dark:text-white">{{
-                          t("admin.settings.panelRateLimit.loginBruteForceEnabled")
-                        }}</label>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">
-                          {{ t("admin.settings.panelRateLimit.loginBruteForceEnabledHint") }}
-                        </p>
-                      </div>
-                      <Toggle v-model="panelRateLimitForm.login_bruteforce_enabled" />
-                    </div>
-
-                    <div
-                      v-if="panelRateLimitForm.login_bruteforce_enabled"
-                      class="grid grid-cols-1 gap-6 sm:grid-cols-3"
-                    >
-                      <div>
-                        <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                          {{ t("admin.settings.panelRateLimit.loginBruteForceThreshold") }}
-                        </label>
-                        <div class="flex items-center gap-2">
-                          <input
-                            v-model.number="panelRateLimitForm.login_bruteforce_threshold"
-                            type="number"
-                            min="1"
-                            max="1000"
-                            class="input w-32"
-                          />
-                          <span class="text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.panelRateLimit.attempts") }}</span>
-                        </div>
-                        <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                          {{ t("admin.settings.panelRateLimit.loginBruteForceThresholdHint") }}
-                        </p>
-                      </div>
-
-                      <div>
-                        <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                          {{ t("admin.settings.panelRateLimit.loginBruteForceWindow") }}
-                        </label>
-                        <div class="flex items-center gap-2">
-                          <input
-                            v-model.number="panelRateLimitForm.login_bruteforce_window_seconds"
-                            type="number"
-                            min="10"
-                            max="86400"
-                            class="input w-32"
-                          />
-                          <span class="text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.panelRateLimit.seconds") }}</span>
-                        </div>
-                        <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                          {{ t("admin.settings.panelRateLimit.loginBruteForceWindowHint") }}
-                        </p>
-                      </div>
-
-                      <div>
-                        <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                          {{ t("admin.settings.panelRateLimit.loginBruteForceBlock") }}
-                        </label>
-                        <div class="flex items-center gap-2">
-                          <input
-                            v-model.number="panelRateLimitForm.login_bruteforce_block_seconds"
-                            type="number"
-                            min="10"
-                            max="604800"
-                            class="input w-32"
-                          />
-                          <span class="text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.panelRateLimit.seconds") }}</span>
-                        </div>
-                        <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                          {{ t("admin.settings.panelRateLimit.loginBruteForceBlockHint") }}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
                 </div>
 
                 <div
@@ -6964,6 +6889,44 @@
             </div>
           </div>
 
+          <div class="card">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t('admin.settings.features.accessBlock.title') }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t('admin.settings.features.accessBlock.description') }}
+              </p>
+              <p class="mt-1.5 text-xs">
+                <router-link
+                  to="/admin/access-blocks"
+                  class="inline-flex items-center gap-1 text-primary-600 hover:underline dark:text-primary-400"
+                >
+                  {{ t('admin.settings.features.accessBlock.configureLink') }}
+                  <span aria-hidden="true">→</span>
+                </router-link>
+              </p>
+            </div>
+            <div class="p-6">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t('admin.settings.features.accessBlock.enabled') }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('admin.settings.features.accessBlock.enabledHint') }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="accessBlockEnabled"
+                  data-testid="access-block-enabled"
+                  :disabled="!accessBlockSettingsLoaded"
+                  :class="{ 'cursor-not-allowed opacity-50': !accessBlockSettingsLoaded }"
+                />
+              </div>
+            </div>
+          </div>
+
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -8816,7 +8779,9 @@ type SettingsTab =
   | "payment"
   | "email"
   | "backup";
-const activeTab = ref<SettingsTab>("general");
+const activeTab = ref<SettingsTab>(
+  window.location.hash === "#features" ? "features" : "general",
+);
 const settingsTabs = [
   { key: "general" as SettingsTab, icon: "home" as const },
   { key: "agreement" as SettingsTab, icon: "document" as const },
@@ -8884,6 +8849,9 @@ const { copyToClipboard } = useClipboard();
 const loading = ref(true);
 const loadFailed = ref(false);
 const saving = ref(false);
+const accessBlockEnabled = ref(true);
+const accessBlockInitialEnabled = ref(true);
+const accessBlockSettingsLoaded = ref(false);
 const testingSmtp = ref(false);
 const sendingTestEmail = ref(false);
 const smtpPasswordManuallyEdited = ref(false);
@@ -8942,10 +8910,6 @@ const panelRateLimitForm = reactive({
   heavy_rpm: 60,
   exempt_admin: true,
   public_ip_rpm: 300,
-  login_bruteforce_enabled: true,
-  login_bruteforce_threshold: 10,
-  login_bruteforce_window_seconds: 600,
-  login_bruteforce_block_seconds: 3600,
 });
 
 // Stream Timeout 状态
@@ -10707,7 +10671,27 @@ async function loadSettings() {
   loading.value = true;
   loadFailed.value = false;
   try {
-    const settings = await adminAPI.settings.getSettings();
+    const [settingsResult, accessBlockSettingsResult] = await Promise.allSettled([
+      adminAPI.settings.getSettings(),
+      adminAPI.accessBlocks.getSettings(),
+    ]);
+    if (settingsResult.status === "rejected") {
+      throw settingsResult.reason;
+    }
+    const settings = settingsResult.value;
+    if (accessBlockSettingsResult.status === "fulfilled") {
+      accessBlockEnabled.value = accessBlockSettingsResult.value.enabled;
+      accessBlockInitialEnabled.value = accessBlockSettingsResult.value.enabled;
+      accessBlockSettingsLoaded.value = true;
+    } else {
+      accessBlockSettingsLoaded.value = false;
+      appStore.showError(
+        extractApiErrorMessage(
+          accessBlockSettingsResult.reason,
+          t("admin.accessBlocks.loadFailed"),
+        ),
+      );
+    }
     settings.payment_load_balance_strategy =
       settings.payment_load_balance_strategy || "round-robin";
     // Only assign non-null values from backend (null means unconfigured, keep defaults)
@@ -11450,6 +11434,16 @@ async function saveSettings() {
     const updated = await settingsStepUp.run(() =>
       adminAPI.settings.updateSettings(payload),
     );
+    if (
+      accessBlockSettingsLoaded.value &&
+      accessBlockEnabled.value !== accessBlockInitialEnabled.value
+    ) {
+      const updatedAccessBlockSettings = await adminAPI.accessBlocks.updateSettings({
+        enabled: accessBlockEnabled.value,
+      });
+      accessBlockEnabled.value = updatedAccessBlockSettings.enabled;
+      accessBlockInitialEnabled.value = updatedAccessBlockSettings.enabled;
+    }
     for (const [key, value] of Object.entries(updated)) {
       if (key === "openai_fast_policy_settings") continue;
       if (value !== null && value !== undefined) {
@@ -11799,10 +11793,6 @@ async function savePanelRateLimitSettings() {
       heavy_rpm: panelRateLimitForm.heavy_rpm,
       exempt_admin: panelRateLimitForm.exempt_admin,
       public_ip_rpm: panelRateLimitForm.public_ip_rpm,
-      login_bruteforce_enabled: panelRateLimitForm.login_bruteforce_enabled,
-      login_bruteforce_threshold: panelRateLimitForm.login_bruteforce_threshold,
-      login_bruteforce_window_seconds: panelRateLimitForm.login_bruteforce_window_seconds,
-      login_bruteforce_block_seconds: panelRateLimitForm.login_bruteforce_block_seconds,
     });
     Object.assign(panelRateLimitForm, updated);
     appStore.showSuccess(t("admin.settings.panelRateLimit.saved"));

@@ -140,6 +140,11 @@ type SettingService struct {
 	panelRateLimitCache atomic.Value
 	panelRateLimitSF    singleflight.Group
 
+	// accessBlockSettingsCache keeps the independently managed access-block
+	// policy off the panel rate-limit settings and request hot path.
+	accessBlockSettingsCache atomic.Value // *cachedAccessBlockSettings
+	accessBlockSettingsSF    singleflight.Group
+
 	// openAIQuotaAutoPauseSettingsCache holds the most recently observed quota auto-pause
 	// settings. GetOpenAIQuotaAutoPauseSettings reads this atomic.Value on the request hot
 	// path without ever blocking on the DB; when the cached entry expires, a background

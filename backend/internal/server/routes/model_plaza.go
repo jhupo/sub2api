@@ -19,8 +19,10 @@ func RegisterModelPlazaRoutes(
 	optionalJWT middleware.OptionalJWTAuthMiddleware,
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
+	accessBlockGuard *middleware.AccessBlockGuard,
 ) {
 	plaza := v1.Group("/model-plaza")
+	plaza.Use(accessBlockGuard.Handler())
 	plaza.Use(panelRateLimiter.PublicIP())
 	plaza.Use(gin.HandlerFunc(optionalJWT))
 	plaza.Use(middleware.BackendModeUserGuard(settingService))
