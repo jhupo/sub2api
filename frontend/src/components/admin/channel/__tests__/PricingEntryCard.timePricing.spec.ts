@@ -1,7 +1,13 @@
-import { shallowMount } from '@vue/test-utils'
+import { flushPromises, shallowMount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import PricingEntryCard from '../PricingEntryCard.vue'
 import type { PricingFormEntry } from '../types'
+
+const getModelDefaultPricing = vi.hoisted(() => vi.fn())
+
+vi.mock('@/api/admin/channels', () => ({
+  default: { getModelDefaultPricing },
+}))
 
 vi.mock('vue-i18n', async importOriginal => ({
   ...await importOriginal<typeof import('vue-i18n')>(),
@@ -82,5 +88,49 @@ describe('PricingEntryCard service tier multipliers', () => {
     })
     expect(shown.text()).toContain('admin.channels.form.fastMultiplier')
     expect(shown.text()).toContain('admin.channels.form.flexMultiplier')
+  })
+})
+
+describe('PricingEntryCard model default pricing preview', () => {
+  it('loads the clicked model and shows catalog prices without changing the entry', async () => {
+    getModelDefaultPricing.mockResolvedValueOnce({
+      found: true,
+      input_price: 0.000005,
+      output_price: 0.00003,
+      cache_read_price: 0.0000005,
+    })
+    const entry = { ...createEntry(), models: ['gpt-5.6-sol', 'gpt-6'] }
+    const wrapper = shallowMount(PricingEntryCard, { props: { entry } })
+
+    wrapper.findComponent({ name: 'ModelTagInput' }).vm.$emit('select:model', 'gpt-6')
+    await flushPromises()
+
+    expect(getModelDefaultPricing).toHaveBeenCalledWith('gpt-6')
+    expect(wrapper.text()).toContain('gpt-6')
+    expect(wrapper.text()).toContain('admin.channels.form.defaultPricingLoaded')
+    const priceInputs = wrapper.findAll('input[type="number"]')
+    expect(priceInputs[0].attributes('placeholder')).toBe('5')
+    expect(priceInputs[1].attributes('placeholder')).toBe('30')
+    expect(priceInputs[4].attributes('placeholder')).toBe('0.5')
+    expect(wrapper.emitted('update')).toBeUndefined()
+  })
+
+  it('ignores a slower response after another model is selected', async () => {
+    let resolveFirst!: (value: { found: boolean, input_price: number }) => void
+    getModelDefaultPricing
+      .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
+      .mockResolvedValueOnce({ found: true, input_price: 0.000002 })
+    const entry = { ...createEntry(), models: ['model-a', 'model-b'] }
+    const wrapper = shallowMount(PricingEntryCard, { props: { entry } })
+    const input = wrapper.findComponent({ name: 'ModelTagInput' })
+
+    input.vm.$emit('select:model', 'model-a')
+    input.vm.$emit('select:model', 'model-b')
+    await flushPromises()
+    resolveFirst({ found: true, input_price: 0.000009 })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('model-b')
+    expect(wrapper.findAll('input[type="number"]')[0].attributes('placeholder')).toBe('2')
   })
 })

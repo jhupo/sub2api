@@ -76,7 +76,10 @@
             <ModelTagInput
               :models="entry.models"
               :platform="props.platform"
+              :selected-model="entry.billing_mode === 'token' ? selectedModel : null"
+              :selectable="entry.billing_mode === 'token'"
               @update:models="onModelsUpdate($event)"
+              @select:model="selectModelPricing"
               :placeholder="t('admin.channels.form.modelsPlaceholder')"
               class="mt-1"
             />
@@ -106,41 +109,75 @@
             {{ t('admin.channels.form.defaultPrices') }}
             <span class="ml-1 font-normal text-gray-400">$/MTok</span>
           </label>
+          <div
+            v-if="selectedModel"
+            class="mt-1 rounded-md border border-primary-200 bg-primary-50 px-2 py-1.5 text-xs text-primary-700 dark:border-primary-900/60 dark:bg-primary-900/20 dark:text-primary-300"
+          >
+            <span class="font-medium">{{ selectedModel }}</span>
+            <span class="ml-1">
+              {{ defaultPricingLoading
+                ? t('admin.channels.form.defaultPricingLoading')
+                : selectedDefaultPricing?.found
+                  ? t('admin.channels.form.defaultPricingLoaded')
+                  : t('admin.channels.form.defaultPricingUnavailable') }}
+            </span>
+          </div>
           <div class="pricing-default-grid mt-1 grid gap-2">
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.inputPrice') }}</label>
+              <label class="text-xs text-gray-400">
+                {{ t('admin.channels.form.inputPrice') }}
+                <span v-if="defaultPriceText('input_price')" class="ml-1 text-primary-500">{{ t('admin.channels.form.builtInDefaultPrice', { price: defaultPriceText('input_price') }) }}</span>
+              </label>
               <input :value="entry.input_price" @input="emitField('input_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="defaultPricePlaceholder('input_price')" />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.outputPrice') }}</label>
+              <label class="text-xs text-gray-400">
+                {{ t('admin.channels.form.outputPrice') }}
+                <span v-if="defaultPriceText('output_price')" class="ml-1 text-primary-500">{{ t('admin.channels.form.builtInDefaultPrice', { price: defaultPriceText('output_price') }) }}</span>
+              </label>
               <input :value="entry.output_price" @input="emitField('output_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="defaultPricePlaceholder('output_price')" />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.cacheWrite5mPrice') }}</label>
+              <label class="text-xs text-gray-400">
+                {{ t('admin.channels.form.cacheWrite5mPrice') }}
+                <span v-if="defaultPriceText('cache_write_price')" class="ml-1 text-primary-500">{{ t('admin.channels.form.builtInDefaultPrice', { price: defaultPriceText('cache_write_price') }) }}</span>
+              </label>
               <input :value="entry.cache_write_price" @input="emitField('cache_write_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="defaultPricePlaceholder('cache_write_price')" />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.cacheWrite1hPrice') }}</label>
+              <label class="text-xs text-gray-400">
+                {{ t('admin.channels.form.cacheWrite1hPrice') }}
+                <span v-if="defaultPriceText('cache_write_1h_price')" class="ml-1 text-primary-500">{{ t('admin.channels.form.builtInDefaultPrice', { price: defaultPriceText('cache_write_1h_price') }) }}</span>
+              </label>
               <input :value="entry.cache_write_1h_price" @input="emitField('cache_write_1h_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="defaultPricePlaceholder('cache_write_1h_price')" />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.cacheReadPrice') }}</label>
+              <label class="text-xs text-gray-400">
+                {{ t('admin.channels.form.cacheReadPrice') }}
+                <span v-if="defaultPriceText('cache_read_price')" class="ml-1 text-primary-500">{{ t('admin.channels.form.builtInDefaultPrice', { price: defaultPriceText('cache_read_price') }) }}</span>
+              </label>
               <input :value="entry.cache_read_price" @input="emitField('cache_read_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="defaultPricePlaceholder('cache_read_price')" />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.imageInputPrice') }}</label>
+              <label class="text-xs text-gray-400">
+                {{ t('admin.channels.form.imageInputPrice') }}
+                <span v-if="defaultPriceText('image_input_price')" class="ml-1 text-primary-500">{{ t('admin.channels.form.builtInDefaultPrice', { price: defaultPriceText('image_input_price') }) }}</span>
+              </label>
               <input :value="entry.image_input_price" @input="emitField('image_input_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="defaultPricePlaceholder('image_input_price')" />
             </div>
             <div>
-              <label class="text-xs text-gray-400">{{ t('admin.channels.form.imageTokenPrice') }}</label>
+              <label class="text-xs text-gray-400">
+                {{ t('admin.channels.form.imageTokenPrice') }}
+                <span v-if="defaultPriceText('image_output_price')" class="ml-1 text-primary-500">{{ t('admin.channels.form.builtInDefaultPrice', { price: defaultPriceText('image_output_price') }) }}</span>
+              </label>
               <input :value="entry.image_output_price" @input="emitField('image_output_price', ($event.target as HTMLInputElement).value)"
-                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
+                type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="defaultPricePlaceholder('image_output_price')" />
             </div>
           </div>
 
@@ -262,7 +299,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -271,7 +308,7 @@ import ModelTagInput from './ModelTagInput.vue'
 import TimePricingSection from './TimePricingSection.vue'
 import type { PricingFormEntry, IntervalFormEntry } from './types'
 import { perTokenToMTok, getPlatformTagClass } from './types'
-import type { BillingMode } from '@/api/admin/channels'
+import type { BillingMode, ModelDefaultPricing } from '@/api/admin/channels'
 import channelsAPI from '@/api/admin/channels'
 
 const { t } = useI18n()
@@ -295,6 +332,12 @@ const emit = defineEmits<{
 
 // Collapse state: entries with existing models default to collapsed
 const collapsed = ref(props.entry.models.length > 0)
+const selectedModel = ref<string | null>(null)
+const selectedDefaultPricing = ref<ModelDefaultPricing | null>(null)
+const defaultPricingLoading = ref(false)
+let defaultPricingRequest = 0
+
+type DefaultPriceField = Exclude<keyof ModelDefaultPricing, 'found'>
 
 const billingModeOptions = computed(() => [
   { value: 'token', label: t('admin.channels.billingMode.token') },
@@ -311,6 +354,46 @@ const billingModeLabel = computed(() => {
 function emitField(field: keyof PricingFormEntry, value: string) {
   emit('update', { ...props.entry, [field]: value === '' ? null : value })
 }
+
+function defaultPriceText(field: DefaultPriceField): string | null {
+  const value = selectedDefaultPricing.value?.found
+    ? selectedDefaultPricing.value[field]
+    : null
+  const perMTok = perTokenToMTok(value)
+  return perMTok == null ? null : String(perMTok)
+}
+
+function defaultPricePlaceholder(field: DefaultPriceField): string {
+  return defaultPriceText(field) ?? t('admin.channels.form.pricePlaceholder')
+}
+
+async function selectModelPricing(model: string) {
+  selectedModel.value = model
+  selectedDefaultPricing.value = null
+  defaultPricingLoading.value = true
+  const request = ++defaultPricingRequest
+  try {
+    const result = await channelsAPI.getModelDefaultPricing(model)
+    if (request === defaultPricingRequest && selectedModel.value === model) {
+      selectedDefaultPricing.value = result
+    }
+  } catch {
+    if (request === defaultPricingRequest && selectedModel.value === model) {
+      selectedDefaultPricing.value = { found: false }
+    }
+  } finally {
+    if (request === defaultPricingRequest) defaultPricingLoading.value = false
+  }
+}
+
+watch(() => props.entry.models, models => {
+  if (selectedModel.value && !models.includes(selectedModel.value)) {
+    defaultPricingRequest++
+    selectedModel.value = null
+    selectedDefaultPricing.value = null
+    defaultPricingLoading.value = false
+  }
+})
 
 function addInterval() {
   const intervals = [...(props.entry.intervals || [])]

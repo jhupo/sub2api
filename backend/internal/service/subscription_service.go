@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"math"
 	"strings"
 	"time"
@@ -252,10 +254,20 @@ func lockSubscriptionAssignment(ctx context.Context, userID, planVersionID int64
 		return nil
 	}
 	if _, err := client.ExecContext(ctx,
-		"SELECT pg_advisory_xact_lock($1::bigint, $2::bigint)", userID, planVersionID); err != nil {
+		"SELECT pg_advisory_xact_lock($1::bigint)", subscriptionAssignmentAdvisoryLockKey(userID, planVersionID)); err != nil {
 		return fmt.Errorf("lock subscription assignment: %w", err)
 	}
 	return nil
+}
+
+func subscriptionAssignmentAdvisoryLockKey(userID, planVersionID int64) int64 {
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte("subscription-assignment:"))
+	var ids [16]byte
+	binary.BigEndian.PutUint64(ids[:8], uint64(userID))
+	binary.BigEndian.PutUint64(ids[8:], uint64(planVersionID))
+	_, _ = hasher.Write(ids[:])
+	return int64(hasher.Sum64())
 }
 
 func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input *BulkAssignSubscriptionInput) (*BulkAssignResult, error) {

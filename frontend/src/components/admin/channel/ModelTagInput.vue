@@ -4,14 +4,27 @@
     <div class="flex flex-wrap gap-1.5 rounded-lg border border-gray-200 bg-white p-2 dark:border-dark-600 dark:bg-dark-800 min-h-[2.5rem]">
       <span
         v-for="(model, idx) in models"
-        :key="idx"
+        :key="model"
         class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-sm"
-        :class="getPlatformTagClass(props.platform || '')"
+        :class="[
+          getPlatformTagClass(props.platform || ''),
+          props.selectable ? 'select-none transition-shadow hover:ring-1 hover:ring-primary-400' : '',
+          props.selectable && props.selectedModel === model ? 'ring-2 ring-primary-500' : '',
+        ]"
       >
-        {{ model }}
+        <button
+          v-if="props.selectable"
+          type="button"
+          class="cursor-pointer"
+          :aria-pressed="props.selectedModel === model"
+          @click="selectModel(model)"
+        >
+          {{ model }}
+        </button>
+        <span v-else>{{ model }}</span>
         <button
           type="button"
-          @click="removeModel(idx)"
+          @click.stop="removeModel(idx)"
           class="ml-0.5 rounded-full p-0.5 hover:bg-primary-200 dark:hover:bg-primary-800"
         >
           <Icon name="x" size="xs" />
@@ -32,6 +45,7 @@
     </div>
     <p class="mt-1 text-xs text-gray-400">
       {{ t('admin.channels.form.modelInputHint', 'Press Enter to add, supports paste for batch import.') }}
+      <span v-if="props.selectable"> · {{ t('admin.channels.form.modelPricingSelectionHint') }}</span>
     </p>
   </div>
 </template>
@@ -48,10 +62,13 @@ const props = defineProps<{
   models: string[]
   placeholder?: string
   platform?: string
+  selectable?: boolean
+  selectedModel?: string | null
 }>()
 
 const emit = defineEmits<{
   'update:models': [models: string[]]
+  'select:model': [model: string]
 }>()
 
 const inputValue = ref('')
@@ -70,6 +87,10 @@ function removeModel(idx: number) {
   const newModels = [...props.models]
   newModels.splice(idx, 1)
   emit('update:models', newModels)
+}
+
+function selectModel(model: string) {
+  if (props.selectable) emit('select:model', model)
 }
 
 function handleBackspace() {
