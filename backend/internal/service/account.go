@@ -735,7 +735,12 @@ func ensureAntigravityDefaultPassthroughs(mapping map[string]string, models []st
 func applyAntigravityGemini31ProAliases(mapping map[string]string) {
 	target := strings.TrimSpace(mapping[domain.AntigravityGemini31ProAgentModel])
 	if target == "" {
-		return
+		// Custom mappings may omit the internal target key. The default route
+		// remains gemini-pro-agent; explicit alias mappings below still win.
+		target = domain.AntigravityGemini31ProAgentModel
+		if !mappingHasWildcardForModel(mapping, domain.AntigravityGemini31ProAgentModel) {
+			mapping[domain.AntigravityGemini31ProAgentModel] = target
+		}
 	}
 
 	aliases := []struct {

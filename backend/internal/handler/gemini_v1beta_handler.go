@@ -496,6 +496,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 		sessionGroupID := derefGroupID(apiKey.GroupID)
 		if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
+			h.gatewayService.ScheduleAccountAttempt(account.ID)
 			result, err = h.antigravityGatewayService.ForwardGemini(
 				requestCtx,
 				c,

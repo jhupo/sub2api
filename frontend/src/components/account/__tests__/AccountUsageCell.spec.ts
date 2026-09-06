@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import AccountUsageCell from '../AccountUsageCell.vue'
+import UsageProgressBar from '../UsageProgressBar.vue'
 import type { Account } from '@/types'
 
 const { getUsage } = vi.hoisted(() => ({
@@ -1311,7 +1312,11 @@ describe('AccountUsageCell', () => {
     getUsage.mockResolvedValue({
       gemini_shared_daily: { utilization: 0, resets_at: null, limit_requests: 1500 },
       gemini_shared_minute: { utilization: 0, resets_at: null, limit_requests: 120 },
-      antigravity_quota: { 'gemini-3-pro': { utilization: 25, reset_time: null } }
+      antigravity_quota: {
+        'gemini-3-pro': { utilization: 25, reset_time: null },
+        'gemini-2.5-flash': { utilization: 0, reset_time: null },
+        'gemini-3-flash': { utilization: 100, reset_time: null }
+      }
     })
     const wrapper = mount(AccountUsageCell, {
       props: {
@@ -1324,12 +1329,27 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).toContain('U $0.00')
     expect(wrapper.text()).toContain('0 / 1500 req')
     expect(wrapper.text()).toContain('0 / 120 req')
-    expect(wrapper.text()).toContain('gemini-3-pro')
-    expect(wrapper.text()).toContain('25%')
+    expect(wrapper.text()).not.toContain('gemini-3-pro')
+    expect(wrapper.text()).not.toContain('gemini-2.5-flash')
+    expect(wrapper.text()).not.toContain('gemini-3-flash')
+    expect(wrapper.findAllComponents(UsageProgressBar).map(bar => bar.props('label'))).toEqual(['1d', '1m'])
     expect(wrapper.text()).toContain('admin.accounts.gemini.localQuota')
-    expect(wrapper.text()).toContain('admin.accounts.gemini.upstreamQuota')
+    expect(wrapper.text()).not.toContain('admin.accounts.gemini.upstreamQuota')
     wrapper.unmount()
   })
+
+  it.each([{}, { 'claude-sonnet-4-6': { utilization: 100, reset_time: '' } }])(
+    'shows unavailable when Gemini local request limits are absent: %j', async quotas => {
+      getUsage.mockResolvedValue({ antigravity_quota: quotas })
+      const wrapper = mount(AccountUsageCell, {
+        props: { account: makeAccount({ platform: 'gemini', type: 'oauth', credentials: { oauth_type: 'antigravity' } }) }
+      })
+      await flushPromises()
+      expect(wrapper.findAllComponents(UsageProgressBar)).toHaveLength(0)
+      expect(wrapper.text()).toContain('admin.accounts.gemini.quotaUnavailable')
+      wrapper.unmount()
+    }
+  )
 
   it('does not present missing Gemini quota as unlimited', async () => {
     getUsage.mockResolvedValue({})

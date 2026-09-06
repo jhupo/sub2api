@@ -1325,7 +1325,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				_ = clientConn.Close(status, reason)
 				_ = clientConn.CloseNow()
 			},
-			BeforeWriteClient: func(msgType coderws.MessageType, payload []byte, wroteDownstream bool) error {
+			BeforeWriteClient: func(msgType coderws.MessageType, payload []byte, turnWroteDownstream bool) error {
 				if msgType != coderws.MessageText {
 					return nil
 				}
@@ -1334,14 +1334,14 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					failureAccountSideEffectsApplied = false
 				}
 				errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(payload)
-				isPreOutputRateLimit := eventType == "error" && !wroteDownstream && isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw)
+				isPreOutputRateLimit := eventType == "error" && !turnWroteDownstream && isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw)
 				if (eventType == "error" || eventType == "response.failed") && !failureAccountSideEffectsApplied && !isPreOutputRateLimit {
 					failureAccountSideEffectsApplied = s.handleOpenAIWSFailureAccountSideEffects(ctx, account, loadCapturedSessionModel(), handshakeHeaders, payload)
 				}
 				if eventType != "error" {
 					return nil
 				}
-				if wroteDownstream || !isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw) {
+				if turnWroteDownstream || !isOpenAIWSRateLimitError(errCodeRaw, errTypeRaw, errMsgRaw) {
 					return nil
 				}
 				s.persistOpenAIWSRateLimitSignal(ctx, account, handshakeHeaders, payload, errCodeRaw, errTypeRaw, errMsgRaw, capturedSessionModel)

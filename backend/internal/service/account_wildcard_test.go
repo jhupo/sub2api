@@ -7,6 +7,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGrokAccountModelMappingCacheInvalidatesWithRuntimeSettings(t *testing.T) {
@@ -372,6 +373,43 @@ func TestAccountGetModelMapping_AntigravityNormalizesGemini31ProAliases(t *testi
 	}
 }
 
+func TestAccountGetModelMapping_AntigravityDefaultsGemini31ProTargetWhenTargetKeyMissing(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		Platform: PlatformAntigravity,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"gemini-3.6-flash":    "custom-flash",
+				"gemini-3.1-pro-high": "gemini-3.1-pro-high",
+			},
+		},
+	}
+
+	mapping := account.GetModelMapping()
+	require.Equal(t, domain.AntigravityGemini31ProAgentModel, mapping[domain.AntigravityGemini31ProAgentModel])
+	require.Equal(t, domain.AntigravityGemini31ProAgentModel, mapping["gemini-3.1-pro"])
+	require.Equal(t, domain.AntigravityGemini31ProAgentModel, mapping["gemini-3.1-pro-high"])
+	require.Equal(t, domain.AntigravityGemini31ProAgentModel, mapping["gemini-3.1-pro-preview"])
+}
+
+func TestAccountGetModelMapping_AntigravityPreservesExplicitGemini31ProMappingWithoutTargetKey(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		Platform: PlatformAntigravity,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"gemini-3.1-pro-high": "custom-high",
+			},
+		},
+	}
+
+	mapping := account.GetModelMapping()
+	require.Equal(t, "custom-high", mapping["gemini-3.1-pro-high"])
+	require.Equal(t, domain.AntigravityGemini31ProAgentModel, mapping["gemini-3.1-pro"])
+}
+
 func TestAccountGetModelMapping_AntigravityPreservesGemini31ProOverrides(t *testing.T) {
 	t.Parallel()
 
@@ -529,8 +567,8 @@ func TestAccountGetModelMapping_AntigravityEnsuresGeminiDefaultPassthroughs(t *t
 	if mapping["gemini-3-flash"] != "gemini-3-flash" {
 		t.Fatalf("expected gemini-3-flash passthrough to be auto-filled, got: %q", mapping["gemini-3-flash"])
 	}
-	if mapping["gemini-3.1-pro-high"] != "gemini-3.1-pro-high" {
-		t.Fatalf("expected gemini-3.1-pro-high passthrough to be auto-filled, got: %q", mapping["gemini-3.1-pro-high"])
+	if mapping["gemini-3.1-pro-high"] != domain.AntigravityGemini31ProAgentModel {
+		t.Fatalf("expected gemini-3.1-pro-high to use the default agent route, got: %q", mapping["gemini-3.1-pro-high"])
 	}
 	if mapping["gemini-3.1-pro-low"] != "gemini-3.1-pro-low" {
 		t.Fatalf("expected gemini-3.1-pro-low passthrough to be auto-filled, got: %q", mapping["gemini-3.1-pro-low"])

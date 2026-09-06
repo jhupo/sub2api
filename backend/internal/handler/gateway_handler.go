@@ -515,6 +515,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			forwardBody := preauthorizationBody
 			forwardModel := routingModel
 			if account.Platform == service.PlatformAntigravity {
+				h.gatewayService.ScheduleAccountAttempt(account.ID)
 				result, err = h.antigravityGatewayService.ForwardGemini(
 					requestCtx,
 					c,

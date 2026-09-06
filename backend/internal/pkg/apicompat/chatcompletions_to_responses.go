@@ -11,12 +11,22 @@ type chatMessageContent struct {
 	Parts []ChatContentPart
 }
 
+// ChatToResponsesOptions carries optional hooks for restoring encrypted
+// Responses reasoning before replayed tool calls.
+type ChatToResponsesOptions struct {
+	ReasoningByToolCallID func(callID string) []string
+}
+
 // ChatCompletionsToResponses converts a Chat Completions request into a
 // Responses API request. The upstream always streams, so Stream is forced to
 // true. store is always false and reasoning.encrypted_content is always
 // included so that the response translator has full context.
 func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest, error) {
-	input, err := convertChatMessagesToResponsesInput(req.Messages)
+	return ChatCompletionsToResponsesWithOptions(req, nil)
+}
+
+func ChatCompletionsToResponsesWithOptions(req *ChatCompletionsRequest, opts *ChatToResponsesOptions) (*ResponsesRequest, error) {
+	input, err := convertChatMessagesToResponsesInput(req.Messages, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -99,10 +109,10 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 
 // convertChatMessagesToResponsesInput converts the Chat Completions messages
 // array into a Responses API input items array.
-func convertChatMessagesToResponsesInput(msgs []ChatMessage) ([]ResponsesInputItem, error) {
+func convertChatMessagesToResponsesInput(msgs []ChatMessage, opts *ChatToResponsesOptions) ([]ResponsesInputItem, error) {
 	var out []ResponsesInputItem
 	for _, m := range msgs {
-		items, err := chatMessageToResponsesItems(m)
+		items, err := chatMessageToResponsesItems(m, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -113,14 +123,14 @@ func convertChatMessagesToResponsesInput(msgs []ChatMessage) ([]ResponsesInputIt
 
 // chatMessageToResponsesItems converts a single ChatMessage into one or more
 // ResponsesInputItem values.
-func chatMessageToResponsesItems(m ChatMessage) ([]ResponsesInputItem, error) {
+func chatMessageToResponsesItems(m ChatMessage, opts *ChatToResponsesOptions) ([]ResponsesInputItem, error) {
 	switch m.Role {
 	case "system":
 		return chatSystemToResponses(m)
 	case "user":
 		return chatUserToResponses(m)
 	case "assistant":
-		return chatAssistantToResponses(m)
+		return chatAssistantToResponses(m, opts)
 	case "tool":
 		return chatToolToResponses(m)
 	case "function":
@@ -161,11 +171,12 @@ func chatUserToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 // text content and tool_calls, the text is emitted as an assistant message
 // first, then each tool_call becomes a function_call item. If the content is
 // empty/nil and there are tool_calls, only function_call items are emitted.
-func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
+func chatAssistantToResponses(m ChatMessage, opts *ChatToResponsesOptions) ([]ResponsesInputItem, error) {
 	var items []ResponsesInputItem
 	content := ""
+	replay := lookupChatToolCallReasoning(m.ToolCalls, opts)
 
-	if m.ReasoningContent != "" {
+	if m.ReasoningContent != "" && len(replay) == 0 {
 		content = "<thinking>" + m.ReasoningContent + "</thinking>"
 	}
 
@@ -194,6 +205,13 @@ func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 
 	// Emit one function_call item per tool_call.
 	for _, tc := range m.ToolCalls {
+		for _, encrypted := range replay[tc.ID] {
+			items = append(items, ResponsesInputItem{
+				Type:             "reasoning",
+				EncryptedContent: encrypted,
+				Summary:          json.RawMessage("[]"),
+			})
+		}
 		args := tc.Function.Arguments
 		if args == "" {
 			args = "{}"
@@ -207,6 +225,32 @@ func chatAssistantToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 	}
 
 	return items, nil
+}
+
+func lookupChatToolCallReasoning(toolCalls []ChatToolCall, opts *ChatToResponsesOptions) map[string][]string {
+	if opts == nil || opts.ReasoningByToolCallID == nil || len(toolCalls) == 0 {
+		return nil
+	}
+	var replay map[string][]string
+	for _, tc := range toolCalls {
+		id := strings.TrimSpace(tc.ID)
+		if id == "" || len(id) > 256 {
+			continue
+		}
+		var restored []string
+		for _, encrypted := range opts.ReasoningByToolCallID(id) {
+			if strings.TrimSpace(encrypted) != "" {
+				restored = append(restored, encrypted)
+			}
+		}
+		if len(restored) > 0 {
+			if replay == nil {
+				replay = make(map[string][]string)
+			}
+			replay[tc.ID] = restored
+		}
+	}
+	return replay
 }
 
 // parseAssistantContent returns assistant content as plain text.

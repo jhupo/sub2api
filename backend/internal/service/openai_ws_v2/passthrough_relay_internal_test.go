@@ -210,6 +210,76 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 	})
 }
 
+func TestRunUpstreamToClient_ResetsOutputBoundaryPerTurn(t *testing.T) {
+	t.Parallel()
+
+	state := &relayState{}
+	state.beginTurn()
+	firstExit := make(chan relayExitSignal, 1)
+	firstSeen := make([]bool, 0, 1)
+	firstDrop := &atomic.Bool{}
+	runUpstreamToClient(
+		context.Background(),
+		newPassthroughTestFrameConn([]passthroughTestFrame{
+			{msgType: coderws.MessageText, payload: []byte(`{"type":"response.output_text.delta","delta":"first"}`)},
+		}, true),
+		func(_ coderws.MessageType, _ []byte) error { return nil },
+		time.Now(),
+		time.Now,
+		state,
+		nil,
+		nil,
+		func(_ coderws.MessageType, _ []byte, wrote bool) error {
+			firstSeen = append(firstSeen, wrote)
+			return nil
+		},
+		nil,
+		nil,
+		nil,
+		firstDrop,
+		nil,
+		nil,
+		func() {},
+		nil,
+		firstExit,
+	)
+	<-firstExit
+	require.Equal(t, []bool{false}, firstSeen)
+	require.True(t, state.turnWroteDownstream.Load())
+
+	state.beginTurn()
+	secondExit := make(chan relayExitSignal, 1)
+	secondSeen := make([]bool, 0, 1)
+	secondDrop := &atomic.Bool{}
+	runUpstreamToClient(
+		context.Background(),
+		newPassthroughTestFrameConn([]passthroughTestFrame{
+			{msgType: coderws.MessageText, payload: []byte(`{"type":"error","error":{"code":"usage_limit_reached"}}`)},
+		}, true),
+		func(_ coderws.MessageType, _ []byte) error { return nil },
+		time.Now(),
+		time.Now,
+		state,
+		nil,
+		nil,
+		func(_ coderws.MessageType, _ []byte, wrote bool) error {
+			secondSeen = append(secondSeen, wrote)
+			return nil
+		},
+		nil,
+		nil,
+		nil,
+		secondDrop,
+		nil,
+		nil,
+		func() {},
+		nil,
+		secondExit,
+	)
+	<-secondExit
+	require.Equal(t, []bool{false}, secondSeen)
+}
+
 func TestRunIdleWatchdog_NoTimeoutWhenDisabled(t *testing.T) {
 	t.Parallel()
 

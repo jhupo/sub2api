@@ -620,4 +620,21 @@ func TestGeminiToolConfig_IncludeServerSideToolInvocations(t *testing.T) {
 		require.Nil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
 		require.NotContains(t, raw, "includeServerSideToolInvocations")
 	})
+
+	t.Run("reasoning model without tools still sends toolConfig", func(t *testing.T) {
+		body, err := TransformClaudeToGeminiWithOptions(&ClaudeRequest{
+			Model: "gemini-3.1-pro-high",
+			Messages: []ClaudeMessage{{
+				Role:    "user",
+				Content: json.RawMessage(`[{"type":"text","text":"hello"}]`),
+			}},
+		}, "project-1", "gemini-3.1-pro-high", DefaultTransformOptions())
+		require.NoError(t, err)
+
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		require.NotNil(t, req.Request.ToolConfig)
+		require.NotNil(t, req.Request.ToolConfig.FunctionCallingConfig)
+		require.Equal(t, "VALIDATED", req.Request.ToolConfig.FunctionCallingConfig.Mode)
+	})
 }

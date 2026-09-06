@@ -1256,7 +1256,6 @@ export default {
                   }
                 },      // Gemini specific (platform-wide)
       gemini: {
-        upstreamQuota: 'Upstream quota used',
         localQuota: 'Local request limits',
         quotaUnavailable: 'Quota unavailable',
         helpButton: 'Help',

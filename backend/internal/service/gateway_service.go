@@ -758,6 +758,17 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 	}
 }
 
+// ScheduleAccountAttempt advances scheduler last_used as soon as an account
+// is handed to an upstream forwarder. Failed upstream requests must still move
+// the account in last-used ordering, otherwise a permanently bad account can
+// remain the oldest candidate and starve the rest of the pool.
+func (s *GatewayService) ScheduleAccountAttempt(accountID int64) {
+	if s == nil || s.deferredService == nil || accountID <= 0 {
+		return
+	}
+	s.deferredService.ScheduleLastUsedUpdate(accountID)
+}
+
 type GeminiAccountModelSupportResolver interface {
 	SupportsAccountModel(context.Context, *Account, string) bool
 }

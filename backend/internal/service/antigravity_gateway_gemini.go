@@ -342,6 +342,36 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		// Always record upstream context for Ops error logs, even when we will failover.
 		setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 
+		// A model-specific INVALID_ARGUMENT means this OAuth account does not
+		// have access to the mapped model. Cool down only that account/model pair
+		// and let the existing failover loop choose another account.
+		if resp.StatusCode == http.StatusBadRequest && isAntigravityModelInvalidArgument(unwrappedForOps) {
+			modelKey := resolveFinalAntigravityModelKey(ctx, account, originalModel)
+			resetAt := time.Now().Add(s.getDefaultRateLimitDuration())
+			modelLimitSet := modelKey != "" && setModelRateLimitByModelName(ctx, s.accountRepo, account.ID, modelKey, prefix, resp.StatusCode, resetAt, false)
+			if modelLimitSet {
+				s.updateAccountModelRateLimitInCache(ctx, account, modelKey, resetAt)
+				s.clearStickySession(ctx, forwardOpts.groupID, forwardOpts.sessionHash)
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  requestID,
+					Kind:               "model_invalid_argument_failover",
+					Message:            upstreamMsg,
+					Detail:             upstreamDetail,
+				})
+				logger.LegacyPrintf("service.antigravity_gateway", "%s status=400 model_invalid_argument model=%s account=%d reset_in=%v (switch account)",
+					prefix, modelKey, account.ID, time.Until(resetAt).Truncate(time.Second))
+				return nil, &UpstreamFailoverError{
+					StatusCode:        http.StatusServiceUnavailable,
+					ResponseBody:      unwrappedForOps,
+					ForceCacheBilling: isStickySession,
+				}
+			}
+		}
+
 		// 精确匹配服务端配置类 400 错误，触发同账号重试 + failover
 		if resp.StatusCode == http.StatusBadRequest && isGoogleProjectConfigError(strings.ToLower(upstreamMsg)) {
 			log.Printf("%s status=400 google_config_error failover=true upstream_message=%q account=%d", prefix, upstreamMsg, account.ID)

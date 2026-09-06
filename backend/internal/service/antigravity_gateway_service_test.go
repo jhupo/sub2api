@@ -662,6 +662,54 @@ func TestAntigravityGatewayService_ForwardGemini_ModelRateLimitTriggersFailover(
 	require.False(t, failoverErr.ForceCacheBilling, "ForceCacheBilling should be false for non-sticky session")
 }
 
+func TestAntigravityGatewayService_ForwardGemini_InvalidArgumentCoolsModelAndFailsOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	writer := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(writer)
+	body := []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3.1-pro-high:generateContent", bytes.NewReader(body))
+
+	repo := &stubAntigravityAccountRepo{}
+	cache := &stubSmartRetryCache{}
+	svc := &AntigravityGatewayService{
+		accountRepo:   repo,
+		cache:         cache,
+		tokenProvider: &AntigravityTokenProvider{},
+		httpUpstream: &httpUpstreamStub{resp: &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"response":{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}}`)),
+		}},
+	}
+	account := &Account{
+		ID:          31,
+		Name:        "acc-invalid-model",
+		Platform:    PlatformAntigravity,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token": "token",
+			"project_id":   "project",
+			"model_mapping": map[string]any{
+				"gemini-3.1-pro-high": "gemini-pro-agent",
+			},
+		},
+	}
+
+	result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-3.1-pro-high", "generateContent", false, body, true, WithForwardGeminiSession(9, "sticky-invalid-model"))
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusServiceUnavailable, failoverErr.StatusCode)
+	require.True(t, failoverErr.ForceCacheBilling)
+	require.NotEmpty(t, repo.modelRateLimitCalls)
+	require.Equal(t, int64(31), repo.modelRateLimitCalls[0].accountID)
+	require.Equal(t, "gemini-pro-agent", repo.modelRateLimitCalls[0].modelKey)
+	require.Len(t, cache.deleteCalls, 1)
+	require.Equal(t, "sticky-invalid-model", cache.deleteCalls[0].sessionHash)
+}
+
 // TestAntigravityGatewayService_Forward_StickySessionForceCacheBilling
 // 验证：粘性会话切换时，UpstreamFailoverError.ForceCacheBilling 应为 true
 func TestAntigravityGatewayService_Forward_StickySessionForceCacheBilling(t *testing.T) {
@@ -1079,7 +1127,7 @@ func TestAntigravityGatewayService_ForwardGemini_RetriesCorruptedThoughtSignatur
 	}
 
 	const originalModel = "gemini-3.1-pro-preview"
-	const mappedModel = "gemini-3.1-pro-high"
+	const mappedModel = "gemini-pro-agent"
 	account := &Account{
 		ID:          7,
 		Name:        "acc-gemini-signature",
@@ -1138,7 +1186,7 @@ func TestAntigravityGatewayService_ForwardGemini_SignatureRetryPropagatesFailove
 	firstRespBody := []byte(`{"response":{"error":{"code":400,"message":"Corrupted thought signature.","status":"INVALID_ARGUMENT"}}}`)
 
 	const originalModel = "gemini-3.1-pro-preview"
-	const mappedModel = "gemini-3.1-pro-high"
+	const mappedModel = "gemini-pro-agent"
 	account := &Account{
 		ID:          8,
 		Name:        "acc-gemini-signature-failover",

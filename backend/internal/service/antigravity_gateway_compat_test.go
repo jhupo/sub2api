@@ -380,11 +380,12 @@ func antigravityCompatIntPtr(v int) *int { return &v }
 func TestAntigravityCompatRoutesByMappedModelFamily(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {
-		model         string
-		wantSessionID bool
+		model             string
+		wantUpstreamModel string
+		wantSessionID     bool
 	}{
-		{model: "gemini-3.1-pro-high", wantSessionID: false},
-		{model: "claude-sonnet-4-5", wantSessionID: true},
+		{model: "gemini-3.1-pro-high", wantUpstreamModel: "gemini-pro-agent", wantSessionID: false},
+		{model: "claude-sonnet-4-5", wantUpstreamModel: "claude-sonnet-4-5", wantSessionID: true},
 	}
 
 	for _, tt := range tests {
@@ -405,7 +406,7 @@ func TestAntigravityCompatRoutesByMappedModelFamily(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.Len(t, upstream.requestBodies, 1)
-			require.Equal(t, tt.model, gjson.GetBytes(upstream.requestBodies[0], "model").String())
+			require.Equal(t, tt.wantUpstreamModel, gjson.GetBytes(upstream.requestBodies[0], "model").String())
 			require.Equal(t, tt.wantSessionID, gjson.GetBytes(upstream.requestBodies[0], "request.sessionId").Exists())
 		})
 	}

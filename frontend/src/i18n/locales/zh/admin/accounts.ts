@@ -1316,7 +1316,6 @@ export default {
       },
       // Gemini specific (platform-wide)
       gemini: {
-        upstreamQuota: '上游已用额度',
         localQuota: '本站请求限额',
         quotaUnavailable: '暂未获取配额',
         helpButton: '使用帮助',

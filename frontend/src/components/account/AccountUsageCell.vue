@@ -536,14 +536,6 @@
           <div v-if="needsReauth" class="text-xs text-amber-600">{{ t('admin.accounts.needsReauth') }}</div>
           <div v-else-if="isForbidden" class="text-xs text-red-500">{{ forbiddenLabel }}</div>
           <div v-else-if="usageInfo?.error" class="text-xs text-amber-600">{{ usageErrorLabel }}</div>
-          <div v-else-if="geminiUpstreamQuotaBars.length" class="space-y-1">
-            <div class="text-[10px] text-gray-500">{{ t('admin.accounts.gemini.upstreamQuota') }}</div>
-            <div v-for="bar in geminiUpstreamQuotaBars" :key="bar.model" class="space-y-0.5">
-              <div class="break-words text-[10px] text-gray-600 dark:text-gray-400">{{ bar.model }}</div>
-              <UsageProgressBar label="API" :utilization="bar.utilization" :resets-at="bar.reset_time" color="emerald" />
-            </div>
-          </div>
-          <div v-else-if="isGeminiAntigravity" class="text-xs text-gray-400">{{ t('admin.accounts.gemini.quotaUnavailable') }}</div>
           <div v-if="geminiUsageBars.length" class="space-y-1">
             <div class="text-[10px] text-gray-500">{{ t('admin.accounts.gemini.localQuota') }}</div>
             <UsageProgressBar
@@ -561,7 +553,7 @@
               {{ t('admin.accounts.gemini.quotaPolicy.simulatedNote') }}
             </p>
           </div>
-          <div v-else-if="!isGeminiAntigravity && !needsReauth && !isForbidden && !usageInfo?.error" class="text-xs text-gray-400">
+          <div v-else-if="!needsReauth && !isForbidden && !usageInfo?.error" class="text-xs text-gray-400">
             {{ t('admin.accounts.gemini.quotaUnavailable') }}
           </div>
         </template>
@@ -1040,13 +1032,6 @@ const geminiQuotaPolicyDocsUrl = computed(() => {
   }
   return 'https://ai.google.dev/pricing'
 })
-
-const geminiUpstreamQuotaBars = computed(() =>
-  Object.entries(usageInfo.value?.antigravity_quota ?? {})
-    .filter(([model]) => model.toLowerCase().startsWith('gemini'))
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([model, quota]) => ({ model, ...quota }))
-)
 
 const geminiUsageBars = computed(() => {
   if (props.account.platform !== 'gemini') return []

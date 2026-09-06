@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 // antigravityRetryLoopParams 重试循环的参数
@@ -791,6 +792,21 @@ func (s *AntigravityGatewayService) shouldFailoverUpstreamError(statusCode int) 
 func isGoogleProjectConfigError(lowerMsg string) bool {
 	// Google 间歇性 Bug：Project ID 有效但被临时识别失败
 	return strings.Contains(lowerMsg, "invalid project resource name")
+}
+
+// isAntigravityModelInvalidArgument identifies the upstream 400 used when an
+// account cannot use the requested mapped model. Client-side malformed requests
+// and the signature/project rectifiers are intentionally excluded.
+func isAntigravityModelInvalidArgument(body []byte) bool {
+	status := strings.TrimSpace(gjson.GetBytes(body, "response.error.status").String())
+	if status == "" {
+		status = strings.TrimSpace(gjson.GetBytes(body, "error.status").String())
+	}
+	if !strings.EqualFold(status, "INVALID_ARGUMENT") || isSignatureRelatedError(body) {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(extractAntigravityErrorMessage(body)))
+	return !isGoogleProjectConfigError(message)
 }
 
 // googleConfigErrorCooldown 服务端配置类 400 错误的临时封禁时长
