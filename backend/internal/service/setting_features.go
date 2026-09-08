@@ -873,6 +873,135 @@ func (s *SettingService) GetStreamTimeoutSettings(ctx context.Context) (*StreamT
 	return &settings, nil
 }
 
+const (
+	codexAdaptiveSchedulingCacheTTL  = 15 * time.Second
+	codexAdaptiveSchedulingErrorTTL  = 3 * time.Second
+	codexAdaptiveSchedulingDBTimeout = 2 * time.Second
+	codexAdaptiveSchedulingCacheKey  = "codex_adaptive_scheduling_refresh"
+)
+
+type cachedCodexAdaptiveSchedulingSettings struct {
+	settings  CodexAdaptiveSchedulingSettings
+	expiresAt int64
+	loadErr   error
+}
+
+func (s *SettingService) GetCodexAdaptiveSchedulingSettings(ctx context.Context) (*CodexAdaptiveSchedulingSettings, error) {
+	if s == nil || s.settingRepo == nil {
+		return DefaultCodexAdaptiveSchedulingSettings(), nil
+	}
+	if cached, ok := s.codexAdaptiveSchedulingCache.Load().(*cachedCodexAdaptiveSchedulingSettings); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		if cached.loadErr != nil {
+			return nil, cached.loadErr
+		}
+		copy := cached.settings
+		return &copy, nil
+	}
+
+	value, err, _ := s.codexAdaptiveSchedulingSF.Do(codexAdaptiveSchedulingCacheKey, func() (any, error) {
+		if cached, ok := s.codexAdaptiveSchedulingCache.Load().(*cachedCodexAdaptiveSchedulingSettings); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+			if cached.loadErr != nil {
+				return nil, cached.loadErr
+			}
+			return cached.settings, nil
+		}
+		return s.refreshCodexAdaptiveSchedulingSettings(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	settings, ok := value.(CodexAdaptiveSchedulingSettings)
+	if !ok {
+		return nil, fmt.Errorf("invalid codex adaptive scheduling settings cache value")
+	}
+	return &settings, nil
+}
+
+// codexAdaptiveSchedulingSnapshot is the non-blocking gateway read. A stale
+// value remains authoritative while one background refresh runs. An empty
+// cache falls back to the disabled default until warm-up publishes a value.
+func (s *SettingService) codexAdaptiveSchedulingSnapshot() CodexAdaptiveSchedulingSettings {
+	defaults := *DefaultCodexAdaptiveSchedulingSettings()
+	if s == nil || s.settingRepo == nil {
+		return defaults
+	}
+	cached, _ := s.codexAdaptiveSchedulingCache.Load().(*cachedCodexAdaptiveSchedulingSettings)
+	if cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return cached.settings
+	}
+	s.codexAdaptiveSchedulingSF.DoChan(codexAdaptiveSchedulingCacheKey, func() (any, error) {
+		return s.refreshCodexAdaptiveSchedulingSettings(context.Background())
+	})
+	if cached != nil {
+		return cached.settings
+	}
+	return defaults
+}
+
+// WarmCodexAdaptiveSchedulingSettings publishes the persisted policy before
+// traffic reaches the gateway. Failure keeps the disabled default and is
+// retried asynchronously by the snapshot reader.
+func (s *SettingService) WarmCodexAdaptiveSchedulingSettings(ctx context.Context) CodexAdaptiveSchedulingSettings {
+	if s == nil {
+		return *DefaultCodexAdaptiveSchedulingSettings()
+	}
+	settings, err := s.refreshCodexAdaptiveSchedulingSettings(ctx)
+	if err == nil {
+		return settings
+	}
+	return s.codexAdaptiveSchedulingSnapshot()
+}
+
+func (s *SettingService) refreshCodexAdaptiveSchedulingSettings(ctx context.Context) (CodexAdaptiveSchedulingSettings, error) {
+	defaults := *DefaultCodexAdaptiveSchedulingSettings()
+	if s == nil || s.settingRepo == nil {
+		return defaults, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	revision := s.codexAdaptiveSchedulingRevision.Load()
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), codexAdaptiveSchedulingDBTimeout)
+	defer cancel()
+	raw, readErr := s.settingRepo.GetValue(dbCtx, SettingKeyCodexAdaptiveSchedulingSettings)
+	settings := defaults
+	if readErr == nil && strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+			loadErr := fmt.Errorf("decode codex adaptive scheduling settings: %w", err)
+			s.cacheCodexAdaptiveSchedulingRefreshFailure(loadErr)
+			return defaults, loadErr
+		}
+		if err := validateCodexAdaptiveSchedulingSettings(&settings); err != nil {
+			s.cacheCodexAdaptiveSchedulingRefreshFailure(err)
+			return defaults, err
+		}
+	} else if readErr != nil && !errors.Is(readErr, ErrSettingNotFound) {
+		loadErr := fmt.Errorf("get codex adaptive scheduling settings: %w", readErr)
+		s.cacheCodexAdaptiveSchedulingRefreshFailure(loadErr)
+		return defaults, loadErr
+	}
+	if revision != s.codexAdaptiveSchedulingRevision.Load() {
+		if cached, _ := s.codexAdaptiveSchedulingCache.Load().(*cachedCodexAdaptiveSchedulingSettings); cached != nil {
+			return cached.settings, nil
+		}
+		return defaults, nil
+	}
+	s.codexAdaptiveSchedulingCache.Store(&cachedCodexAdaptiveSchedulingSettings{
+		settings: settings, expiresAt: time.Now().Add(codexAdaptiveSchedulingCacheTTL).UnixNano(),
+	})
+	return settings, nil
+}
+
+func (s *SettingService) cacheCodexAdaptiveSchedulingRefreshFailure(loadErr error) {
+	settings := *DefaultCodexAdaptiveSchedulingSettings()
+	if cached, _ := s.codexAdaptiveSchedulingCache.Load().(*cachedCodexAdaptiveSchedulingSettings); cached != nil {
+		settings = cached.settings
+	}
+	s.codexAdaptiveSchedulingCache.Store(&cachedCodexAdaptiveSchedulingSettings{
+		settings: settings, expiresAt: time.Now().Add(codexAdaptiveSchedulingErrorTTL).UnixNano(), loadErr: loadErr,
+	})
+}
+
 // IsUngroupedKeySchedulingAllowed 查询是否允许未分组 Key 调度
 func (s *SettingService) IsUngroupedKeySchedulingAllowed(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyAllowUngroupedKeyScheduling)
@@ -1120,6 +1249,24 @@ func (s *SettingService) SetStreamTimeoutSettings(ctx context.Context, settings 
 	}
 
 	return s.settingRepo.Set(ctx, SettingKeyStreamTimeoutSettings, string(data))
+}
+
+func (s *SettingService) SetCodexAdaptiveSchedulingSettings(ctx context.Context, settings *CodexAdaptiveSchedulingSettings) error {
+	if err := validateCodexAdaptiveSchedulingSettings(settings); err != nil {
+		return err
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("marshal codex adaptive scheduling settings: %w", err)
+	}
+	if err := s.settingRepo.Set(ctx, SettingKeyCodexAdaptiveSchedulingSettings, string(data)); err != nil {
+		return err
+	}
+	s.codexAdaptiveSchedulingRevision.Add(1)
+	s.codexAdaptiveSchedulingCache.Store(&cachedCodexAdaptiveSchedulingSettings{
+		settings: *settings, expiresAt: time.Now().Add(codexAdaptiveSchedulingCacheTTL).UnixNano(),
+	})
+	return nil
 }
 
 // GetDefaultPlatformQuotas 读取系统全局 platform quota JSON key，返回全部允许平台 x 3 window 的设置。

@@ -82,6 +82,17 @@ func TestOpenAIWSIngressEndedByClient_GoingAwayWithoutCancellationStillReported(
 	require.True(t, shouldReportOpenAIWSProxyAccountFailure(err), "真实上游故障仍须归因账号")
 }
 
+func TestOpenAIWSRequestScopedCloseDoesNotLowerAccountHealth(t *testing.T) {
+	err := service.NewOpenAIWSRequestScopedClientCloseError(
+		coderws.StatusGoingAway,
+		"upstream produced no semantic output; please reconnect",
+		context.DeadlineExceeded,
+	)
+
+	require.False(t, openAIWSIngressEndedByClient(err))
+	require.False(t, shouldReportOpenAIWSProxyAccountFailure(err))
+}
+
 // 契约没有丢：真正的故障仍然惩罚账号。判定组合与调用点一致——
 // openAIWSIngressEndedByClient 为假才会走到 shouldReportOpenAIWSProxyAccountFailure。
 func TestOpenAIWSIngressEndedByClient_AbnormalClosuresStillReportAccountFailure(t *testing.T) {

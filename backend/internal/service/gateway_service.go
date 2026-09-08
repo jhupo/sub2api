@@ -717,11 +717,14 @@ func (e *UpstreamFailoverError) IsCredentialFailure() bool {
 	return e != nil && e.Stage == GatewayFailureStageAccountAuth
 }
 
-// ShouldReportAccountScheduleFailure prevents provider- and request-scoped
-// credential failures from being misattributed to the selected account. Legacy
-// and inference failures retain their existing scheduler-health behavior.
+// ShouldReportAccountScheduleFailure reports only failures attributable to the
+// selected account. Request/provider-scoped transients have dedicated recovery
+// paths and must not also lower the account's scheduler-health score.
 func (e *UpstreamFailoverError) ShouldReportAccountScheduleFailure() bool {
 	if e == nil {
+		return false
+	}
+	if e.RequestScopedTransient || e.Scope == GatewayFailureScopeRequest || e.Scope == GatewayFailureScopeProvider {
 		return false
 	}
 	return !e.IsCredentialFailure() || e.Scope == GatewayFailureScopeAccount

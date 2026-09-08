@@ -469,6 +469,12 @@ type StreamTimeoutSettings struct {
 	ThresholdWindowMinutes int    `json:"threshold_window_minutes"`
 }
 
+type CodexAdaptiveSchedulingSettings struct {
+	Enabled                             bool `json:"enabled"`
+	NormalFirstOutputTimeoutSeconds     int  `json:"normal_first_output_timeout_seconds"`
+	HighEffortFirstOutputTimeoutSeconds int  `json:"high_effort_first_output_timeout_seconds"`
+}
+
 // RectifierSettings 请求整流器配置 DTO
 type RectifierSettings struct {
 	Enabled                  bool     `json:"enabled"`

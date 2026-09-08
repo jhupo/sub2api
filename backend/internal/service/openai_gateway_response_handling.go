@@ -48,17 +48,27 @@ type openaiNonStreamingResult struct {
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string) (*openaiStreamingResult, error) {
-	return s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, mappedModel, "")
+	return s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, startTime, originalModel, mappedModel, "")
 }
 
-func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel, reasoningEffort string) (*openaiStreamingResult, error) {
+func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(
+	ctx context.Context,
+	resp *http.Response,
+	c *gin.Context,
+	account *Account,
+	requestStartTime time.Time,
+	attemptStartTime time.Time,
+	originalModel string,
+	mappedModel string,
+	reasoningEffort string,
+) (*openaiStreamingResult, error) {
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
 	}
 	firstOutputTimeout := time.Duration(0)
 	if account != nil && account.Platform == PlatformOpenAI {
-		firstOutputTimeout = s.openAIFirstOutputTimeout(reasoningEffort)
+		firstOutputTimeout = codexAdaptiveFirstOutputTimeout(ctx, account, mappedModel, reasoningEffort)
 	}
 	guardFirstOutput := firstOutputTimeout > 0
 	stageFirstOutput := account != nil && account.Platform == PlatformOpenAI
@@ -81,11 +91,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		s.relayOpenAICodexTurnState(c, account, resp.Header)
 	}
 
-	// Set SSE response headers
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
+	// Set SSE response headers.
+	SetEventStreamHeaders(c.Writer.Header())
 
 	// Pass through other headers
 	if !stageFirstOutput && resp.Header.Get("x-request-id") != "" {
@@ -106,10 +113,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		s.noteStagedOpenAICodexTurnStateCommitted(c, account, attemptResponseHeaders)
 		// These headers describe this gateway's SSE stream and are stable across
 		// account attempts. Keep them authoritative over upstream values.
-		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
-		c.Header("Connection", "keep-alive")
-		c.Header("X-Accel-Buffering", "no")
+		SetEventStreamHeaders(c.Writer.Header())
 	}
 
 	w := c.Writer
@@ -215,28 +219,18 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		keepaliveCh = keepaliveTicker.C
 	}
 
-	var firstOutputTimer *time.Timer
-	var firstOutputCh <-chan time.Time
+	var firstOutputGuard *openAIFirstOutputDeadlineGuard
+	var firstOutputCh <-chan struct{}
 	if firstOutputTimeout > 0 {
-		remaining := time.Until(startTime.Add(firstOutputTimeout))
-		if remaining <= 0 {
-			remaining = time.Nanosecond
-		}
-		firstOutputTimer = time.NewTimer(remaining)
-		firstOutputCh = firstOutputTimer.C
-		defer firstOutputTimer.Stop()
+		firstOutputGuard = newOpenAIFirstOutputDeadlineGuard(attemptStartTime.Add(firstOutputTimeout))
+		firstOutputCh = firstOutputGuard.timeoutC()
+		defer firstOutputGuard.stop()
 	}
 	stopFirstOutputTimer := func() {
-		if firstOutputTimer == nil {
+		if firstOutputGuard == nil {
 			return
 		}
-		if !firstOutputTimer.Stop() {
-			select {
-			case <-firstOutputTimer.C:
-			default:
-			}
-		}
-		firstOutputTimer = nil
+		firstOutputGuard.stop()
 		firstOutputCh = nil
 	}
 	// Track downstream writes separately from upstream reads: pre-output failover
@@ -267,6 +261,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	suppressCurrentEvent := false
 	var bareErrorPayload []byte
 	bareErrorAccountSideEffectsPending := false
+	firstOutputTimeoutError := func() *UpstreamFailoverError {
+		return s.newOpenAIFirstOutputTimeoutError(
+			ctx, c, account, attemptStartTime, originalModel, reasoningEffort,
+			firstOutputTimeout, "semantic_output", resp.Header,
+		)
+	}
 	pendingSSEEventType := ""
 	eventInProgress := false
 	eventStartsClientOutput := false
@@ -293,6 +293,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		completedVisibleEvent := eventStartsVisibleOutput
 		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
 		eventInProgress = false
+		if completedProgressEvent && !firstOutputProgressObserved && firstOutputGuard != nil && !firstOutputGuard.claimOutput() {
+			streamEarlyErr = firstOutputTimeoutError()
+			_ = resp.Body.Close()
+			eventStartsClientOutput = false
+			eventStartsVisibleOutput = false
+			eventShouldFlush = false
+			return
+		}
 		if !clientDisconnected {
 			if completedProgressEvent {
 				applyAttemptResponseHeaders()
@@ -313,7 +321,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			stopFirstOutputTimer()
 		}
 		if completedVisibleEvent && firstTokenMs == nil {
-			ms := int(time.Since(startTime).Milliseconds())
+			ms := int(time.Since(requestStartTime).Milliseconds())
 			firstTokenMs = &ms
 		}
 		eventStartsClientOutput = false
@@ -382,6 +390,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if stageFirstOutput && eventInProgress {
 			// EOF dispatches the final SSE event even without a trailing blank line.
 			completeGuardedEvent(true)
+		}
+		if streamEarlyErr != nil {
+			return resultWithUsage(), streamEarlyErr
 		}
 		if codexFailureTerminal && sawBareError && !sawResponseFailed && bareErrorAccountSideEffectsPending {
 			s.handleOpenAIStreamTerminalAccountSideEffects(c, account, bareErrorPayload, failedMessage, resp.Header, mappedModel)
@@ -743,7 +754,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 
 			// Record first token time
 			if !guardFirstOutput && firstTokenMs == nil && startsVisibleOutput {
-				ms := int(time.Since(startTime).Milliseconds())
+				ms := int(time.Since(requestStartTime).Milliseconds())
 				firstTokenMs = &ms
 				stopFirstOutputTimer()
 			}
@@ -961,10 +972,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			for ev := range events {
 				markEventProcessed(ev)
 			}
-			return resultWithUsage(), s.newOpenAIFirstOutputTimeoutError(
-				ctx, c, account, startTime, originalModel, reasoningEffort,
-				firstOutputTimeout, "semantic_output", resp.Header,
-			)
+			return resultWithUsage(), firstOutputTimeoutError()
 
 		case <-keepaliveCh:
 			if clientDisconnected || failureDelivered {

@@ -37,7 +37,7 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 	}
 
 	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
+	c.Header("Cache-Control", streamingCacheControlValue)
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 	if v := resp.Header.Get("x-amzn-requestid"); v != "" {

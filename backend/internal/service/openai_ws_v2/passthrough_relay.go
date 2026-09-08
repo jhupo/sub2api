@@ -69,6 +69,21 @@ type RelayExit struct {
 	WroteDownstream bool
 }
 
+var ErrDownstreamStageLimit = errors.New("openai websocket downstream staging limit exceeded")
+
+type DownstreamStageOptions struct {
+	// ShouldCommit returns true when the current frame makes all staged frames
+	// safe to expose to the client. It is evaluated once per upstream frame;
+	// returning false keeps the frame private to the current account attempt.
+	ShouldCommit func(msgType coderws.MessageType, payload []byte) bool
+	MaxBytes     int64
+}
+
+type relayRuntimePolicies struct {
+	downstreamStage     *DownstreamStageOptions
+	startsVisibleOutput func(payload []byte) bool
+}
+
 type RelayOptions struct {
 	WriteTimeout                    time.Duration
 	IdleTimeout                     time.Duration
@@ -85,6 +100,8 @@ type RelayOptions struct {
 	AfterClientWrite                func(msgType coderws.MessageType, payload []byte, writeErr error)
 	BeforeRelayCancel               func(exit RelayExit)
 	ReadClientFrame                 func(ctx context.Context, clientConn FrameConn) (coderws.MessageType, []byte, error)
+	DownstreamStage                 *DownstreamStageOptions
+	StartsVisibleOutput             func(payload []byte) bool
 	OnTrace                         func(event RelayTraceEvent)
 	Now                             func() time.Time
 }
@@ -308,6 +325,10 @@ func Relay(
 			markActivity,
 			onTrace,
 			exitCh,
+			relayRuntimePolicies{
+				downstreamStage:     options.DownstreamStage,
+				startsVisibleOutput: options.StartsVisibleOutput,
+			},
 		)
 	}()
 	go runIdleWatchdog(relayCtx, nowFn, options.IdleTimeout, &lastActivity, onTrace, exitCh)
@@ -530,8 +551,37 @@ func runUpstreamToClient(
 	markActivity func(),
 	onTrace func(event RelayTraceEvent),
 	exitCh chan<- relayExitSignal,
+	policies relayRuntimePolicies,
 ) {
+	type stagedDownstreamFrame struct {
+		msgType coderws.MessageType
+		payload []byte
+	}
+	stagedFrames := make([]stagedDownstreamFrame, 0, 4)
+	stagedBytes := int64(0)
 	wroteDownstream := false
+	writeDownstreamFrame := func(msgType coderws.MessageType, payload []byte) error {
+		if beforeClientWrite != nil {
+			beforeClientWrite(msgType, payload)
+		}
+		writeErr := writeClient(msgType, payload)
+		if afterClientWrite != nil {
+			afterClientWrite(msgType, payload, writeErr)
+		}
+		if writeErr != nil {
+			return writeErr
+		}
+		wroteDownstream = true
+		state.turnWroteDownstream.Store(true)
+		if afterWriteClient != nil {
+			afterWriteClient(msgType, payload)
+		}
+		if forwardedFrames != nil {
+			forwardedFrames.Add(1)
+		}
+		markActivity()
+		return nil
+	}
 	for {
 		msgType, payload, err := upstreamConn.ReadFrame(ctx)
 		if err != nil {
@@ -587,7 +637,7 @@ func runUpstreamToClient(
 			if shouldFinalizePendingBareError(state, payload, eventType) {
 				emitTurnComplete(onTurnComplete, state, finalizePendingBareError(state, nowFn()))
 			}
-			observedEvent = observeUpstreamMessage(state, payload, startAt, nowFn, onUsageParseFailure)
+			observedEvent = observeUpstreamMessage(state, payload, startAt, nowFn, onUsageParseFailure, policies.startsVisibleOutput)
 		case coderws.MessageBinary:
 			// binary frame 直接透传，不进入 JSON 观测路径（避免无效解析开销）。
 		}
@@ -614,12 +664,28 @@ func runUpstreamToClient(
 			markActivity()
 			continue
 		}
-		if beforeClientWrite != nil {
-			beforeClientWrite(msgType, payload)
+		if policies.downstreamStage != nil && policies.downstreamStage.ShouldCommit != nil {
+			if !policies.downstreamStage.ShouldCommit(msgType, payload) {
+				if policies.downstreamStage.MaxBytes <= 0 || int64(len(payload)) > policies.downstreamStage.MaxBytes-stagedBytes {
+					exitCh <- relayExitSignal{stage: "downstream_stage", err: ErrDownstreamStageLimit, wroteDownstream: wroteDownstream}
+					return
+				}
+				stagedFrames = append(stagedFrames, stagedDownstreamFrame{
+					msgType: msgType,
+					payload: append([]byte(nil), payload...),
+				})
+				stagedBytes += int64(len(payload))
+				continue
+			}
 		}
-		writeErr := writeClient(msgType, payload)
-		if afterClientWrite != nil {
-			afterClientWrite(msgType, payload, writeErr)
+		framesToWrite := append(stagedFrames, stagedDownstreamFrame{msgType: msgType, payload: payload})
+		stagedFrames = nil
+		stagedBytes = 0
+		var writeErr error
+		for _, frame := range framesToWrite {
+			if writeErr = writeDownstreamFrame(frame.msgType, frame.payload); writeErr != nil {
+				break
+			}
 		}
 		if writeErr != nil {
 			emitRelayTrace(onTrace, RelayTraceEvent{
@@ -633,15 +699,6 @@ func runUpstreamToClient(
 			exitCh <- relayExitSignal{stage: "write_client", err: writeErr, wroteDownstream: wroteDownstream}
 			return
 		}
-		wroteDownstream = true
-		state.turnWroteDownstream.Store(true)
-		if afterWriteClient != nil {
-			afterWriteClient(msgType, payload)
-		}
-		if forwardedFrames != nil {
-			forwardedFrames.Add(1)
-		}
-		markActivity()
 	}
 }
 
@@ -734,6 +791,7 @@ func observeUpstreamMessage(
 	startAt time.Time,
 	nowFn func() time.Time,
 	onUsageParseFailure func(eventType string, usageRaw string),
+	startsVisibleOutput func(payload []byte) bool,
 ) observedUpstreamEvent {
 	if state == nil || len(message) == 0 {
 		return observedUpstreamEvent{}
@@ -752,8 +810,12 @@ func observeUpstreamMessage(
 		responseID = strings.TrimSpace(values[3].String())
 	}
 	now := nowFn()
+	visibleOutput := isTokenEvent(eventType)
+	if startsVisibleOutput != nil {
+		visibleOutput = startsVisibleOutput(message)
+	}
 
-	if state.firstTokenMs == nil && isTokenEvent(eventType) {
+	if state.firstTokenMs == nil && visibleOutput {
 		ms := int(now.Sub(startAt).Milliseconds())
 		if ms >= 0 {
 			state.firstTokenMs = &ms
@@ -774,7 +836,7 @@ func observeUpstreamMessage(
 	var turnTiming *relayTurnTiming
 	if responseID != "" {
 		turnTiming = openAIWSRelayGetOrInitTurnTiming(state, responseID, now)
-		if turnTiming != nil && turnTiming.firstTokenMs == nil && isTokenEvent(eventType) {
+		if turnTiming != nil && turnTiming.firstTokenMs == nil && visibleOutput {
 			ms := int(now.Sub(turnTiming.startAt).Milliseconds())
 			if ms >= 0 {
 				turnTiming.firstTokenMs = &ms

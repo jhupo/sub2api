@@ -50,8 +50,21 @@ type OpenAIGatewayHandler struct {
 }
 
 type openAIWSTurnChannelMappingSnapshot struct {
-	turn    int
-	mapping service.ChannelMappingResult
+	turn           int
+	requestedModel string
+	mapping        service.ChannelMappingResult
+}
+
+func openAIWSSchedulingModelForTurn(snapshot *openAIWSTurnChannelMappingSnapshot, turn int, fallback string) string {
+	if snapshot != nil && snapshot.turn == turn {
+		if model := strings.TrimSpace(snapshot.mapping.MappedModel); model != "" {
+			return model
+		}
+		if model := strings.TrimSpace(snapshot.requestedModel); model != "" {
+			return model
+		}
+	}
+	return strings.TrimSpace(fallback)
 }
 
 // openAIWSConnectionSchedulingSnapshot is replaced atomically when a later
@@ -72,7 +85,10 @@ func newOpenAIWSUnsupportedModelSwitchError(model string) error {
 }
 
 func shouldReportOpenAIWSProxyAccountFailure(err error) bool {
-	return err != nil && !errors.Is(err, errOpenAIWSUnsupportedModelSwitch) && !service.IsOpenAIWSSessionPreemptedError(err)
+	return err != nil &&
+		!errors.Is(err, errOpenAIWSUnsupportedModelSwitch) &&
+		!service.IsOpenAIWSSessionPreemptedError(err) &&
+		!service.IsOpenAIWSRequestScopedClientCloseError(err)
 }
 
 // openAIWSIngressEndedByClient reports whether a finished ingress WebSocket turn
@@ -593,6 +609,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	// Generate session hash (header first; fallback to prompt_cache_key)
 	sessionHash := h.gatewayService.GenerateScopedSessionHash(c, sessionHashBody)
+	c.Request = c.Request.WithContext(h.gatewayService.PrepareCodexAdaptiveSchedulingRequest(
+		c.Request.Context(), apiKey.ID, sessionHash, forwardModel, legacyCompact || nativeV2,
+	))
 	if h.rejectIfCyberSessionBlocked(c, apiKey, sessionHashBody, reqModel, cyberBlockFormatResponses) {
 		return
 	}
@@ -864,6 +883,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
+					adaptiveFailover := h.gatewayService.ApplyCodexAdaptiveFailoverPolicy(
+						c.Request.Context(), account,
+						openAIAccountScheduleModel(c, account, forwardModel, requireCompact, nil),
+						failoverErr,
+					)
 					if failoverClientGone(c) {
 						submitResponsesUsage(result)
 						reqLog.Info("openai.failover_aborted_client_disconnected",
@@ -887,6 +911,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					// 池模式：同账号重试
 					if shouldRetryNext && failoverErr.RetryableOnSameAccount {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
+						if adaptiveFailover {
+							retryLimit = 1
+						}
 						if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
 							sameAccountRetryCount[account.ID]++
 							retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
@@ -961,6 +988,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				logGatewayForwardFailureWithWarn(reqLog, c, "openai.forward_failed", err, shouldLogOpenAIForwardFailureAsWarn(c, wroteFallback), fields...)
 				return
 			}
+		}
+		if openAIForwardSucceededForScheduling(result) {
+			h.gatewayService.ObserveCodexAdaptiveSuccess(
+				c.Request.Context(), account,
+				openAIAccountScheduleModel(c, account, forwardModel, requireCompact, result),
+			)
 		}
 		if result != nil {
 			// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
@@ -1250,6 +1283,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
 	sessionHash, promptCacheKey = resolveOpenAIMessagesMetadataSession(c, sessionHash, promptCacheKey, reqModel, body)
 	sessionHash = h.gatewayService.ScopeSessionHash(c, sessionHash)
+	c.Request = c.Request.WithContext(h.gatewayService.PrepareCodexAdaptiveSchedulingRequest(
+		c.Request.Context(), apiKey.ID, sessionHash, routingModel, false,
+	))
 	if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatAnthropic) {
 		return
 	}
@@ -1464,6 +1500,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
+					adaptiveFailover := h.gatewayService.ApplyCodexAdaptiveFailoverPolicy(
+						c.Request.Context(), account,
+						openAIAccountScheduleModel(c, account, currentRoutingModel, false, nil),
+						failoverErr,
+					)
 					if failoverClientGone(c) {
 						submitMessagesUsage(result)
 						reqLog.Info("openai_messages.failover_aborted_client_disconnected",
@@ -1482,6 +1523,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					// 池模式：同账号重试
 					if shouldRetryNext && failoverErr.RetryableOnSameAccount {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
+						if adaptiveFailover {
+							retryLimit = 1
+						}
 						if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
 							sameAccountRetryCount[account.ID]++
 							retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
@@ -1551,11 +1595,20 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				return
 			}
 		}
+		if openAIForwardSucceededForScheduling(result) {
+			h.gatewayService.ObserveCodexAdaptiveSuccess(
+				c.Request.Context(), account,
+				openAIAccountScheduleModel(c, account, currentRoutingModel, false, result),
+			)
+		}
 		if result != nil {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, result), true, result.FirstTokenMs)
-			h.gatewayService.ObserveCodexQuotaOverdraftScheduleSuccess(c.Request.Context(), account, currentRoutingModel)
+			forwardSucceeded := openAIForwardSucceededForScheduling(result)
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, result), forwardSucceeded, result.FirstTokenMs)
+			if forwardSucceeded {
+				h.gatewayService.ObserveCodexQuotaOverdraftScheduleSuccess(c.Request.Context(), account, currentRoutingModel)
+			}
 		} else {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, result), true, nil)
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, result), openAIForwardSucceededForScheduling(result), nil)
 		}
 
 		submitMessagesUsage(result)
@@ -2496,6 +2549,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		firstMessage,
 		openAIWSIngressFallbackSessionSeed(subject.UserID, apiKey.ID, apiKey.GroupID),
 	)
+	ctx = h.gatewayService.PrepareCodexAdaptiveSchedulingRequest(ctx, apiKey.ID, sessionHash, wsForwardModel, false)
 	ctx = service.WithOpenAIGuardianParentAffinity(ctx, c, firstMessage, reqModel)
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
@@ -2505,11 +2559,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	var lastFailoverErr *service.UpstreamFailoverError
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	wsAttemptMessage := append([]byte(nil), firstMessage...)
-	waitForWSSameAccountRetry := func(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
-		if account == nil || failoverErr == nil || failoverErr.StatusCode != http.StatusTooManyRequests || failoverErr.SameAccountRetryDeadline.IsZero() {
+	waitForWSSameAccountRetry := func(account *service.Account, failoverErr *service.UpstreamFailoverError, adaptiveFailover bool) bool {
+		legacyRateLimitRetry := failoverErr != nil && failoverErr.StatusCode == http.StatusTooManyRequests && !failoverErr.SameAccountRetryDeadline.IsZero()
+		if account == nil || failoverErr == nil || (!adaptiveFailover && !legacyRateLimitRetry) {
 			return false
 		}
 		retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
+		if adaptiveFailover {
+			retryLimit = 1
+		}
 		if !sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
 			return false
 		}
@@ -2624,7 +2682,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 
 		account := selection.Account
-		accountMaxConcurrency := account.Concurrency
+		accountMaxConcurrency := h.gatewayService.CodexAdaptiveEffectiveConcurrency(ctx, account, wsForwardModel)
 		if selection.WaitPlan != nil && selection.WaitPlan.MaxConcurrency > 0 {
 			accountMaxConcurrency = selection.WaitPlan.MaxConcurrency
 		}
@@ -2745,7 +2803,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// Passthrough rejects overlapping response.create frames, so one immutable
 		// turn-tagged slot preserves the exact mapping used for the in-flight request.
 		var turnChannelMapping atomic.Pointer[openAIWSTurnChannelMappingSnapshot]
-		turnChannelMapping.Store(&openAIWSTurnChannelMappingSnapshot{turn: 1, mapping: channelMappingWS})
+		turnChannelMapping.Store(&openAIWSTurnChannelMappingSnapshot{turn: 1, requestedModel: reqModel, mapping: channelMappingWS})
 		var connectionScheduling atomic.Pointer[openAIWSConnectionSchedulingSnapshot]
 		connectionScheduling.Store(&openAIWSConnectionSchedulingSnapshot{
 			ctx:                   ctx,
@@ -2801,10 +2859,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if !freshOK {
 					return "", service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is no longer schedulable for this model, please reconnect", nil)
 				}
-				maxConcurrency := scheduling.accountMaxConcurrency
-				if freshAccount.Concurrency > 0 {
-					maxConcurrency = freshAccount.Concurrency
-				}
+				maxConcurrency := h.gatewayService.CodexAdaptiveEffectiveConcurrency(scheduling.ctx, freshAccount, mapping.MappedModel)
 				connectionScheduling.Store(&openAIWSConnectionSchedulingSnapshot{
 					ctx:                   scheduling.ctx,
 					account:               freshAccount,
@@ -2817,7 +2872,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if turn > 1 && !mappedModelUnchanged && !freshAccount.IsModelSupported(model) && !freshAccount.IsModelSupported(mapping.MappedModel) {
 					return "", newOpenAIWSUnsupportedModelSwitchError(mapping.MappedModel)
 				}
-				turnChannelMapping.Store(&openAIWSTurnChannelMappingSnapshot{turn: turn, mapping: mapping})
+				turnChannelMapping.Store(&openAIWSTurnChannelMappingSnapshot{turn: turn, requestedModel: model, mapping: mapping})
 				return mapping.MappedModel, nil
 			},
 			BeforeTurn: func(turn int) error {
@@ -2826,15 +2881,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "websocket scheduling state is unavailable", nil)
 				}
 				if turn > 1 {
+					turnModel := openAIWSSchedulingModelForTurn(turnChannelMapping.Load(), turn, reqModel)
 					refreshedCtx := h.gatewayService.RefreshSchedulerRequestContext(scheduling.ctx)
-					freshAccount, freshOK := h.gatewayService.RefreshSchedulerAccountFreshness(refreshedCtx, scheduling.account, apiKey.GroupID, "")
+					h.gatewayService.RefreshCodexAdaptivePressureSnapshot(refreshedCtx)
+					freshAccount, freshOK := h.gatewayService.RefreshSchedulerAccountFreshness(refreshedCtx, scheduling.account, apiKey.GroupID, turnModel)
 					if !freshOK {
 						return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is no longer schedulable, please reconnect", nil)
 					}
-					maxConcurrency := scheduling.accountMaxConcurrency
-					if freshAccount.Concurrency > 0 {
-						maxConcurrency = freshAccount.Concurrency
-					}
+					maxConcurrency := h.gatewayService.CodexAdaptiveEffectiveConcurrency(refreshedCtx, freshAccount, turnModel)
 					scheduling = &openAIWSConnectionSchedulingSnapshot{
 						ctx:                   refreshedCtx,
 						account:               freshAccount,
@@ -2915,11 +2969,17 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				var turnMapping service.ChannelMappingResult
 				if snapshot := turnChannelMapping.Load(); snapshot != nil && snapshot.turn == turn {
 					turnMapping = snapshot.mapping
+					if model := strings.TrimSpace(snapshot.requestedModel); model != "" {
+						turnRequestedModel = model
+					}
 				} else {
 					turnMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(turnCtx, apiKey.GroupID, turnRequestedModel)
 				}
 				if turnUpstreamModel == "" {
-					turnUpstreamModel = turnRequestedModel
+					turnUpstreamModel = strings.TrimSpace(turnMapping.MappedModel)
+					if turnUpstreamModel == "" {
+						turnUpstreamModel = turnRequestedModel
+					}
 				}
 				turnUsageFields := turnMapping.ToUsageFields(turnRequestedModel, turnUpstreamModel)
 				h.recordCyberPolicyIfMarked(c, apiKey, turnAccount, subscription, turnRequestedModel, shouldRecordStandaloneCyberUsage(turnErr, result != nil), cyberBlockBody, turnUsageFields, requestPayloadHash)
@@ -2939,6 +2999,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if result == nil {
 					return
 				}
+				forwardSucceeded := openAIForwardSucceededForScheduling(result)
+				if forwardSucceeded {
+					delete(sameAccountRetryCount, turnAccount.ID)
+					h.gatewayService.ObserveCodexAdaptiveSuccess(turnCtx, turnAccount, turnUpstreamModel)
+				}
 				result.BillingModel = openAIWSTurnBillingModel(result, turnMapping, turnRequestedModel, turnUpstreamModel)
 				reqLog.Debug("openai.websocket_turn_billing",
 					zap.Int("turn", turn),
@@ -2954,7 +3019,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if scheduleModel == "" {
 					scheduleModel = turnRequestedModel
 				}
-				h.gatewayService.ReportOpenAIAccountScheduleResult(turnAccount, scheduleModel, openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
+				h.gatewayService.ReportOpenAIAccountScheduleResult(turnAccount, scheduleModel, forwardSucceeded, result.FirstTokenMs)
 				inboundEndpoint := GetInboundEndpoint(c)
 				upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, turnAccount, result)
 				quotaPlatform := service.QuotaPlatform(turnCtx, apiKey)
@@ -3033,6 +3098,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			}
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
+				adaptiveFailover := h.gatewayService.ApplyCodexAdaptiveFailoverPolicy(
+					ctx, account,
+					openAIAccountScheduleModel(c, account, wsForwardModel, false, nil),
+					failoverErr,
+				)
 				retryPayload, retryCurrentTurn := service.OpenAIWSCurrentTurnRetryPayload(err)
 				nextAttemptMessage, retrySafe := openAIWSNextAttemptMessage(wsAttemptMessage, retryPayload, retryCurrentTurn)
 				if !retrySafe {
@@ -3048,7 +3118,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						zap.Int("retry_payload_bytes", len(retryPayload)),
 					)
 				}
-				if waitForWSSameAccountRetry(account, failoverErr) {
+				if waitForWSSameAccountRetry(account, failoverErr, adaptiveFailover) {
 					if !ensureUserSlotHeld() {
 						return
 					}

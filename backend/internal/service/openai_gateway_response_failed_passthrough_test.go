@@ -105,7 +105,7 @@ func TestResponsesStreamAccessStateFailoverPrecedesPassthroughRule(t *testing.T)
 		{
 			name: "passthrough",
 			run: func(svc *OpenAIGatewayService, c *gin.Context, resp *http.Response, account *Account) error {
-				_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, account, time.Now(), "gpt-5", "gpt-5")
+				_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, account, time.Now(), time.Now(), "gpt-5", "gpt-5", "")
 				return err
 			},
 		},
@@ -153,7 +153,7 @@ func TestResponsesStreamCyberPolicyPrecedesPassthroughRule(t *testing.T) {
 		{
 			name: "passthrough",
 			run: func(svc *OpenAIGatewayService, c *gin.Context, resp *http.Response, account *Account) error {
-				_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, account, time.Now(), "gpt-5", "gpt-5")
+				_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, account, time.Now(), time.Now(), "gpt-5", "gpt-5", "")
 				return err
 			},
 		},

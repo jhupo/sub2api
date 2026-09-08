@@ -301,6 +301,22 @@ type defaultOpenAIAccountScheduler struct {
 	grokFreeQuotaGateCache sync.Map // key: int64(accountID), value: grokFreeQuotaGateCacheEntry
 }
 
+func (s *defaultOpenAIAccountScheduler) effectiveConcurrency(ctx context.Context, account *Account, requestedModel string) int {
+	if s == nil || s.service == nil || account == nil {
+		return 0
+	}
+	model := canonicalOpenAIAccountSchedulingModel(account, requestedModel)
+	return s.service.codexAdaptiveEffectiveConcurrency(ctx, account, model, account.Concurrency)
+}
+
+func (s *defaultOpenAIAccountScheduler) effectiveLoadFactor(ctx context.Context, account *Account, requestedModel string) int {
+	if s == nil || s.service == nil || account == nil {
+		return 0
+	}
+	model := canonicalOpenAIAccountSchedulingModel(account, requestedModel)
+	return s.service.codexAdaptiveEffectiveLoadFactor(ctx, account, model)
+}
+
 type openAISelectionProbeBudget struct {
 	acquires  int
 	rechecks  int
@@ -570,7 +586,8 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		)
 		return nil, true, nil
 	}
-	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
+	maxConcurrency := s.effectiveConcurrency(ctx, account, req.RequestedModel)
+	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, maxConcurrency)
 	if acquireErr == nil && result != nil && result.Acquired {
 		if !req.PreserveStickyBinding {
 			_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
@@ -583,7 +600,8 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	}
 
 	cfg := s.service.schedulingConfig()
-	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
+	// WaitPlan.MaxConcurrency controls the Redis admission limit and therefore
+	// uses the same request-scoped adaptive limit as the immediate acquire.
 	if s.service.concurrencyService != nil {
 		if escapeCfg.enabled && acquireErr == nil && result != nil && !result.Acquired {
 			errorRate, ttft, _ := s.stats.snapshot(accountID)
@@ -599,7 +617,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			Account: account,
 			WaitPlan: &AccountWaitPlan{
 				AccountID:      accountID,
-				MaxConcurrency: account.Concurrency,
+				MaxConcurrency: maxConcurrency,
 				Timeout:        cfg.StickySessionWaitTimeout,
 				MaxWaiting:     cfg.StickySessionMaxWaiting,
 			},
@@ -1297,12 +1315,13 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 		if candidate.account == nil {
 			continue
 		}
-		if candidate.loadKnown && candidate.account.Concurrency > 0 &&
-			candidate.loadInfo.CurrentConcurrency >= candidate.account.Concurrency {
+		candidateMaxConcurrency := s.effectiveConcurrency(ctx, candidate.account, req.RequestedModel)
+		if candidate.loadKnown && candidateMaxConcurrency > 0 &&
+			candidate.loadInfo.CurrentConcurrency >= candidateMaxConcurrency {
 			continue
 		}
 
-		result, attempted, acquireErr := s.tryAcquireOpenAIAccountSlot(ctx, candidate.account.ID, candidate.account.Concurrency, budget)
+		result, attempted, acquireErr := s.tryAcquireOpenAIAccountSlot(ctx, candidate.account.ID, candidateMaxConcurrency, budget)
 		if !attempted {
 			break
 		}
@@ -1333,9 +1352,10 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			continue
 		}
 
-		if fresh.Concurrency != candidate.account.Concurrency {
+		freshMaxConcurrency := s.effectiveConcurrency(ctx, fresh, req.RequestedModel)
+		if freshMaxConcurrency != candidateMaxConcurrency {
 			release(result)
-			result, attempted, acquireErr = s.tryAcquireOpenAIAccountSlot(ctx, fresh.ID, fresh.Concurrency, budget)
+			result, attempted, acquireErr = s.tryAcquireOpenAIAccountSlot(ctx, fresh.ID, freshMaxConcurrency, budget)
 			if !attempted {
 				continue
 			}
@@ -1432,7 +1452,8 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 			isGrokModelQuotaBlocked(account.ID, upstreamModel, now) {
 			continue
 		}
-		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+		maxConcurrency := s.effectiveConcurrency(ctx, account, req.RequestedModel)
+		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, account.ID, maxConcurrency)
 		if acquireErr != nil {
 			return nil, acquireErr
 		}
@@ -1452,7 +1473,7 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 				Account: account,
 				WaitPlan: &AccountWaitPlan{
 					AccountID:      account.ID,
-					MaxConcurrency: account.Concurrency,
+					MaxConcurrency: maxConcurrency,
 					Timeout:        cfg.StickySessionWaitTimeout,
 					MaxWaiting:     cfg.StickySessionMaxWaiting,
 				},
@@ -1554,7 +1575,6 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 
 	filterStats := openAISelectionFilterStats{pool: len(accounts)}
 	filtered := make([]*Account, 0, len(accounts))
-	loadReq := make([]AccountWithConcurrency, 0, len(accounts))
 	for i := range accounts {
 		account := normalizeCodexQuotaOverdraftAccountForScheduling(ctx, &accounts[i])
 		if req.ExcludedIDs != nil {
@@ -1591,14 +1611,12 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			continue
 		}
 		filtered = append(filtered, account)
-		loadReq = append(loadReq, AccountWithConcurrency{
-			ID:             account.ID,
-			MaxConcurrency: account.EffectiveLoadFactor(),
-		})
 	}
 	if len(filtered) == 0 {
 		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, filterStats.summary(""))
 	}
+	s.service.prefetchCodexAdaptivePressures(ctx, filtered, req.RequestedModel)
+	loadReq := s.buildOpenAIAccountLoadRequest(ctx, filtered, req.RequestedModel)
 
 	loadMap := map[int64]*AccountLoadInfo{}
 	if s.service.concurrencyService != nil {
@@ -1721,7 +1739,7 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 	}
 
 	if s.service.concurrencyService != nil && !budget.acquireExhausted() {
-		loadReq := buildOpenAIAccountLoadRequest(filtered)
+		loadReq := s.buildOpenAIAccountLoadRequest(ctx, filtered, req.RequestedModel)
 		if freshLoadMap, loadErr := s.service.concurrencyService.GetAccountsLoadBatchFresh(ctx, loadReq); loadErr == nil {
 			freshPlan := s.buildOpenAIAccountLoadPlan(ctx, req, filtered, freshLoadMap)
 			if openAICostOverflowExpanded(req, freshPlan) {
@@ -1779,7 +1797,7 @@ func openAICostOverflowExpanded(req OpenAIAccountScheduleRequest, plan openAIAcc
 	return supported > plan.topK || unknown > plan.topK
 }
 
-func buildOpenAIAccountLoadRequest(accounts []*Account) []AccountWithConcurrency {
+func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadRequest(ctx context.Context, accounts []*Account, requestedModel string) []AccountWithConcurrency {
 	loadReq := make([]AccountWithConcurrency, 0, len(accounts))
 	for _, account := range accounts {
 		if account == nil {
@@ -1787,7 +1805,7 @@ func buildOpenAIAccountLoadRequest(accounts []*Account) []AccountWithConcurrency
 		}
 		loadReq = append(loadReq, AccountWithConcurrency{
 			ID:             account.ID,
-			MaxConcurrency: account.EffectiveLoadFactor(),
+			MaxConcurrency: s.effectiveLoadFactor(ctx, account, requestedModel),
 		})
 	}
 	return loadReq
@@ -1816,7 +1834,7 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 
 	cfg := s.service.schedulingConfig()
 	compactBlocked := attempt.compactBlocked
-	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
+	// WaitPlan uses the same adaptive admission limit as direct acquisition.
 	passes := 1
 	if budget != nil && budget.limited {
 		passes = 4
@@ -1829,8 +1847,9 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 				continue
 			}
 			if budget != nil && budget.limited {
-				knownFull := candidate.loadKnown && candidate.account.Concurrency > 0 &&
-					candidate.loadInfo.CurrentConcurrency >= candidate.account.Concurrency
+				candidateMaxConcurrency := s.effectiveConcurrency(ctx, candidate.account, req.RequestedModel)
+				knownFull := candidate.loadKnown && candidateMaxConcurrency > 0 &&
+					candidate.loadInfo.CurrentConcurrency >= candidateMaxConcurrency
 				if budget.wasAttempted(candidate.account.ID) != wantAttempted || knownFull != wantKnownFull {
 					continue
 				}
@@ -1854,7 +1873,7 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 				Account: fresh,
 				WaitPlan: &AccountWaitPlan{
 					AccountID:      fresh.ID,
-					MaxConcurrency: fresh.Concurrency,
+					MaxConcurrency: s.effectiveConcurrency(ctx, fresh, req.RequestedModel),
 					Timeout:        cfg.FallbackWaitTimeout,
 					MaxWaiting:     cfg.FallbackMaxWaiting,
 				},

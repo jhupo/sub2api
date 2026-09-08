@@ -68,6 +68,7 @@ func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadError(t *testing.T) {
 	svc := &OpenAIGatewayService{cfg: &config.Config{}}
 
 	result, err := svc.handleChatStreamingResponse(
+		c.Request.Context(),
 		resp,
 		c,
 		&Account{ID: 1, Name: "openai-oauth", Platform: PlatformOpenAI},
@@ -75,6 +76,8 @@ func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadError(t *testing.T) {
 		"gpt-5.6-sol",
 		"gpt-5.6-sol",
 		time.Now(),
+		time.Now(),
+		"",
 		0,
 	)
 
@@ -1077,7 +1080,10 @@ func TestForwardAsChatCompletions_DoneSentinelWithoutTerminalReturnsError(t *tes
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.1")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "missing terminal event")
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Contains(t, string(failoverErr.ResponseBody), "stream ended before a terminal event")
 	require.NotNil(t, result)
 	require.Zero(t, result.Usage.InputTokens)
 	require.Zero(t, result.Usage.OutputTokens)

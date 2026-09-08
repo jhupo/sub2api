@@ -388,7 +388,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			responseheaders.WriteFilteredHeaders(c.Writer.Header(), http.Header{}, s.responseHeaderFilter)
 		}
 		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
+		c.Header("Cache-Control", streamingCacheControlValue)
 		c.Header("Connection", "keep-alive")
 		c.Header("X-Accel-Buffering", "no")
 		f, ok := c.Writer.(http.Flusher)

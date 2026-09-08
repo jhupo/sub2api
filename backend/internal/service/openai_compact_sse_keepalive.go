@@ -113,10 +113,7 @@ func (k *openAICompactSSEKeepalive) beat() bool {
 	}
 	if !k.started {
 		header := k.writer.Header()
-		header.Set("Content-Type", "text/event-stream")
-		header.Set("Cache-Control", "no-cache")
-		header.Set("Connection", "keep-alive")
-		header.Set("X-Accel-Buffering", "no")
+		SetEventStreamHeaders(header)
 		k.writer.WriteHeader(http.StatusOK)
 		k.started = true
 	}
@@ -159,10 +156,7 @@ func WriteOpenAIStreamSSEHeartbeat(c *gin.Context, payload []byte) (written int,
 	}
 	if !k.started {
 		header := k.writer.Header()
-		header.Set("Content-Type", "text/event-stream")
-		header.Set("Cache-Control", "no-cache")
-		header.Set("Connection", "keep-alive")
-		header.Set("X-Accel-Buffering", "no")
+		SetEventStreamHeaders(header)
 		k.writer.WriteHeader(http.StatusOK)
 		k.started = true
 	}

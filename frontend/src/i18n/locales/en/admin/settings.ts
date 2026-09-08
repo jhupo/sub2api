@@ -1022,10 +1022,10 @@ export default {
         saveFailed: 'Failed to save 429 default cooldown settings'
       },
       streamTimeout: {
-        title: 'Stream Timeout Handling',
-        description: 'Configure account handling strategy when upstream response times out',
-        enabled: 'Enable Stream Timeout Handling',
-        enabledHint: 'Automatically handle problematic accounts when upstream times out',
+        title: 'Account Handling After Stream Timeout',
+        description: 'Configure account actions after an idle stream timeout; timeout detection remains controlled by the gateway stream timeout',
+        enabled: 'Enable Post-timeout Account Handling',
+        enabledHint: 'Pause or mark an account after its idle-stream timeout count reaches the threshold',
         timeoutSeconds: 'Timeout Threshold (seconds)',
         timeoutSecondsHint: 'Stream data interval exceeding this time is considered timeout (30-300s)',
         action: 'Action',
@@ -1039,8 +1039,20 @@ export default {
         thresholdCountHint: 'Number of timeouts before triggering action (1-10)',
         thresholdWindowMinutes: 'Threshold Window (minutes)',
         thresholdWindowMinutesHint: 'Time window for counting timeouts (1-60 minutes)',
-        saved: 'Stream timeout settings saved',
-        saveFailed: 'Failed to save stream timeout settings'
+        saved: 'Stream timeout account handling settings saved',
+        saveFailed: 'Failed to save stream timeout account handling settings'
+      },
+      codexAdaptiveScheduling: {
+        title: 'Codex Adaptive Overload Scheduling',
+        description: 'Applies only to OpenAI OAuth, Setup Token, and official api.openai.com API keys; compaction bypasses the first-output limit, while custom relays bypass this policy entirely',
+        enabled: 'Enable Codex Adaptive Overload Scheduling',
+        enabledHint: 'When enabled, observed pressure immediately affects scheduling without suspending an account for a single-session failure',
+        normalTimeout: 'Normal Per-attempt First-output Limit (seconds)',
+        normalTimeoutHint: 'Maximum wait for committable output from one account attempt (30-600 seconds); account switching and capacity-shed retries can make the full request take longer',
+        highTimeout: 'High-reasoning Per-attempt First-output Limit (seconds)',
+        highTimeoutHint: 'Per-account limit for high, xhigh, max, and ultra (30-1800 seconds); once reasoning output or encrypted state starts, the gateway will not switch accounts merely to obtain visible text sooner',
+        saved: 'Codex adaptive overload scheduling settings saved',
+        saveFailed: 'Failed to save Codex adaptive overload scheduling settings'
       },
       rectifier: {
         title: 'Request Rectifier',

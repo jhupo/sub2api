@@ -455,6 +455,7 @@ func TestWaitForSlotWithPingTimeout_TimeoutAndStreamPing(t *testing.T) {
 		require.ErrorAs(t, err, &cErr)
 		require.True(t, cErr.IsTimeout)
 		require.True(t, streamStarted)
+		require.Equal(t, "no-cache, no-transform", rec.Header().Get("Cache-Control"))
 		require.Contains(t, rec.Body.String(), ":\n\n")
 	})
 }

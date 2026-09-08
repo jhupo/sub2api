@@ -163,6 +163,8 @@ func testPassthroughIngressFreezesSubsequentTurnBeforeRequestPolicy(t *testing.T
 	turnStarts := make(chan turnStart, 2)
 	beforeTurnEntered := make(chan time.Time, 1)
 	beforeRequestEntered := make(chan time.Time, 1)
+	mappedSecondTurn := make(chan string, 1)
+	mappingResolvedBeforeTurn := make(chan bool, 1)
 	releaseBeforeRequest := make(chan struct{})
 	hooks := &OpenAIWSIngressHooks{
 		InitialTurnStartedAt: time.Now(),
@@ -171,6 +173,12 @@ func testPassthroughIngressFreezesSubsequentTurnBeforeRequestPolicy(t *testing.T
 		},
 		BeforeTurn: func(turn int) error {
 			if turn == 2 {
+				select {
+				case model := <-mappedSecondTurn:
+					mappingResolvedBeforeTurn <- model == "gpt-5.1"
+				default:
+					mappingResolvedBeforeTurn <- false
+				}
 				beforeTurnEntered <- time.Now()
 			}
 			return nil
@@ -181,6 +189,12 @@ func testPassthroughIngressFreezesSubsequentTurnBeforeRequestPolicy(t *testing.T
 				<-releaseBeforeRequest
 			}
 			return nil
+		},
+		MapRequestModel: func(turn int, originalModel string) (string, error) {
+			if turn == 2 {
+				mappedSecondTurn <- originalModel
+			}
+			return originalModel, nil
 		},
 	}
 
@@ -222,6 +236,12 @@ func testPassthroughIngressFreezesSubsequentTurnBeforeRequestPolicy(t *testing.T
 		require.False(t, beforeTurnAt.After(policyEnteredAt), "第二轮必须先完成 BeforeTurn 准入再执行请求策略")
 	default:
 		t.Fatal("second turn did not execute BeforeTurn before BeforeRequest")
+	}
+	select {
+	case resolved := <-mappingResolvedBeforeTurn:
+		require.True(t, resolved, "第二轮准入前必须先解析当前轮次模型")
+	default:
+		t.Fatal("second turn did not resolve its model before admission")
 	}
 	close(releaseBeforeRequest)
 	require.Equal(t, "response.create", gjson.GetBytes(requirePassthroughUpstreamWrite(t, upstream, 3*time.Second), "type").String())

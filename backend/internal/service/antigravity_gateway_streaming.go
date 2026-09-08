@@ -119,7 +119,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 		beginUpstreamResponseModelObservation(c)
 	}
 	c.Status(resp.StatusCode)
-	c.Header("Cache-Control", "no-cache")
+	c.Header("Cache-Control", streamingCacheControlValue)
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
@@ -1003,7 +1003,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamToNonStreaming(c *gin.Cont
 // handleClaudeStreamingResponse 处理 Claude 流式响应（Gemini SSE → Claude SSE 转换）
 func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time, originalModel string) (*antigravityStreamResult, error) {
 	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
+	c.Header("Cache-Control", streamingCacheControlValue)
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 	c.Status(http.StatusOK)

@@ -334,6 +334,15 @@ func (s *OpenAIGatewayService) handleOpenAIWSFailureAccountSideEffects(ctx conte
 	if status == 0 {
 		return false
 	}
+	// A Responses WebSocket turn can complete at the protocol layer with a
+	// response.failed event. That is a valid terminal frame, but it is not an
+	// inference success. Feed explicit provider capacity shedding into the same
+	// request-scoped adaptive policy used by HTTP failover errors before the
+	// result reaches AfterTurn; no account cooldown is applied for this signal.
+	failoverErr := newOpenAIUpstreamFailoverError(status, headers, payload, message, false)
+	if failoverErr.IsOpenAICapacityShed() {
+		s.ApplyCodexAdaptiveFailoverPolicy(ctx, account, canonicalModel, failoverErr)
+	}
 	s.handleOpenAIAccountUpstreamError(ctx, account, status, headers, payload, canonicalModel)
 	return true
 }

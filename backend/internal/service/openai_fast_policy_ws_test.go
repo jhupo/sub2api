@@ -546,6 +546,126 @@ func TestWSResponseCreate_IngressFiltersServiceTierBeforeUpstream(t *testing.T) 
 	require.Equal(t, "gpt-5.5", upstream["model"])
 }
 
+func TestWSIngress_FirstOutputTimeoutAfterResponseCreatedTerminatesWithoutReplay(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
+	cfg.Gateway.OpenAIWS.QueueLimitPerConn = 8
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+
+	captureConn := &openAIWSCaptureConn{
+		events: [][]byte{
+			[]byte(`{"type":"response.created","response":{"id":"resp_ws_created_timeout","model":"gpt-5.5"}}`),
+			[]byte(`{"type":"response.in_progress","response":{"id":"resp_ws_created_timeout","model":"gpt-5.5"}}`),
+		},
+		readDelays: []time.Duration{0, 3 * time.Second},
+	}
+	pool := newOpenAIWSConnPool(cfg)
+	pool.setClientDialerForTest(&openAIWSCaptureDialer{conn: captureConn})
+	repo := &openAIFastPolicyRepoStub{values: map[string]string{}}
+	svc := &OpenAIGatewayService{
+		cfg:              cfg,
+		httpUpstream:     &httpUpstreamRecorder{},
+		cache:            &stubGatewayCache{},
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:    NewCodexToolCorrector(),
+		openaiWSPool:     pool,
+		settingService:   NewSettingService(repo, cfg),
+	}
+	account := &Account{
+		ID:          903,
+		Name:        "openai-ws-created-timeout",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 2,
+		Credentials: map[string]any{"api_key": "sk-test"},
+		Extra: map[string]any{
+			"responses_websockets_v2_enabled": true,
+		},
+	}
+
+	serverErrCh := make(chan error, 1)
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+
+		rec := httptest.NewRecorder()
+		ginCtx, _ := gin.CreateTestContext(rec)
+		ginCtx.Request = r.Clone(r.Context())
+		readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+		_, firstMessage, readErr := conn.Read(readCtx)
+		cancelRead()
+		if readErr != nil {
+			serverErrCh <- readErr
+			return
+		}
+		adaptiveCtx := withCodexAdaptiveTestPolicy(r.Context(), 1, 1, false)
+		proxyErr := svc.ProxyResponsesWebSocketFromClient(adaptiveCtx, ginCtx, conn, account, "sk-test", firstMessage, nil)
+		var closeErr *OpenAIWSClientCloseError
+		if errors.As(proxyErr, &closeErr) {
+			_ = conn.Close(closeErr.StatusCode(), closeErr.Reason())
+		}
+		serverErrCh <- proxyErr
+	}))
+	defer wsServer.Close()
+
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+	cancelDial()
+	require.NoError(t, err)
+	defer func() { _ = clientConn.CloseNow() }()
+
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+	require.NoError(t, clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5","stream":true}`)))
+	cancelWrite()
+
+	createdCtx, cancelCreated := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	_, createdEvent, err := clientConn.Read(createdCtx)
+	cancelCreated()
+	require.NoError(t, err, "response.created must remain available for prompt response.cancel")
+	require.Equal(t, "response.created", gjson.GetBytes(createdEvent, "type").String())
+
+	failedCtx, cancelFailed := context.WithTimeout(context.Background(), 2*time.Second)
+	_, failedEvent, err := clientConn.Read(failedCtx)
+	cancelFailed()
+	require.NoError(t, err)
+	require.Equal(t, "response.failed", gjson.GetBytes(failedEvent, "type").String())
+	require.Equal(t, "resp_ws_created_timeout", gjson.GetBytes(failedEvent, "response.id").String())
+
+	closeCtx, cancelClose := context.WithTimeout(context.Background(), 2*time.Second)
+	_, _, closeReadErr := clientConn.Read(closeCtx)
+	cancelClose()
+	require.Error(t, closeReadErr)
+
+	select {
+	case serverErr := <-serverErrCh:
+		var closeErr *OpenAIWSClientCloseError
+		require.ErrorAs(t, serverErr, &closeErr)
+		require.Equal(t, coderws.StatusGoingAway, closeErr.StatusCode())
+		require.True(t, IsOpenAIWSRequestScopedClientCloseError(serverErr))
+		var failoverErr *UpstreamFailoverError
+		require.False(t, errors.As(serverErr, &failoverErr), "a committed response must not re-enter account failover")
+	case <-time.After(3 * time.Second):
+		t.Fatal("waiting for ingress timeout close")
+	}
+}
+
 // TestWSResponseCreate_IngressBlockSendsErrorEventAndSkipsUpstream is the
 // integration flavour of TestWSResponseCreate_BlockReturnsTypedError. It
 // asserts that with a custom block rule, the client receives a Realtime-style

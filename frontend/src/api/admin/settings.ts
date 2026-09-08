@@ -1386,6 +1386,31 @@ export async function updateStreamTimeoutSettings(
   return data;
 }
 
+// ==================== Codex Adaptive Scheduling ====================
+
+export interface CodexAdaptiveSchedulingSettings {
+  enabled: boolean;
+  normal_first_output_timeout_seconds: number;
+  high_effort_first_output_timeout_seconds: number;
+}
+
+export async function getCodexAdaptiveSchedulingSettings(): Promise<CodexAdaptiveSchedulingSettings> {
+  const { data } = await apiClient.get<CodexAdaptiveSchedulingSettings>(
+    "/admin/settings/codex-adaptive-scheduling",
+  );
+  return data;
+}
+
+export async function updateCodexAdaptiveSchedulingSettings(
+  settings: CodexAdaptiveSchedulingSettings,
+): Promise<CodexAdaptiveSchedulingSettings> {
+  const { data } = await apiClient.put<CodexAdaptiveSchedulingSettings>(
+    "/admin/settings/codex-adaptive-scheduling",
+    settings,
+  );
+  return data;
+}
+
 // ==================== Rectifier Settings ====================
 
 /**
@@ -1578,6 +1603,8 @@ export const settingsAPI = {
   updatePanelRateLimitSettings,
   getStreamTimeoutSettings,
   updateStreamTimeoutSettings,
+  getCodexAdaptiveSchedulingSettings,
+  updateCodexAdaptiveSchedulingSettings,
   getRectifierSettings,
   updateRectifierSettings,
   getBetaPolicySettings,

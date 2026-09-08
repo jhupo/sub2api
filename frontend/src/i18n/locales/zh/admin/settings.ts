@@ -1016,10 +1016,10 @@ export default {
         saveFailed: '保存 429 默认回避设置失败'
       },
       streamTimeout: {
-        title: '流超时处理',
-        description: '配置上游响应超时时的账户处理策略，避免问题账户持续被选中',
-        enabled: '启用流超时处理',
-        enabledHint: '当上游响应超时时，自动处理问题账户',
+        title: '流超时后的账号处理',
+        description: '配置已发生流空闲超时后如何处理账号；超时判定仍由网关流超时配置控制',
+        enabled: '启用超时后的账号处理',
+        enabledHint: '累计流空闲超时达到阈值后，暂停账号或标记账号错误',
         timeoutSeconds: '超时阈值（秒）',
         timeoutSecondsHint: '流数据间隔超过此时间视为超时（30-300秒）',
         action: '处理方式',
@@ -1033,8 +1033,20 @@ export default {
         thresholdCountHint: '累计超时多少次后触发处理（1-10次）',
         thresholdWindowMinutes: '阈值窗口（分钟）',
         thresholdWindowMinutesHint: '超时计数的时间窗口（1-60分钟）',
-        saved: '流超时设置保存成功',
-        saveFailed: '保存流超时设置失败'
+        saved: '流超时账号处理设置保存成功',
+        saveFailed: '保存流超时账号处理设置失败'
+      },
+      codexAdaptiveScheduling: {
+        title: 'Codex 自适应过载调度',
+        description: '仅作用于 OpenAI OAuth、Setup Token 与 api.openai.com 官方 API Key；压缩绕过首字上限，自定义中转不参与该策略',
+        enabled: '启用 Codex 自适应过载调度',
+        enabledHint: '启用后记录真实压力并立即参与调度；不会因单个会话失败暂停整个账号',
+        normalTimeout: '普通请求单次首输出上限（秒）',
+        normalTimeoutHint: '单个账号尝试等待首个可提交输出的最长时间（30-600 秒）；超时会直接换号，换号和容量降载重试可能使整次请求耗时超过此值',
+        highTimeout: '高推理请求单次首输出上限（秒）',
+        highTimeoutHint: 'high、xhigh、max、ultra 的单个账号尝试上限（30-1800 秒）；推理输出或加密状态已开始后不会为追求可见文本而切号',
+        saved: 'Codex 自适应过载调度设置保存成功',
+        saveFailed: '保存 Codex 自适应过载调度设置失败'
       },
       rectifier: {
         title: '请求整流器',

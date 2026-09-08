@@ -89,9 +89,10 @@ func wrapOpenAIWSFallback(reason string, err error) error {
 
 // OpenAIWSClientCloseError 表示应以指定 WebSocket close code 主动关闭客户端连接的错误。
 type OpenAIWSClientCloseError struct {
-	statusCode coderws.StatusCode
-	reason     string
-	err        error
+	statusCode           coderws.StatusCode
+	reason               string
+	err                  error
+	requestScopedFailure bool
 }
 
 type openAIWSIngressTurnError struct {
@@ -212,6 +213,22 @@ func NewOpenAIWSClientCloseError(statusCode coderws.StatusCode, reason string, e
 		reason:     strings.TrimSpace(reason),
 		err:        err,
 	}
+}
+
+// NewOpenAIWSRequestScopedClientCloseError ends a committed WS response
+// without attributing the request-scoped failure to account health.
+func NewOpenAIWSRequestScopedClientCloseError(statusCode coderws.StatusCode, reason string, err error) error {
+	return &OpenAIWSClientCloseError{
+		statusCode:           statusCode,
+		reason:               strings.TrimSpace(reason),
+		err:                  err,
+		requestScopedFailure: true,
+	}
+}
+
+func IsOpenAIWSRequestScopedClientCloseError(err error) bool {
+	var closeErr *OpenAIWSClientCloseError
+	return errors.As(err, &closeErr) && closeErr != nil && closeErr.requestScopedFailure
 }
 
 func (e *OpenAIWSClientCloseError) Error() string {

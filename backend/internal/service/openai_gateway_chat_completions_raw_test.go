@@ -555,6 +555,7 @@ func TestHandleChatStreamingResponse_SilentRefusalReasoningSummaryExempt(t *test
 	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}
 
 	result, err := svc.handleChatStreamingResponse(
+		c.Request.Context(),
 		resp,
 		c,
 		rawChatCompletionsTestAccount(),
@@ -562,6 +563,8 @@ func TestHandleChatStreamingResponse_SilentRefusalReasoningSummaryExempt(t *test
 		"gpt-5.5",
 		"gpt-5.5",
 		time.Now(),
+		time.Now(),
+		"",
 		openAISilentRefusalMinRequestBodyBytes,
 	)
 	require.NoError(t, err)

@@ -148,6 +148,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	sessionHash := h.gatewayService.GenerateScopedSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
+	c.Request = c.Request.WithContext(h.gatewayService.PrepareCodexAdaptiveSchedulingRequest(
+		c.Request.Context(), apiKey.ID, sessionHash, reqModel, false,
+	))
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
@@ -351,6 +354,11 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
+					adaptiveFailover := h.gatewayService.ApplyCodexAdaptiveFailoverPolicy(
+						c.Request.Context(), account,
+						openAIAccountScheduleModel(c, account, reqModel, false, nil),
+						failoverErr,
+					)
 					if failoverClientGone(c) {
 						submitChatUsage(result)
 						reqLog.Info("openai_chat_completions.failover_aborted_client_disconnected",
@@ -369,6 +377,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					// Pool mode: retry on the same account
 					if shouldRetryNext && failoverErr.RetryableOnSameAccount {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
+						if adaptiveFailover {
+							retryLimit = 1
+						}
 						if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
 							sameAccountRetryCount[account.ID]++
 							retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
@@ -438,11 +449,20 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				return
 			}
 		}
+		forwardSucceeded := openAIForwardSucceededForScheduling(result)
+		if forwardSucceeded {
+			h.gatewayService.ObserveCodexAdaptiveSuccess(
+				c.Request.Context(), account,
+				openAIAccountScheduleModel(c, account, reqModel, false, result),
+			)
+		}
 		if result != nil {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), true, result.FirstTokenMs)
-			h.gatewayService.ObserveCodexQuotaOverdraftScheduleSuccess(c.Request.Context(), account, reqModel)
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), forwardSucceeded, result.FirstTokenMs)
+			if forwardSucceeded {
+				h.gatewayService.ObserveCodexQuotaOverdraftScheduleSuccess(c.Request.Context(), account, reqModel)
+			}
 		} else {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), true, nil)
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), forwardSucceeded, nil)
 		}
 
 		submitChatUsage(result)

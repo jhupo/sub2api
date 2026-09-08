@@ -55,6 +55,15 @@ type ConcurrencyCache interface {
 	CleanupStaleProcessSlots(ctx context.Context, activeRequestPrefix string) error
 }
 
+// CodexAdaptivePressureCache is a narrow extension implemented by the Redis
+// concurrency store. Session members are already one-way hashes when passed
+// to this boundary, so no client identifier or prompt content is persisted.
+type CodexAdaptivePressureCache interface {
+	ObserveCodexAdaptiveFailure(ctx context.Context, accountID int64, model, sessionMember string, window time.Duration) (int, error)
+	ObserveCodexAdaptiveSuccess(ctx context.Context, accountID int64, model, sessionMember string, window time.Duration) (int, error)
+	GetCodexAdaptivePressureBatch(ctx context.Context, accountIDs []int64, model string, window time.Duration) (map[int64]int, error)
+}
+
 type APIKeyConcurrencyCache interface {
 	TrackAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
 	ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
@@ -560,6 +569,43 @@ func (s *ConcurrencyService) GetAccountWaitingCount(ctx context.Context, account
 		return 0, nil
 	}
 	return s.cache.GetAccountWaitingCount(ctx, accountID)
+}
+
+func (s *ConcurrencyService) ObserveCodexAdaptiveFailure(ctx context.Context, accountID int64, model, sessionMember string, window time.Duration) (int, error) {
+	if s == nil || s.cache == nil || accountID <= 0 || sessionMember == "" {
+		return 0, nil
+	}
+	cache, ok := s.cache.(CodexAdaptivePressureCache)
+	if !ok {
+		return 0, nil
+	}
+	return cache.ObserveCodexAdaptiveFailure(ctx, accountID, model, sessionMember, window)
+}
+
+func (s *ConcurrencyService) ObserveCodexAdaptiveSuccess(ctx context.Context, accountID int64, model, sessionMember string, window time.Duration) (int, error) {
+	if s == nil || s.cache == nil || accountID <= 0 || sessionMember == "" {
+		return 0, nil
+	}
+	cache, ok := s.cache.(CodexAdaptivePressureCache)
+	if !ok {
+		return 0, nil
+	}
+	return cache.ObserveCodexAdaptiveSuccess(ctx, accountID, model, sessionMember, window)
+}
+
+func (s *ConcurrencyService) GetCodexAdaptivePressureBatch(ctx context.Context, accountIDs []int64, model string, window time.Duration) (map[int64]int, error) {
+	result := make(map[int64]int, len(accountIDs))
+	for _, accountID := range accountIDs {
+		result[accountID] = 0
+	}
+	if s == nil || s.cache == nil || len(accountIDs) == 0 {
+		return result, nil
+	}
+	cache, ok := s.cache.(CodexAdaptivePressureCache)
+	if !ok {
+		return result, nil
+	}
+	return cache.GetCodexAdaptivePressureBatch(ctx, accountIDs, model, window)
 }
 
 // CalculateMaxWait calculates the maximum wait queue size for a user

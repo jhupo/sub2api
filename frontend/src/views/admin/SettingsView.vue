@@ -591,6 +591,112 @@
             </div>
           </div>
 
+          <!-- Codex Adaptive Scheduling -->
+          <div class="card" data-testid="codex-adaptive-scheduling-settings">
+            <div
+              class="border-b border-gray-100 px-6 py-4 dark:border-dark-700"
+            >
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.codexAdaptiveScheduling.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.codexAdaptiveScheduling.description") }}
+              </p>
+            </div>
+            <div class="space-y-5 p-6">
+              <div
+                v-if="codexAdaptiveSchedulingLoading"
+                class="flex items-center gap-2 text-gray-500"
+              >
+                <div
+                  class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600"
+                ></div>
+                {{ t("common.loading") }}
+              </div>
+
+              <template v-else>
+                <div class="flex items-center justify-between gap-6">
+                  <div>
+                    <label class="font-medium text-gray-900 dark:text-white">
+                      {{ t("admin.settings.codexAdaptiveScheduling.enabled") }}
+                    </label>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.codexAdaptiveScheduling.enabledHint") }}
+                    </p>
+                  </div>
+                  <Toggle
+                    v-model="codexAdaptiveSchedulingForm.enabled"
+                    data-testid="codex-adaptive-scheduling-toggle"
+                  />
+                </div>
+
+                <div
+                  v-if="codexAdaptiveSchedulingForm.enabled"
+                  class="grid grid-cols-1 gap-4 border-t border-gray-100 pt-4 sm:grid-cols-2 dark:border-dark-700"
+                >
+                  <div>
+                    <label
+                      for="codex-normal-first-output-timeout"
+                      class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{ t("admin.settings.codexAdaptiveScheduling.normalTimeout") }}
+                    </label>
+                    <input
+                      id="codex-normal-first-output-timeout"
+                      v-model.number="codexAdaptiveSchedulingForm.normal_first_output_timeout_seconds"
+                      type="number"
+                      min="30"
+                      max="600"
+                      class="input w-32"
+                      data-testid="codex-adaptive-normal-timeout"
+                    />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.codexAdaptiveScheduling.normalTimeoutHint") }}
+                    </p>
+                  </div>
+                  <div>
+                    <label
+                      for="codex-high-first-output-timeout"
+                      class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{ t("admin.settings.codexAdaptiveScheduling.highTimeout") }}
+                    </label>
+                    <input
+                      id="codex-high-first-output-timeout"
+                      v-model.number="codexAdaptiveSchedulingForm.high_effort_first_output_timeout_seconds"
+                      type="number"
+                      min="30"
+                      max="1800"
+                      class="input w-32"
+                      data-testid="codex-adaptive-high-timeout"
+                    />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.codexAdaptiveScheduling.highTimeoutHint") }}
+                    </p>
+                  </div>
+                </div>
+
+                <div
+                  class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700"
+                >
+                  <button
+                    type="button"
+                    class="btn btn-primary btn-sm"
+                    :disabled="codexAdaptiveSchedulingSaving"
+                    data-testid="codex-adaptive-scheduling-save"
+                    @click="saveCodexAdaptiveSchedulingSettings"
+                  >
+                    {{
+                      codexAdaptiveSchedulingSaving
+                        ? t("common.saving")
+                        : t("common.save")
+                    }}
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+
           <!-- Request Rectifier Settings -->
           <div class="card">
             <div
@@ -8923,6 +9029,14 @@ const streamTimeoutForm = reactive({
   threshold_window_minutes: 10,
 });
 
+const codexAdaptiveSchedulingLoading = ref(true);
+const codexAdaptiveSchedulingSaving = ref(false);
+const codexAdaptiveSchedulingForm = reactive({
+  enabled: false,
+  normal_first_output_timeout_seconds: 90,
+  high_effort_first_output_timeout_seconds: 240,
+});
+
 // Rectifier 状态
 const rectifierLoading = ref(true);
 const rectifierSaving = ref(false);
@@ -11879,6 +11993,46 @@ async function saveStreamTimeoutSettings() {
   }
 }
 
+async function loadCodexAdaptiveSchedulingSettings() {
+  codexAdaptiveSchedulingLoading.value = true;
+  try {
+    const settings =
+      await adminAPI.settings.getCodexAdaptiveSchedulingSettings();
+    Object.assign(codexAdaptiveSchedulingForm, settings);
+  } catch (_error: unknown) {
+    // Keep the disabled defaults when the settings endpoint is unavailable.
+  } finally {
+    codexAdaptiveSchedulingLoading.value = false;
+  }
+}
+
+async function saveCodexAdaptiveSchedulingSettings() {
+  codexAdaptiveSchedulingSaving.value = true;
+  try {
+    const updated =
+      await adminAPI.settings.updateCodexAdaptiveSchedulingSettings({
+        enabled: codexAdaptiveSchedulingForm.enabled,
+        normal_first_output_timeout_seconds:
+          codexAdaptiveSchedulingForm.normal_first_output_timeout_seconds,
+        high_effort_first_output_timeout_seconds:
+          codexAdaptiveSchedulingForm.high_effort_first_output_timeout_seconds,
+      });
+    Object.assign(codexAdaptiveSchedulingForm, updated);
+    appStore.showSuccess(
+      t("admin.settings.codexAdaptiveScheduling.saved"),
+    );
+  } catch (error: unknown) {
+    appStore.showError(
+      extractApiErrorMessage(
+        error,
+        t("admin.settings.codexAdaptiveScheduling.saveFailed"),
+      ),
+    );
+  } finally {
+    codexAdaptiveSchedulingSaving.value = false;
+  }
+}
+
 // Rectifier 方法
 async function loadRectifierSettings() {
   rectifierLoading.value = true;
@@ -12492,6 +12646,7 @@ onMounted(() => {
   loadRateLimit429CooldownSettings();
   loadPanelRateLimitSettings();
   loadStreamTimeoutSettings();
+  loadCodexAdaptiveSchedulingSettings();
   loadRectifierSettings();
   loadBetaPolicySettings();
   loadProviders();

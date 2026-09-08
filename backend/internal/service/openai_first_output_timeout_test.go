@@ -32,6 +32,22 @@ type firstOutputCloseTrackingBody struct {
 	once   sync.Once
 }
 
+func withCodexAdaptiveTestPolicy(ctx context.Context, normalSeconds, highSeconds int, compact bool) context.Context {
+	return context.WithValue(ctx, codexAdaptiveRequestContextKey{}, &codexAdaptiveRequestState{
+		compact: compact,
+		settings: CodexAdaptiveSchedulingSettings{
+			Enabled:                             true,
+			NormalFirstOutputTimeoutSeconds:     normalSeconds,
+			HighEffortFirstOutputTimeoutSeconds: highSeconds,
+		},
+		pressures: make(map[codexAdaptivePressureScope]int),
+	})
+}
+
+func openAIFirstOutputTestAccount(id int64) *Account {
+	return &Account{ID: id, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+}
+
 func (b *firstOutputCloseTrackingBody) Close() error {
 	b.once.Do(func() { close(b.closed) })
 	return b.ReadCloser.Close()
@@ -56,8 +72,7 @@ func TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait(t *testing.T)
 	upstream := &blockingOpenAIResponseHeaderUpstream{canceled: make(chan struct{})}
 	svc := &OpenAIGatewayService{
 		cfg: &config.Config{Gateway: config.GatewayConfig{
-			OpenAIFirstOutputTimeoutSeconds: 1,
-			MaxLineSize:                     defaultMaxLineSize,
+			MaxLineSize: defaultMaxLineSize,
 		}},
 		httpUpstream: upstream,
 	}
@@ -72,7 +87,8 @@ func TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait(t *testing.T)
 	}
 
 	started := time.Now()
-	_, err := svc.Forward(context.Background(), c, account, body)
+	ctx := withCodexAdaptiveTestPolicy(context.Background(), 1, 1, false)
+	_, err := svc.Forward(ctx, c, account, body)
 
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
@@ -89,10 +105,315 @@ func TestOpenAIForwardFirstOutputTimeoutIncludesResponseHeaderWait(t *testing.T)
 	}
 }
 
+func TestOpenAIPassthroughFirstOutputTimeoutIncludesResponseHeaderWait(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := &blockingOpenAIResponseHeaderUpstream{canceled: make(chan struct{})}
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			MaxLineSize: defaultMaxLineSize,
+		}},
+		httpUpstream: upstream,
+	}
+	body := []byte(`{"model":"gpt-5.5","stream":true,"reasoning":{"effort":"low"},"input":"hello"}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	account := &Account{
+		ID: 2, Name: "oauth-passthrough-test", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Status: StatusActive, Schedulable: true, Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token", "chatgpt_account_id": "test-account"},
+	}
+	effort := "low"
+
+	started := time.Now()
+	ctx := withCodexAdaptiveTestPolicy(context.Background(), 1, 1, false)
+	_, err := svc.forwardOpenAIPassthrough(
+		ctx, c, account, body, body, "gpt-5.5", false, &effort, true, started,
+	)
+
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, CodexFirstOutputTimeoutReason, failoverErr.Reason)
+	require.Less(t, time.Since(started), 1300*time.Millisecond)
+	require.Empty(t, rec.Body.String())
+	select {
+	case <-upstream.canceled:
+	default:
+		t.Fatal("passthrough response-header timeout did not cancel the upstream request context")
+	}
+}
+
+func TestOpenAICompatFirstOutputTimeoutIncludesResponseHeaderWait(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		body []byte
+		call func(*OpenAIGatewayService, context.Context, *gin.Context, *Account, []byte) (*OpenAIForwardResult, error)
+	}{
+		{
+			name: "chat_completions",
+			path: "/v1/chat/completions",
+			body: []byte(`{"model":"gpt-5.5","stream":true,"messages":[{"role":"user","content":"hello"}]}`),
+			call: func(svc *OpenAIGatewayService, ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+				return svc.ForwardAsChatCompletions(ctx, c, account, body, "", "")
+			},
+		},
+		{
+			name: "anthropic_messages",
+			path: "/v1/messages",
+			body: []byte(`{"model":"gpt-5.5","stream":true,"max_tokens":128,"messages":[{"role":"user","content":"hello"}]}`),
+			call: func(svc *OpenAIGatewayService, ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+				return svc.ForwardAsAnthropic(ctx, c, account, body, "", "")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			upstream := &blockingOpenAIResponseHeaderUpstream{canceled: make(chan struct{})}
+			svc := &OpenAIGatewayService{
+				cfg:          &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}},
+				httpUpstream: upstream,
+			}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, tc.path, bytes.NewReader(tc.body))
+			account := &Account{
+				ID: 3, Name: "oauth-compat-test", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+				Status: StatusActive, Schedulable: true, Concurrency: 1,
+				Credentials: map[string]any{"access_token": "test-token", "chatgpt_account_id": "test-account"},
+			}
+
+			started := time.Now()
+			_, err := tc.call(svc, withCodexAdaptiveTestPolicy(context.Background(), 1, 1, false), c, account, tc.body)
+
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.Equal(t, CodexFirstOutputTimeoutReason, failoverErr.Reason)
+			require.Less(t, time.Since(started), 1300*time.Millisecond)
+			require.Empty(t, rec.Body.String())
+			select {
+			case <-upstream.canceled:
+			default:
+				t.Fatal("response-header timeout did not cancel the compat upstream request")
+			}
+		})
+	}
+}
+
+func TestOpenAICompatFirstOutputTimeoutStagesProtocolPreamble(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		call func(*OpenAIGatewayService, context.Context, *http.Response, *gin.Context, *Account, time.Time) (*OpenAIForwardResult, error)
+	}{
+		{
+			name: "chat_completions",
+			path: "/v1/chat/completions",
+			call: func(svc *OpenAIGatewayService, ctx context.Context, resp *http.Response, c *gin.Context, account *Account, started time.Time) (*OpenAIForwardResult, error) {
+				return svc.handleChatStreamingResponse(ctx, resp, c, account, "gpt-5.5", "gpt-5.5", "gpt-5.5", started, started, "low", 0)
+			},
+		},
+		{
+			name: "anthropic_messages",
+			path: "/v1/messages",
+			call: func(svc *OpenAIGatewayService, ctx context.Context, resp *http.Response, c *gin.Context, account *Account, started time.Time) (*OpenAIForwardResult, error) {
+				return svc.handleAnthropicStreamingResponse(ctx, resp, c, account, "gpt-5.5", "gpt-5.5", "gpt-5.5", started, started, "low")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			reader, writer := io.Pipe()
+			writerDone := make(chan struct{})
+			go func() {
+				defer close(writerDone)
+				defer func() { _ = writer.Close() }()
+				_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_slow\"}}\n\n")
+				time.Sleep(1200 * time.Millisecond)
+			}()
+
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, tc.path, nil)
+			body := &firstOutputCloseTrackingBody{ReadCloser: reader, closed: make(chan struct{})}
+			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: body}
+			started := time.Now()
+
+			result, err := tc.call(svcForCompatFirstOutputTests(), withCodexAdaptiveTestPolicy(c.Request.Context(), 1, 1, false), resp, c, openAIFirstOutputTestAccount(4), started)
+
+			require.Nil(t, result)
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.Equal(t, CodexFirstOutputTimeoutReason, failoverErr.Reason)
+			require.Empty(t, rec.Body.String(), "protocol preamble must remain staged so failover stays safe")
+			select {
+			case <-body.closed:
+			default:
+				t.Fatal("compat first-output timeout did not close the upstream body")
+			}
+			select {
+			case <-writerDone:
+			case <-time.After(time.Second):
+				t.Fatal("compat upstream writer did not exit after timeout")
+			}
+		})
+	}
+}
+
+func TestOpenAICompatTTFTStartsAtVisibleOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		want string
+		call func(*OpenAIGatewayService, context.Context, *http.Response, *gin.Context, *Account, time.Time) (*OpenAIForwardResult, error)
+	}{
+		{
+			name: "chat_completions",
+			path: "/v1/chat/completions",
+			want: "delayed output",
+			call: func(svc *OpenAIGatewayService, ctx context.Context, resp *http.Response, c *gin.Context, account *Account, started time.Time) (*OpenAIForwardResult, error) {
+				return svc.handleChatStreamingResponse(ctx, resp, c, account, "gpt-5.5", "gpt-5.5", "gpt-5.5", started, started, "low", 0)
+			},
+		},
+		{
+			name: "anthropic_messages",
+			path: "/v1/messages",
+			want: "delayed output",
+			call: func(svc *OpenAIGatewayService, ctx context.Context, resp *http.Response, c *gin.Context, account *Account, started time.Time) (*OpenAIForwardResult, error) {
+				return svc.handleAnthropicStreamingResponse(ctx, resp, c, account, "gpt-5.5", "gpt-5.5", "gpt-5.5", started, started, "low")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			reader, writer := io.Pipe()
+			go func() {
+				defer func() { _ = writer.Close() }()
+				_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_visible\"}}\n\n")
+				time.Sleep(120 * time.Millisecond)
+				_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"delayed output\"}\n\n")
+				_, _ = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_visible\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")
+			}()
+
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, tc.path, nil)
+			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
+			started := time.Now()
+
+			result, err := tc.call(svcForCompatFirstOutputTests(), withCodexAdaptiveTestPolicy(c.Request.Context(), 1, 1, false), resp, c, openAIFirstOutputTestAccount(5), started)
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.NotNil(t, result.FirstTokenMs)
+			require.GreaterOrEqual(t, *result.FirstTokenMs, 100)
+			require.Contains(t, rec.Body.String(), tc.want)
+		})
+	}
+}
+
+func TestOpenAICompatCapacityShedDoesNotCommitProtocolPreamble(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		call func(*OpenAIGatewayService, context.Context, *http.Response, *gin.Context, *Account, time.Time) (*OpenAIForwardResult, error)
+	}{
+		{
+			name: "chat_completions",
+			path: "/v1/chat/completions",
+			call: func(svc *OpenAIGatewayService, ctx context.Context, resp *http.Response, c *gin.Context, account *Account, started time.Time) (*OpenAIForwardResult, error) {
+				return svc.handleChatStreamingResponse(ctx, resp, c, account, "gpt-5.5", "gpt-5.5", "gpt-5.5", started, started, "low", 0)
+			},
+		},
+		{
+			name: "anthropic_messages",
+			path: "/v1/messages",
+			call: func(svc *OpenAIGatewayService, ctx context.Context, resp *http.Response, c *gin.Context, account *Account, started time.Time) (*OpenAIForwardResult, error) {
+				return svc.handleAnthropicStreamingResponse(ctx, resp, c, account, "gpt-5.5", "gpt-5.5", "gpt-5.5", started, started, "low")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			stream := strings.Join([]string{
+				`data: {"type":"response.created","response":{"id":"resp_overloaded"}}`,
+				"",
+				`event: error`,
+				`data: {"type":"error","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`,
+				"",
+			}, "\n")
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, tc.path, nil)
+			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(stream))}
+			started := time.Now()
+
+			result, err := tc.call(svcForCompatFirstOutputTests(), withCodexAdaptiveTestPolicy(c.Request.Context(), 5, 5, false), resp, c, openAIFirstOutputTestAccount(6), started)
+
+			require.Nil(t, result)
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.True(t, failoverErr.IsOpenAICapacityShed())
+			require.Empty(t, rec.Body.String(), "capacity shedding must remain replayable before semantic output")
+		})
+	}
+}
+
+func TestOpenAIFirstOutputDeadlineUsesAbsoluteCutoff(t *testing.T) {
+	expired := newOpenAIFirstOutputDeadlineGuard(time.Now().Add(-time.Millisecond))
+	defer expired.stop()
+	require.False(t, expired.claimOutput())
+	require.True(t, expired.timedOut())
+	select {
+	case <-expired.timeoutC():
+	default:
+		t.Fatal("expired guard did not publish its timeout")
+	}
+
+	claimed := newOpenAIFirstOutputDeadlineGuard(time.Now().Add(50 * time.Millisecond))
+	require.True(t, claimed.claimOutput())
+	time.Sleep(75 * time.Millisecond)
+	require.False(t, claimed.timedOut())
+	claimed.stop()
+}
+
+func TestOpenAIFirstOutputDeadlineCallbackFollowsWinningState(t *testing.T) {
+	timedOut := make(chan struct{})
+	expired := newOpenAIFirstOutputDeadlineGuardWithCallback(
+		time.Now().Add(-time.Millisecond),
+		func() { close(timedOut) },
+	)
+	defer expired.stop()
+	require.False(t, expired.claimOutput())
+	select {
+	case <-timedOut:
+	case <-time.After(time.Second):
+		t.Fatal("deadline callback did not run after timeout won")
+	}
+
+	claimedCallback := make(chan struct{})
+	claimed := newOpenAIFirstOutputDeadlineGuardWithCallback(
+		time.Now().Add(40*time.Millisecond),
+		func() { close(claimedCallback) },
+	)
+	require.True(t, claimed.claimOutput())
+	time.Sleep(60 * time.Millisecond)
+	select {
+	case <-claimedCallback:
+		t.Fatal("deadline callback ran after output had already claimed the guard")
+	default:
+	}
+	claimed.stop()
+}
+
+func svcForCompatFirstOutputTests() *OpenAIGatewayService {
+	return &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
+}
+
 func TestOpenAINativeFirstOutputTimeoutDisabledPreservesSynchronousStream(t *testing.T) {
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
-		OpenAIFirstOutputTimeoutSeconds: 0,
-		MaxLineSize:                     defaultMaxLineSize,
+		MaxLineSize: defaultMaxLineSize,
 	}}}
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(strings.Join([]string{
 		`data: {"type":"response.created","response":{"id":"resp_disabled"}}`,
@@ -104,7 +425,27 @@ func TestOpenAINativeFirstOutputTimeoutDisabledPreservesSynchronousStream(t *tes
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 
-	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
+	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, openAIFirstOutputTestAccount(1), time.Now(), "model", "model")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Contains(t, rec.Body.String(), "response.completed")
+}
+
+func TestOpenAICompactionBypassesAdaptiveFirstOutputTimeout(t *testing.T) {
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_compact"}}`,
+		"",
+		`data: {"type":"response.completed","response":{"id":"resp_compact","usage":{"input_tokens":1,"output_tokens":1}}}`,
+		"",
+	}, "\n")))}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx := withCodexAdaptiveTestPolicy(c.Request.Context(), 1, 1, true)
+
+	result, err := svc.handleStreamingResponse(ctx, resp, c, openAIFirstOutputTestAccount(1), time.Now().Add(-2*time.Second), "model", "model")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -113,8 +454,7 @@ func TestOpenAINativeFirstOutputTimeoutDisabledPreservesSynchronousStream(t *tes
 
 func TestOpenAINativeFirstOutputTimeoutIgnoresPreambleAndCleansReader(t *testing.T) {
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
-		OpenAIFirstOutputTimeoutSeconds: 1,
-		MaxLineSize:                     defaultMaxLineSize,
+		MaxLineSize: defaultMaxLineSize,
 	}}}
 	pr, pw := io.Pipe()
 	writerDone := make(chan struct{})
@@ -131,7 +471,8 @@ func TestOpenAINativeFirstOutputTimeoutIgnoresPreambleAndCleansReader(t *testing
 	body := &firstOutputCloseTrackingBody{ReadCloser: pr, closed: make(chan struct{})}
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: body}
 
-	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now().Add(-2*time.Second), "model", "model")
+	ctx := withCodexAdaptiveTestPolicy(c.Request.Context(), 1, 1, false)
+	_, err := svc.handleStreamingResponse(ctx, resp, c, openAIFirstOutputTestAccount(1), time.Now().Add(-2*time.Second), "model", "model")
 
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
@@ -153,15 +494,15 @@ func TestOpenAINativeFirstOutputTimeoutIgnoresPreambleAndCleansReader(t *testing
 }
 
 func TestOpenAIFirstOutputTimeoutForReasoningEffort(t *testing.T) {
-	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
-		OpenAIFirstOutputTimeoutSeconds:           120,
-		OpenAIHighEffortFirstOutputTimeoutSeconds: 300,
-	}}}
+	ctx := withCodexAdaptiveTestPolicy(context.Background(), 120, 300, false)
+	account := openAIFirstOutputTestAccount(1)
 
-	require.Equal(t, 120*time.Second, svc.openAIFirstOutputTimeout("low"))
-	require.Equal(t, 300*time.Second, svc.openAIFirstOutputTimeout("high"))
-	require.Equal(t, 300*time.Second, svc.openAIFirstOutputTimeout("xhigh"))
-	require.Equal(t, 300*time.Second, svc.openAIFirstOutputTimeout("max"))
+	require.Equal(t, 120*time.Second, codexAdaptiveFirstOutputTimeout(ctx, account, "gpt-5.6", "low"))
+	require.Equal(t, 300*time.Second, codexAdaptiveFirstOutputTimeout(ctx, account, "gpt-5.6", "high"))
+	require.Equal(t, 300*time.Second, codexAdaptiveFirstOutputTimeout(ctx, account, "gpt-5.6", "xhigh"))
+	require.Equal(t, 300*time.Second, codexAdaptiveFirstOutputTimeout(ctx, account, "gpt-5.6", "max"))
+	require.Equal(t, 300*time.Second, codexAdaptiveFirstOutputTimeout(ctx, account, "gpt-5.6", "ultra"))
+	require.Zero(t, codexAdaptiveFirstOutputTimeout(withCodexAdaptiveTestPolicy(ctx, 120, 300, true), account, "gpt-5.6", "high"))
 }
 
 func TestOpenAIFirstOutputStageDefaultLimitIsIndependentFromScannerLimit(t *testing.T) {
@@ -302,8 +643,7 @@ func TestOpenAIFirstOutputStageUnlinkFailurePermanentlyFallsBackToMemoryAndRetri
 
 func TestOpenAINativeFirstOutputTimeoutDisarmsAfterSemanticOutput(t *testing.T) {
 	cfg := &config.Config{Gateway: config.GatewayConfig{
-		OpenAIFirstOutputTimeoutSeconds: 1,
-		MaxLineSize:                     defaultMaxLineSize,
+		MaxLineSize: defaultMaxLineSize,
 	}}
 	svc := &OpenAIGatewayService{cfg: cfg, responseHeaderFilter: compileResponseHeaderFilter(cfg)}
 	pr, pw := io.Pipe()
@@ -322,7 +662,8 @@ func TestOpenAINativeFirstOutputTimeoutDisarmsAfterSemanticOutput(t *testing.T) 
 		"X-Ratelimit-Remaining-Requests": []string{"42"},
 	}, Body: pr}
 
-	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
+	ctx := withCodexAdaptiveTestPolicy(c.Request.Context(), 1, 1, false)
+	result, err := svc.handleStreamingResponse(ctx, resp, c, openAIFirstOutputTestAccount(1), time.Now(), "model", "model")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -331,6 +672,58 @@ func TestOpenAINativeFirstOutputTimeoutDisarmsAfterSemanticOutput(t *testing.T) 
 	require.Contains(t, rec.Body.String(), "response.completed")
 	require.Equal(t, "request-winning", rec.Result().Header.Get("X-Request-Id"))
 	require.Equal(t, "42", rec.Result().Header.Get("X-Ratelimit-Remaining-Requests"))
+}
+
+func TestOpenAIPassthroughFirstOutputTimeoutDisarmsAfterSemanticOutput(t *testing.T) {
+	cfg := &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}
+	svc := &OpenAIGatewayService{cfg: cfg, responseHeaderFilter: compileResponseHeaderFilter(cfg)}
+	pr, pw := io.Pipe()
+	go func() {
+		defer func() { _ = pw.Close() }()
+		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"))
+		time.Sleep(1100 * time.Millisecond)
+		_, _ = pw.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"))
+	}()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
+	ctx := withCodexAdaptiveTestPolicy(c.Request.Context(), 1, 1, false)
+
+	started := time.Now()
+	result, err := svc.handleStreamingResponsePassthrough(ctx, resp, c, openAIFirstOutputTestAccount(1), started, started, "model", "model", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Contains(t, rec.Body.String(), "response.completed")
+}
+
+func TestOpenAIPassthroughFirstOutputUsesAttemptDeadlineAndHighEffortLimit(t *testing.T) {
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
+	stream := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"hello"}`,
+		"",
+		`data: {"type":"response.completed","response":{"id":"resp_ok","usage":{"input_tokens":1,"output_tokens":1}}}`,
+		"",
+	}, "\n")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(stream))}
+	ctx := withCodexAdaptiveTestPolicy(c.Request.Context(), 1, 2, false)
+	requestStarted := time.Now().Add(-10 * time.Second)
+	attemptStarted := time.Now().Add(-1500 * time.Millisecond)
+
+	result, err := svc.handleStreamingResponsePassthrough(
+		ctx, resp, c, openAIFirstOutputTestAccount(1), requestStarted, attemptStarted,
+		"model", "model", "high",
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.firstTokenMs)
+	require.GreaterOrEqual(t, *result.firstTokenMs, 10_000)
+	require.Contains(t, rec.Body.String(), "response.completed")
 }
 
 func TestOpenAINativeFirstOutputTimeoutWaitsForCompleteSemanticEvent(t *testing.T) {
@@ -354,9 +747,8 @@ func TestOpenAINativeFirstOutputTimeoutDoesNotLeakLargePreambleEvent(t *testing.
 func assertOpenAINativeLargeOpenEventTimesOutWithoutLeak(t *testing.T, line string) {
 	t.Helper()
 	cfg := &config.Config{Gateway: config.GatewayConfig{
-		OpenAIFirstOutputTimeoutSeconds: 1,
-		StreamKeepaliveInterval:         1,
-		MaxLineSize:                     defaultMaxLineSize,
+		StreamKeepaliveInterval: 1,
+		MaxLineSize:             defaultMaxLineSize,
 	}}
 	svc := &OpenAIGatewayService{cfg: cfg, responseHeaderFilter: compileResponseHeaderFilter(cfg)}
 	pr, pw := io.Pipe()
@@ -379,7 +771,8 @@ func assertOpenAINativeLargeOpenEventTimesOutWithoutLeak(t *testing.T, line stri
 		"X-Ratelimit-Remaining-Requests": []string{"1"},
 	}, Body: body}
 
-	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
+	ctx := withCodexAdaptiveTestPolicy(c.Request.Context(), 1, 1, false)
+	_, err := svc.handleStreamingResponse(ctx, resp, c, openAIFirstOutputTestAccount(1), time.Now(), "model", "model")
 
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
@@ -404,8 +797,7 @@ func assertOpenAINativeLargeOpenEventTimesOutWithoutLeak(t *testing.T, line stri
 
 func TestOpenAINativeFirstOutputEOFDispatchesTerminalEventWithoutBlankLine(t *testing.T) {
 	cfg := &config.Config{Gateway: config.GatewayConfig{
-		OpenAIFirstOutputTimeoutSeconds: 1,
-		MaxLineSize:                     defaultMaxLineSize,
+		MaxLineSize: defaultMaxLineSize,
 	}}
 	svc := &OpenAIGatewayService{cfg: cfg, responseHeaderFilter: compileResponseHeaderFilter(cfg)}
 	payload := `data: {"type":"response.completed","response":{"id":"resp_eof","usage":{"input_tokens":3,"output_tokens":2}}}`
@@ -421,7 +813,8 @@ func TestOpenAINativeFirstOutputEOFDispatchesTerminalEventWithoutBlankLine(t *te
 		Body: io.NopCloser(strings.NewReader(payload)),
 	}
 
-	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
+	ctx := withCodexAdaptiveTestPolicy(c.Request.Context(), 1, 1, false)
+	result, err := svc.handleStreamingResponse(ctx, resp, c, openAIFirstOutputTestAccount(1), time.Now(), "model", "model")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -439,8 +832,7 @@ func TestOpenAINativeFirstOutputEOFDispatchesTerminalEventWithoutBlankLine(t *te
 
 func TestOpenAINativeFirstOutputStageOverflowFailsOverWithoutAttemptBytes(t *testing.T) {
 	cfg := &config.Config{Gateway: config.GatewayConfig{
-		OpenAIFirstOutputTimeoutSeconds: 30,
-		MaxLineSize:                     2 * 1024 * 1024,
+		MaxLineSize: 2 * 1024 * 1024,
 	}}
 	svc := &OpenAIGatewayService{cfg: cfg, responseHeaderFilter: compileResponseHeaderFilter(cfg)}
 	const lineSize = 1024*1024 - 256
@@ -460,7 +852,8 @@ func TestOpenAINativeFirstOutputStageOverflowFailsOverWithoutAttemptBytes(t *tes
 		Body: io.NopCloser(strings.NewReader(body)),
 	}
 
-	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
+	ctx := withCodexAdaptiveTestPolicy(c.Request.Context(), 30, 30, false)
+	_, err := svc.handleStreamingResponse(ctx, resp, c, openAIFirstOutputTestAccount(1), time.Now(), "model", "model")
 
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
@@ -472,10 +865,44 @@ func TestOpenAINativeFirstOutputStageOverflowFailsOverWithoutAttemptBytes(t *tes
 	require.Empty(t, rec.Header().Values("X-Ratelimit-Remaining-Requests"))
 }
 
+func TestOpenAIPassthroughFirstOutputStageOverflowFailsOverWithoutAttemptBytes(t *testing.T) {
+	cfg := &config.Config{Gateway: config.GatewayConfig{
+		MaxLineSize: 2 * 1024 * 1024,
+	}}
+	svc := &OpenAIGatewayService{cfg: cfg, responseHeaderFilter: compileResponseHeaderFilter(cfg)}
+	const lineSize = 1024*1024 - 256
+	prefix := `data: {"type":"response.created","response":{"id":"resp_private","padding":"`
+	suffix := `"}}`
+	line := prefix + strings.Repeat("x", lineSize-len(prefix)-len(suffix)) + suffix
+	body := strings.Repeat(line+"\n", 9)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"X-Request-Id": []string{"request-passthrough-overflow"},
+		},
+		Body: io.NopCloser(strings.NewReader(body)),
+	}
+
+	ctx := withCodexAdaptiveTestPolicy(c.Request.Context(), 30, 30, false)
+	_, err := svc.handleStreamingResponsePassthrough(
+		ctx, resp, c, openAIFirstOutputTestAccount(1), time.Now(), time.Now(),
+		"model", "model", "",
+	)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.True(t, failoverErr.SafeToFailoverAfterWrite)
+	require.Contains(t, string(failoverErr.ResponseBody), "staging limit exceeded")
+	require.Empty(t, rec.Body.String())
+}
+
 func TestOpenAINativeFirstOutputScannerRejectsOversizedLineWithoutLeak(t *testing.T) {
 	cfg := &config.Config{Gateway: config.GatewayConfig{
-		OpenAIFirstOutputTimeoutSeconds: 30,
-		MaxLineSize:                     defaultMaxLineSize,
+		MaxLineSize: defaultMaxLineSize,
 	}}
 	svc := &OpenAIGatewayService{cfg: cfg, responseHeaderFilter: compileResponseHeaderFilter(cfg)}
 	oversizedLine := "data: " + strings.Repeat("x", openAIFirstOutputStageMaxBytes+openAIFirstOutputScannerFramingAllowance+1024)
@@ -492,7 +919,8 @@ func TestOpenAINativeFirstOutputScannerRejectsOversizedLineWithoutLeak(t *testin
 		Body: io.NopCloser(strings.NewReader(body)),
 	}
 
-	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
+	ctx := withCodexAdaptiveTestPolicy(c.Request.Context(), 30, 30, false)
+	_, err := svc.handleStreamingResponse(ctx, resp, c, openAIFirstOutputTestAccount(1), time.Now(), "model", "model")
 
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
@@ -506,8 +934,7 @@ func TestOpenAINativeFirstOutputScannerRejectsOversizedLineWithoutLeak(t *testin
 
 func TestOpenAINativeFirstOutputScannerAllowsLargeEventAfterSemanticBoundary(t *testing.T) {
 	cfg := &config.Config{Gateway: config.GatewayConfig{
-		OpenAIFirstOutputTimeoutSeconds: 30,
-		MaxLineSize:                     defaultMaxLineSize,
+		MaxLineSize: defaultMaxLineSize,
 	}}
 	svc := &OpenAIGatewayService{cfg: cfg, responseHeaderFilter: compileResponseHeaderFilter(cfg)}
 	largeDelta := strings.Repeat("i", openAIFirstOutputStageMaxBytes+openAIFirstOutputScannerFramingAllowance+1024)
@@ -528,7 +955,8 @@ func TestOpenAINativeFirstOutputScannerAllowsLargeEventAfterSemanticBoundary(t *
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
 
-	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
+	ctx := withCodexAdaptiveTestPolicy(c.Request.Context(), 30, 30, false)
+	result, err := svc.handleStreamingResponse(ctx, resp, c, openAIFirstOutputTestAccount(1), time.Now(), "model", "model")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -559,7 +987,7 @@ func TestOpenAINativeFirstOutputTimeoutDisabledKeepsPreamblePrivateAcrossKeepali
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: pr}
 
-	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, openAIFirstOutputTestAccount(1), time.Now(), "model", "model")
 
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
@@ -570,9 +998,8 @@ func TestOpenAINativeFirstOutputTimeoutDisabledKeepsPreamblePrivateAcrossKeepali
 
 func TestOpenAINativeFirstOutputFailoverKeepsAttemptHeadersPrivateAfterKeepaliveCommit(t *testing.T) {
 	cfg := &config.Config{Gateway: config.GatewayConfig{
-		OpenAIFirstOutputTimeoutSeconds: 2,
-		StreamKeepaliveInterval:         1,
-		MaxLineSize:                     defaultMaxLineSize,
+		StreamKeepaliveInterval: 1,
+		MaxLineSize:             defaultMaxLineSize,
 	}}
 	svc := &OpenAIGatewayService{
 		cfg:                  cfg,
@@ -603,7 +1030,8 @@ func TestOpenAINativeFirstOutputFailoverKeepsAttemptHeadersPrivateAfterKeepalive
 		Body: trackedFirstBody,
 	}
 
-	_, firstErr := svc.handleStreamingResponse(c.Request.Context(), firstResp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
+	ctx := withCodexAdaptiveTestPolicy(c.Request.Context(), 2, 2, false)
+	_, firstErr := svc.handleStreamingResponse(ctx, firstResp, c, openAIFirstOutputTestAccount(1), time.Now(), "model", "model")
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, firstErr, &failoverErr)
 	require.Contains(t, rec.Body.String(), ":\n\n", "first attempt should have committed only a stable keepalive")
@@ -623,7 +1051,7 @@ func TestOpenAINativeFirstOutputFailoverKeepsAttemptHeadersPrivateAfterKeepalive
 			"",
 		}, "\n"))),
 	}
-	result, secondErr := svc.handleStreamingResponse(c.Request.Context(), secondResp, c, &Account{ID: 2, Platform: PlatformOpenAI}, time.Now(), "model", "model")
+	result, secondErr := svc.handleStreamingResponse(ctx, secondResp, c, openAIFirstOutputTestAccount(2), time.Now(), "model", "model")
 
 	require.NoError(t, secondErr)
 	require.NotNil(t, result)

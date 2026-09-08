@@ -154,6 +154,9 @@ type SettingService struct {
 	openAIQuotaAutoPauseSettingsCache atomic.Value // *cachedOpenAIQuotaAutoPauseSettings
 	openAIQuotaAutoPauseSettingsSF    singleflight.Group
 	openAIAPIKeyHealthBreakerCache    atomic.Value // *cachedOpenAIAPIKeyHealthBreakerSettings
+	codexAdaptiveSchedulingCache      atomic.Value // *cachedCodexAdaptiveSchedulingSettings
+	codexAdaptiveSchedulingSF         singleflight.Group
+	codexAdaptiveSchedulingRevision   atomic.Uint64
 
 	// codexQuotaOverdraftRuntimeCache is a short stale-while-revalidate cache
 	// for the two admin-controlled Codex overdraft gates.  It avoids a database

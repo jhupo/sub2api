@@ -77,6 +77,43 @@ func TestStreamFailedEventCapacityShedRetriesOnSameAccount(t *testing.T) {
 	require.False(t, openAIStreamFailedEventRetryableOnSameAccount(nonPool, other, "boom"))
 }
 
+func TestOpenAIStreamCapacityShedRecognizesAllErrorCodeShapes(t *testing.T) {
+	tests := []string{
+		`{"type":"error","code":"server_is_overloaded","message":"busy"}`,
+		`{"type":"error","error":{"code":"server_is_overloaded","message":"busy"}}`,
+		`{"type":"response.failed","response":{"error":{"code":"server_is_overloaded","message":"busy"}}}`,
+	}
+
+	for _, payload := range tests {
+		require.True(t, isOpenAIUpstreamCapacityShedEvent([]byte(payload)), payload)
+		require.True(t, isOpenAITransientProcessingError(http.StatusBadRequest, "", []byte(payload)), payload)
+		rewritten, changed := sanitizeOpenAICapacityShedErrorCodeForClient([]byte(payload))
+		require.True(t, changed, payload)
+		require.NotContains(t, string(rewritten), "server_is_overloaded")
+		require.Contains(t, string(rewritten), openAICapacityShedRetryableClientCode)
+	}
+}
+
+func TestRequestScopedFailuresDoNotLowerAccountSchedulerHealth(t *testing.T) {
+	tests := []struct {
+		name string
+		err  *UpstreamFailoverError
+		want bool
+	}{
+		{name: "legacy account failure", err: &UpstreamFailoverError{StatusCode: http.StatusBadGateway}, want: true},
+		{name: "account credential failure", err: &UpstreamFailoverError{Stage: GatewayFailureStageAccountAuth, Scope: GatewayFailureScopeAccount}, want: true},
+		{name: "request transient", err: &UpstreamFailoverError{RequestScopedTransient: true}},
+		{name: "typed request failure", err: &UpstreamFailoverError{Scope: GatewayFailureScopeRequest}},
+		{name: "provider failure", err: &UpstreamFailoverError{Scope: GatewayFailureScopeProvider}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, tt.err.ShouldReportAccountScheduleFailure())
+		})
+	}
+}
+
 func TestOpenAIHTTPCapacityShedIsRequestScopedForOAuthAccounts(t *testing.T) {
 	payload := []byte(`{"error":{"type":"server_error","message":"Our servers are currently overloaded. Please try again later."}}`)
 	failoverErr := newOpenAIUpstreamFailoverError(
@@ -106,6 +143,61 @@ func TestOpenAIHTTPCapacityShedIsRequestScopedForOAuthAccounts(t *testing.T) {
 		"gpt-5",
 	))
 	require.Zero(t, repo.tempUnschedCalls)
+}
+
+func TestOpenAIHTTPCapacityShedClassificationSurvivesBodyReplacement(t *testing.T) {
+	message := "Our servers are currently overloaded. Please try again later."
+	failoverErr := newOpenAIUpstreamFailoverError(
+		http.StatusServiceUnavailable,
+		nil,
+		[]byte(`{"error":{"code":"server_error"}}`),
+		message,
+		false,
+	)
+
+	require.Equal(t, openAIUpstreamCapacityShedReason, failoverErr.Reason)
+	require.True(t, failoverErr.IsOpenAICapacityShed())
+	failoverErr.ResponseBody = []byte(`{"error":{"code":"server_error","message":"sanitized"}}`)
+	require.True(t, failoverErr.IsOpenAICapacityShed())
+}
+
+func TestOpenAIHTTPCapacityShedDoesNotClassifyOrdinaryLimits(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		message    string
+	}{
+		{
+			name:       "user concurrency limit",
+			statusCode: http.StatusTooManyRequests,
+			body:       `{"error":{"code":"rate_limit_exceeded","message":"Concurrency limit exceeded for user"}}`,
+			message:    "Concurrency limit exceeded for user",
+		},
+		{
+			name:       "quota exhausted",
+			statusCode: http.StatusTooManyRequests,
+			body:       `{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}`,
+			message:    "You exceeded your current quota",
+		},
+		{
+			name:       "explicit rate limit code wins over overload wording",
+			statusCode: http.StatusTooManyRequests,
+			body:       `{"error":{"code":"rate_limit_exceeded","message":"Servers are currently overloaded for this user"}}`,
+			message:    "Servers are currently overloaded for this user",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			failoverErr := newOpenAIUpstreamFailoverError(
+				tt.statusCode, nil, []byte(tt.body), tt.message, false,
+			)
+			require.False(t, failoverErr.IsOpenAICapacityShed())
+			require.NotEqual(t, openAIUpstreamCapacityShedReason, failoverErr.Reason)
+			require.False(t, isOpenAIRequestScopedCapacityShed(tt.message, []byte(tt.body)))
+		})
+	}
 }
 
 // 上游降载的真实序列是「event: error → event: response.failed」。error 帧不算
@@ -170,7 +262,7 @@ func TestOpenAIStreamMetadataPreambleAndMessageOnlyOverloadFailOver(t *testing.T
 		{
 			name: "passthrough",
 			run: func(svc *OpenAIGatewayService, c *gin.Context, resp *http.Response, account *Account) error {
-				_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+				_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, account, time.Now(), time.Now(), "model", "model", "")
 				return err
 			},
 		},

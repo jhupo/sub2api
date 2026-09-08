@@ -1,6 +1,9 @@
 package service
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
@@ -505,6 +508,38 @@ func DefaultStreamTimeoutSettings() *StreamTimeoutSettings {
 		ThresholdCount:         3,
 		ThresholdWindowMinutes: 10,
 	}
+}
+
+// CodexAdaptiveSchedulingSettings controls Codex overload protection. The
+// feature is opt-in so an upgrade never changes account admission by itself.
+type CodexAdaptiveSchedulingSettings struct {
+	Enabled                             bool `json:"enabled"`
+	NormalFirstOutputTimeoutSeconds     int  `json:"normal_first_output_timeout_seconds"`
+	HighEffortFirstOutputTimeoutSeconds int  `json:"high_effort_first_output_timeout_seconds"`
+}
+
+func DefaultCodexAdaptiveSchedulingSettings() *CodexAdaptiveSchedulingSettings {
+	return &CodexAdaptiveSchedulingSettings{
+		Enabled:                             false,
+		NormalFirstOutputTimeoutSeconds:     90,
+		HighEffortFirstOutputTimeoutSeconds: 240,
+	}
+}
+
+func validateCodexAdaptiveSchedulingSettings(settings *CodexAdaptiveSchedulingSettings) error {
+	if settings == nil {
+		return fmt.Errorf("settings cannot be nil")
+	}
+	if settings.NormalFirstOutputTimeoutSeconds < 30 || settings.NormalFirstOutputTimeoutSeconds > 600 {
+		return fmt.Errorf("normal_first_output_timeout_seconds must be between 30-600")
+	}
+	if settings.HighEffortFirstOutputTimeoutSeconds < 30 || settings.HighEffortFirstOutputTimeoutSeconds > 1800 {
+		return fmt.Errorf("high_effort_first_output_timeout_seconds must be between 30-1800")
+	}
+	if settings.HighEffortFirstOutputTimeoutSeconds < settings.NormalFirstOutputTimeoutSeconds {
+		return fmt.Errorf("high_effort_first_output_timeout_seconds must not be lower than normal_first_output_timeout_seconds")
+	}
+	return nil
 }
 
 // RectifierSettings 请求整流器配置

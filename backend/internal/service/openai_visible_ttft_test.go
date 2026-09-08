@@ -74,8 +74,7 @@ func TestOpenAIResponsesTTFTStartsAtCompletedImage(t *testing.T) {
 func TestOpenAINativeMetadataDoesNotDisarmFirstOutputTimeout(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
-		MaxLineSize:                     defaultMaxLineSize,
-		OpenAIFirstOutputTimeoutSeconds: 1,
+		MaxLineSize: defaultMaxLineSize,
 	}}}
 	reader, writer := io.Pipe()
 	writerDone := make(chan struct{})
@@ -91,9 +90,10 @@ func TestOpenAINativeMetadataDoesNotDisarmFirstOutputTimeout(t *testing.T) {
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
-	account := &Account{ID: 1, Name: "account_test", Platform: PlatformOpenAI}
+	account := &Account{ID: 1, Name: "account_test", Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 
-	_, err := svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "test-model", "test-model")
+	ctx := withCodexAdaptiveTestPolicy(context.Background(), 1, 1, false)
+	_, err := svc.handleStreamingResponse(ctx, resp, c, account, time.Now(), "test-model", "test-model")
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.True(t, failoverErr.SafeToFailoverAfterWrite)
@@ -109,8 +109,7 @@ func runSyntheticVisibleTTFTStream(t *testing.T, passthrough bool, visibleDelay 
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
-		MaxLineSize:                     defaultMaxLineSize,
-		OpenAIFirstOutputTimeoutSeconds: timeoutSeconds,
+		MaxLineSize: defaultMaxLineSize,
 	}}}
 	reader, writer := io.Pipe()
 	writerDone := make(chan struct{})
@@ -128,19 +127,23 @@ func runSyntheticVisibleTTFTStream(t *testing.T, passthrough bool, visibleDelay 
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
-	account := &Account{ID: 1, Name: "account_test", Platform: PlatformOpenAI}
+	account := &Account{ID: 1, Name: "account_test", Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 	started := time.Now()
+	ctx := context.Background()
+	if timeoutSeconds > 0 {
+		ctx = withCodexAdaptiveTestPolicy(ctx, timeoutSeconds, timeoutSeconds, false)
+	}
 
 	var result *openaiStreamingResult
 	var err error
 	if passthrough {
 		var passthroughResult *openaiStreamingResultPassthrough
-		passthroughResult, err = svc.handleStreamingResponsePassthrough(context.Background(), resp, c, account, started, "test-model", "test-model")
+		passthroughResult, err = svc.handleStreamingResponsePassthrough(ctx, resp, c, account, started, started, "test-model", "test-model", "")
 		if passthroughResult != nil {
 			result = &openaiStreamingResult{firstTokenMs: passthroughResult.firstTokenMs}
 		}
 	} else {
-		result, err = svc.handleStreamingResponse(context.Background(), resp, c, account, started, "test-model", "test-model")
+		result, err = svc.handleStreamingResponse(ctx, resp, c, account, started, "test-model", "test-model")
 	}
 	require.NoError(t, err)
 	require.NotNil(t, result)

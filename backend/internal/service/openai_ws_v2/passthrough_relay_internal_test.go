@@ -133,6 +133,7 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			func() {},
 			nil,
 			exitCh,
+			relayRuntimePolicies{},
 		)
 		sig := <-exitCh
 		require.Equal(t, "read_upstream", sig.stage)
@@ -166,6 +167,7 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			func() {},
 			nil,
 			exitCh,
+			relayRuntimePolicies{},
 		)
 		sig := <-exitCh
 		require.Equal(t, "write_client", sig.stage)
@@ -202,6 +204,7 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			func() {},
 			nil,
 			exitCh,
+			relayRuntimePolicies{},
 		)
 		sig := <-exitCh
 		require.Equal(t, "drain_terminal", sig.stage)
@@ -242,6 +245,7 @@ func TestRunUpstreamToClient_ResetsOutputBoundaryPerTurn(t *testing.T) {
 		func() {},
 		nil,
 		firstExit,
+		relayRuntimePolicies{},
 	)
 	<-firstExit
 	require.Equal(t, []bool{false}, firstSeen)
@@ -275,9 +279,156 @@ func TestRunUpstreamToClient_ResetsOutputBoundaryPerTurn(t *testing.T) {
 		func() {},
 		nil,
 		secondExit,
+		relayRuntimePolicies{},
 	)
 	<-secondExit
 	require.Equal(t, []bool{false}, secondSeen)
+}
+
+func TestRelay_DownstreamStageCommitsPreambleInOrder(t *testing.T) {
+	t.Parallel()
+
+	frames := []passthroughTestFrame{
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"response.created","response":{"id":"resp_stage"}}`)},
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"response.in_progress","response":{"id":"resp_stage"}}`)},
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"response.output_text.delta","response_id":"resp_stage","delta":"hello"}`)},
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"response.completed","response":{"id":"resp_stage","usage":{"input_tokens":1,"output_tokens":1}}}`)},
+	}
+	client := newPassthroughTestFrameConn(nil, false)
+	upstream := newPassthroughTestFrameConn(frames, true)
+	committed := false
+
+	result, relayExit := Relay(
+		context.Background(),
+		client,
+		upstream,
+		[]byte(`{"type":"response.create","model":"gpt-5.6-sol"}`),
+		RelayOptions{
+			FirstMessageSent:                true,
+			StartClientAfterFirstDownstream: true,
+			DownstreamStage: &DownstreamStageOptions{
+				MaxBytes: 1024,
+				ShouldCommit: func(_ coderws.MessageType, payload []byte) bool {
+					if committed {
+						return true
+					}
+					committed = gjson.GetBytes(payload, "type").String() == "response.output_text.delta" &&
+						gjson.GetBytes(payload, "delta").String() != ""
+					return committed
+				},
+			},
+		},
+	)
+
+	require.Nil(t, relayExit)
+	require.Equal(t, "resp_stage", result.RequestID)
+	writes := client.Writes()
+	require.Len(t, writes, len(frames))
+	for i := range frames {
+		require.Equal(t, frames[i].payload, writes[i].payload, "staged frames must preserve upstream order")
+	}
+}
+
+func TestRelay_DownstreamStageDiscardsPrivateFramesOnRejectedEvent(t *testing.T) {
+	t.Parallel()
+
+	rejected := errors.New("retry this account attempt")
+	client := newPassthroughTestFrameConn(nil, false)
+	upstream := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"response.created","response":{"id":"resp_private"}}`)},
+		{msgType: coderws.MessageText, payload: []byte(`{"type":"error","error":{"code":"server_is_overloaded"}}`)},
+	}, true)
+
+	_, relayExit := Relay(
+		context.Background(),
+		client,
+		upstream,
+		[]byte(`{"type":"response.create","model":"gpt-5.6-sol"}`),
+		RelayOptions{
+			FirstMessageSent:                true,
+			StartClientAfterFirstDownstream: true,
+			DownstreamStage: &DownstreamStageOptions{
+				MaxBytes:     1024,
+				ShouldCommit: func(coderws.MessageType, []byte) bool { return false },
+			},
+			BeforeWriteClient: func(_ coderws.MessageType, payload []byte, _ bool) error {
+				if gjson.GetBytes(payload, "type").String() == "error" {
+					return rejected
+				}
+				return nil
+			},
+		},
+	)
+
+	require.NotNil(t, relayExit)
+	require.ErrorIs(t, relayExit.Err, rejected)
+	require.False(t, relayExit.WroteDownstream)
+	require.Empty(t, client.Writes(), "private preamble must not leak before a failover decision")
+}
+
+func TestRelay_DownstreamStageEnforcesMemoryLimit(t *testing.T) {
+	t.Parallel()
+
+	preamble := []byte(`{"type":"response.created","response":{"id":"resp_too_large"}}`)
+	client := newPassthroughTestFrameConn(nil, false)
+	upstream := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{msgType: coderws.MessageText, payload: preamble},
+	}, true)
+
+	_, relayExit := Relay(
+		context.Background(),
+		client,
+		upstream,
+		[]byte(`{"type":"response.create","model":"gpt-5.6-sol"}`),
+		RelayOptions{
+			FirstMessageSent:                true,
+			StartClientAfterFirstDownstream: true,
+			DownstreamStage: &DownstreamStageOptions{
+				MaxBytes:     int64(len(preamble) - 1),
+				ShouldCommit: func(coderws.MessageType, []byte) bool { return false },
+			},
+		},
+	)
+
+	require.NotNil(t, relayExit)
+	require.Equal(t, "downstream_stage", relayExit.Stage)
+	require.ErrorIs(t, relayExit.Err, ErrDownstreamStageLimit)
+	require.False(t, relayExit.WroteDownstream)
+	require.Empty(t, client.Writes())
+}
+
+func TestObserveUpstreamMessage_VisibleOutputCallbackControlsTTFT(t *testing.T) {
+	t.Parallel()
+
+	startAt := time.Unix(1000, 0)
+	now := startAt.Add(65 * time.Second)
+	state := &relayState{}
+	startsVisibleOutput := func(payload []byte) bool {
+		return gjson.GetBytes(payload, "type").String() == "response.output_text.delta" &&
+			gjson.GetBytes(payload, "delta").String() != ""
+	}
+
+	observeUpstreamMessage(
+		state,
+		[]byte(`{"type":"response.output_text.delta","response_id":"resp_ttft","delta":""}`),
+		startAt,
+		func() time.Time { return now },
+		nil,
+		startsVisibleOutput,
+	)
+	require.Nil(t, state.firstTokenMs, "an empty delta is protocol activity, not client-visible output")
+
+	now = startAt.Add(66 * time.Second)
+	observeUpstreamMessage(
+		state,
+		[]byte(`{"type":"response.output_text.delta","response_id":"resp_ttft","delta":"hello"}`),
+		startAt,
+		func() time.Time { return now },
+		nil,
+		startsVisibleOutput,
+	)
+	require.NotNil(t, state.firstTokenMs)
+	require.Equal(t, 66_000, *state.firstTokenMs)
 }
 
 func TestRunIdleWatchdog_NoTimeoutWhenDisabled(t *testing.T) {
@@ -487,6 +638,7 @@ func TestObserveUpstreamMessageBareErrorClearsTurnStateAndFinalizesUsageOnce(t *
 		now.Add(-3*time.Second),
 		func() time.Time { return now },
 		nil,
+		nil,
 	)
 
 	require.False(t, observed.terminal, "bare error settlement is deferred in case response.failed follows")
@@ -503,7 +655,7 @@ func TestObserveUpstreamMessageBareErrorClearsTurnStateAndFinalizesUsageOnce(t *
 	require.Equal(t, now.Add(-500*time.Millisecond), state.consumePendingTurnStartedAt())
 
 	// Re-observing and settling a later terminal without usage must not re-add the prior turn.
-	observeUpstreamMessage(state, []byte(`{"type":"error","error":{"message":"again"}}`), now, func() time.Time { return now }, nil)
+	observeUpstreamMessage(state, []byte(`{"type":"error","error":{"message":"again"}}`), now, func() time.Time { return now }, nil, nil)
 	finalizePendingBareError(state, now)
 	require.Equal(t, Usage{InputTokens: 3, OutputTokens: 1}, state.usage)
 }
@@ -523,6 +675,7 @@ func TestObserveUpstreamMessageErrorThenFailedSettlesUsageOnce(t *testing.T) {
 		now,
 		func() time.Time { return now },
 		nil,
+		nil,
 	)
 	require.False(t, errorObserved.terminal)
 	require.NotNil(t, state.pendingBareError)
@@ -533,6 +686,7 @@ func TestObserveUpstreamMessageErrorThenFailedSettlesUsageOnce(t *testing.T) {
 		[]byte(`{"type":"response.failed","response":{"id":"resp_1","usage":{"input_tokens":7,"output_tokens":2}}}`),
 		now,
 		func() time.Time { return now },
+		nil,
 		nil,
 	)
 	require.True(t, failedObserved.terminal)
@@ -553,6 +707,7 @@ func TestObserveUpstreamMessageBareErrorBeforeNextCompletedKeepsBothTurns(t *tes
 		now,
 		func() time.Time { return now },
 		nil,
+		nil,
 	)
 	require.False(t, bare.terminal)
 	bare = finalizePendingBareError(state, now)
@@ -564,6 +719,7 @@ func TestObserveUpstreamMessageBareErrorBeforeNextCompletedKeepsBothTurns(t *tes
 		[]byte(`{"type":"response.completed","response":{"id":"resp_next","usage":{"input_tokens":3,"output_tokens":2}}}`),
 		now,
 		func() time.Time { return now },
+		nil,
 		nil,
 	)
 	require.True(t, completed.terminal)
@@ -744,6 +900,7 @@ func TestObserveUpstreamMessage_ResponseModelIsTurnLocalAndTerminalWins(t *testi
 		startAt,
 		nowFn,
 		nil,
+		nil,
 	)
 	require.False(t, created.terminal)
 
@@ -752,6 +909,7 @@ func TestObserveUpstreamMessage_ResponseModelIsTurnLocalAndTerminalWins(t *testi
 		[]byte(`{"type":"response.completed","response":{"id":"resp_1","model":"gpt-5.4","usage":{"input_tokens":1,"output_tokens":2}}}`),
 		startAt,
 		nowFn,
+		nil,
 		nil,
 	)
 	require.True(t, completed.terminal)
@@ -769,12 +927,14 @@ func TestObserveUpstreamMessage_ResponseModelIsTurnLocalAndTerminalWins(t *testi
 		startAt,
 		nowFn,
 		nil,
+		nil,
 	)
 	second := observeUpstreamMessage(
 		state,
 		[]byte(`{"type":"response.completed","response":{"id":"resp_2","model":"GPT-5.3","usage":{"input_tokens":3,"output_tokens":4}}}`),
 		startAt,
 		nowFn,
+		nil,
 		nil,
 	)
 	require.Equal(t, "GPT-5.3", second.responseModel)
@@ -799,6 +959,7 @@ func TestObserveUpstreamMessage_ResponseIDFallbackPolicy(t *testing.T) {
 		startAt,
 		nowFn,
 		nil,
+		nil,
 	)
 	require.False(t, observed.terminal)
 	require.Equal(t, "", observed.responseID)
@@ -809,6 +970,7 @@ func TestObserveUpstreamMessage_ResponseIDFallbackPolicy(t *testing.T) {
 		[]byte(`{"type":"response.completed","id":"resp_fallback","response":{"usage":{"input_tokens":1,"output_tokens":1}}}`),
 		startAt,
 		nowFn,
+		nil,
 		nil,
 	)
 	require.True(t, observed.terminal)
@@ -832,6 +994,7 @@ func TestObserveUpstreamMessage_ResponseServiceTierOnlyFromTerminalEvents(t *tes
 		startAt,
 		nowFn,
 		nil,
+		nil,
 	)
 	require.False(t, created.terminal)
 	require.Equal(t, "", created.responseServiceTier)
@@ -841,6 +1004,7 @@ func TestObserveUpstreamMessage_ResponseServiceTierOnlyFromTerminalEvents(t *tes
 		[]byte(`{"type":"response.completed","response":{"id":"resp_1","model":"gpt-5.6-sol","service_tier":"default","usage":{"input_tokens":1,"output_tokens":2}}}`),
 		startAt,
 		nowFn,
+		nil,
 		nil,
 	)
 	require.True(t, completed.terminal)
@@ -855,12 +1019,13 @@ func TestObserveUpstreamMessage_ResponseServiceTierOnlyFromTerminalEvents(t *tes
 	require.Equal(t, "default", result.ResponseServiceTier)
 
 	// A later turn without any declaration must not inherit the previous one.
-	observeUpstreamMessage(state, []byte(`{"type":"response.created","response":{"id":"resp_2","model":"gpt-5.6-sol"}}`), startAt, nowFn, nil)
+	observeUpstreamMessage(state, []byte(`{"type":"response.created","response":{"id":"resp_2","model":"gpt-5.6-sol"}}`), startAt, nowFn, nil, nil)
 	second := observeUpstreamMessage(
 		state,
 		[]byte(`{"type":"response.completed","response":{"id":"resp_2","model":"gpt-5.6-sol","usage":{"input_tokens":3,"output_tokens":4}}}`),
 		startAt,
 		nowFn,
+		nil,
 		nil,
 	)
 	require.Equal(t, "", second.responseServiceTier)

@@ -499,16 +499,17 @@ func TestOpenAIResponseFlush_RecentBareErrorAllowsCompletedBeforeIdleTimeout(t *
 
 func TestOpenAIResponseFlush_BareErrorTimeoutSynthesizesFailed(t *testing.T) {
 	tests := []struct {
-		name string
-		cfg  config.GatewayConfig
+		name                      string
+		cfg                       config.GatewayConfig
+		firstOutputTimeoutSeconds int
 	}{
 		{
 			name: "stream interval timeout",
 			cfg:  config.GatewayConfig{StreamDataIntervalTimeout: 1},
 		},
 		{
-			name: "first output timeout",
-			cfg:  config.GatewayConfig{OpenAIFirstOutputTimeoutSeconds: 1},
+			name:                      "first output timeout",
+			firstOutputTimeoutSeconds: 1,
 		},
 	}
 
@@ -517,7 +518,7 @@ func TestOpenAIResponseFlush_BareErrorTimeoutSynthesizesFailed(t *testing.T) {
 			reader, writer := io.Pipe()
 			defer func() { _ = writer.Close() }()
 			recorder := newOpenAIResponseFlushRecorder()
-			resultCh, errCh := runOpenAIResponseFlushTestAsync(recorder, reader, tt.cfg)
+			resultCh, errCh := runOpenAIResponseFlushTestAsyncWithPolicy(recorder, reader, tt.cfg, tt.firstOutputTimeoutSeconds)
 
 			_, writeErr := io.WriteString(writer, "data: {\"type\":\"error\",\"error\":{\"code\":\"invalid_request\",\"message\":\"bad request\"}}\n\n")
 			require.NoError(t, writeErr)
@@ -594,6 +595,10 @@ func runOpenAIResponseFlushTest(recorder *openAIResponseFlushRecorder, body io.R
 }
 
 func runOpenAIResponseFlushTestWithAccount(recorder *openAIResponseFlushRecorder, body io.ReadCloser, gatewayCfg config.GatewayConfig, account *Account) (*openaiStreamingResult, error) {
+	return runOpenAIResponseFlushTestWithContext(context.Background(), recorder, body, gatewayCfg, account)
+}
+
+func runOpenAIResponseFlushTestWithContext(ctx context.Context, recorder *openAIResponseFlushRecorder, body io.ReadCloser, gatewayCfg config.GatewayConfig, account *Account) (*openaiStreamingResult, error) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -606,7 +611,22 @@ func runOpenAIResponseFlushTestWithAccount(recorder *openAIResponseFlushRecorder
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 		Body:       body,
 	}
-	return svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "gpt-5", "gpt-5")
+	return svc.handleStreamingResponse(ctx, resp, c, account, time.Now(), "gpt-5", "gpt-5")
+}
+
+func runOpenAIResponseFlushTestAsyncWithPolicy(recorder *openAIResponseFlushRecorder, body io.ReadCloser, gatewayCfg config.GatewayConfig, timeoutSeconds int) (<-chan *openaiStreamingResult, <-chan error) {
+	resultCh := make(chan *openaiStreamingResult, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		ctx := context.Background()
+		if timeoutSeconds > 0 {
+			ctx = withCodexAdaptiveTestPolicy(ctx, timeoutSeconds, timeoutSeconds, false)
+		}
+		result, err := runOpenAIResponseFlushTestWithContext(ctx, recorder, body, gatewayCfg, openAIFirstOutputTestAccount(1))
+		resultCh <- result
+		errCh <- err
+	}()
+	return resultCh, errCh
 }
 
 func runOpenAIResponseFlushTestAsync(recorder *openAIResponseFlushRecorder, body io.ReadCloser, gatewayCfg config.GatewayConfig) (<-chan *openaiStreamingResult, <-chan error) {

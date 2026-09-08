@@ -380,9 +380,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 		contentType = "text/event-stream"
 	}
 	c.Header("Content-Type", contentType)
-	if c.Writer.Header().Get("Cache-Control") == "" {
-		c.Header("Cache-Control", "no-cache")
-	}
+	ensureStreamingNoTransform(c.Writer.Header())
 	if c.Writer.Header().Get("Connection") == "" {
 		c.Header("Connection", "keep-alive")
 	}

@@ -1705,6 +1705,21 @@ func TestOpenAIResponsesWebSocket_CtxPoolAppliesPerTurnMappingAndPreservesReques
 		"BillingModelSourceRequested must use the client model before channel mapping")
 }
 
+func TestOpenAIWSSchedulingModelForTurnUsesCurrentSnapshot(t *testing.T) {
+	snapshot := &openAIWSTurnChannelMappingSnapshot{
+		turn:           2,
+		requestedModel: "client-terra",
+		mapping:        service.ChannelMappingResult{MappedModel: "gpt-5.6-terra"},
+	}
+
+	require.Equal(t, "gpt-5.6-terra", openAIWSSchedulingModelForTurn(snapshot, 2, "gpt-5.6-sol"))
+	require.Equal(t, "gpt-5.6-sol", openAIWSSchedulingModelForTurn(snapshot, 3, " gpt-5.6-sol "))
+
+	snapshot.mapping.MappedModel = ""
+	require.Equal(t, "client-terra", openAIWSSchedulingModelForTurn(snapshot, 2, "gpt-5.6-sol"))
+	require.Equal(t, "gpt-5.6-sol", openAIWSSchedulingModelForTurn(nil, 2, " gpt-5.6-sol "))
+}
+
 func TestOpenAIWSTurnBillingModelPreservesImagePricingModel(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -2776,7 +2791,6 @@ func TestOpenAIResponsesWebSocket_FirstOutputTimeoutWithoutDownstreamReusesClien
 	cfg.Default.RateMultiplier = 1
 	cfg.Security.URLAllowlist.Enabled = false
 	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
-	cfg.Gateway.OpenAIFirstOutputTimeoutSeconds = 1
 	cfg.Gateway.OpenAIWS.Enabled = true
 	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
 	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true

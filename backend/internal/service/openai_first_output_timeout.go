@@ -229,32 +229,18 @@ func (s *openAIFirstOutputStage) Close() error {
 	return closeErr
 }
 
-func (s *OpenAIGatewayService) openAIFirstOutputTimeout(reasoningEffort string) time.Duration {
-	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIFirstOutputTimeoutSeconds <= 0 {
-		return 0
-	}
-	seconds := s.cfg.Gateway.OpenAIFirstOutputTimeoutSeconds
-	switch strings.ToLower(strings.TrimSpace(reasoningEffort)) {
-	case "high", "xhigh", "max":
-		if override := s.cfg.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds; override > 0 {
-			seconds = override
-		}
-	}
-	return time.Duration(seconds) * time.Second
-}
-
 func (s *OpenAIGatewayService) newOpenAIFirstOutputTimeoutError(
 	ctx context.Context,
 	c *gin.Context,
 	account *Account,
-	startTime time.Time,
+	attemptStartTime time.Time,
 	originalModel string,
 	reasoningEffort string,
 	timeout time.Duration,
 	phase string,
 	responseHeaders http.Header,
 ) *UpstreamFailoverError {
-	elapsed := time.Since(startTime)
+	elapsed := time.Since(attemptStartTime)
 	logger.LegacyPrintf(
 		"service.openai_gateway",
 		"OpenAI first output timeout: account=%d model=%s effort=%s phase=%s elapsed=%s limit=%s",
@@ -267,13 +253,16 @@ func (s *OpenAIGatewayService) newOpenAIFirstOutputTimeoutError(
 		Kind: "first_output_timeout", Message: "OpenAI upstream produced no semantic output before the deadline",
 		Detail: fmt.Sprintf("phase=%s elapsed_ms=%d timeout_ms=%d", phase, elapsed.Milliseconds(), timeout.Milliseconds()),
 	})
-	if s.rateLimitService != nil {
-		s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
-	}
 	return &UpstreamFailoverError{
-		StatusCode:      http.StatusGatewayTimeout,
-		ResponseBody:    []byte(`{"error":{"type":"first_output_timeout","message":"Upstream produced no output before the deadline"}}`),
-		ResponseHeaders: responseHeaders.Clone(), SafeToFailoverAfterWrite: true,
+		StatusCode:               http.StatusGatewayTimeout,
+		ResponseBody:             []byte(`{"error":{"type":"first_output_timeout","message":"Upstream produced no output before the deadline"}}`),
+		ResponseHeaders:          responseHeaders.Clone(),
+		RetryableOnSameAccount:   false,
+		RequestScopedTransient:   true,
+		SafeToFailoverAfterWrite: true,
+		Stage:                    GatewayFailureStageInference,
+		Scope:                    GatewayFailureScopeRequest,
+		Reason:                   CodexFirstOutputTimeoutReason,
 	}
 }
 
@@ -283,6 +272,92 @@ type openAIFirstOutputHeaderGuard struct {
 	timer   *time.Timer
 	fired   chan struct{}
 	once    sync.Once
+}
+
+const (
+	openAIFirstOutputDeadlinePending int32 = iota
+	openAIFirstOutputDeadlineClaimed
+	openAIFirstOutputDeadlineTimedOut
+	openAIFirstOutputDeadlineStopped
+)
+
+// openAIFirstOutputDeadlineGuard arbitrates the boundary between the first
+// upstream event that makes an attempt safe to commit and its deadline. The
+// timer starts from the same attempt timestamp used while waiting for response
+// headers, so parsing preamble frames cannot reset the timeout budget.
+type openAIFirstOutputDeadlineGuard struct {
+	state    atomic.Int32
+	deadline time.Time
+	timer    *time.Timer
+	fired    chan struct{}
+	onExpire func()
+}
+
+func newOpenAIFirstOutputDeadlineGuard(deadline time.Time) *openAIFirstOutputDeadlineGuard {
+	return newOpenAIFirstOutputDeadlineGuardWithCallback(deadline, nil)
+}
+
+func newOpenAIFirstOutputDeadlineGuardWithCallback(deadline time.Time, onExpire func()) *openAIFirstOutputDeadlineGuard {
+	guard := &openAIFirstOutputDeadlineGuard{
+		deadline: deadline,
+		fired:    make(chan struct{}),
+		onExpire: onExpire,
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		remaining = time.Nanosecond
+	}
+	guard.timer = time.AfterFunc(remaining, guard.expire)
+	return guard
+}
+
+func (g *openAIFirstOutputDeadlineGuard) expire() {
+	if g != nil && g.state.CompareAndSwap(openAIFirstOutputDeadlinePending, openAIFirstOutputDeadlineTimedOut) {
+		close(g.fired)
+		if g.onExpire != nil {
+			g.onExpire()
+		}
+	}
+}
+
+func (g *openAIFirstOutputDeadlineGuard) timeoutC() <-chan struct{} {
+	if g == nil {
+		return nil
+	}
+	return g.fired
+}
+
+// claimOutput returns false only when the deadline won the race. Repeated
+// claims after the first semantic event are harmless.
+func (g *openAIFirstOutputDeadlineGuard) claimOutput() bool {
+	if g == nil {
+		return true
+	}
+	if state := g.state.Load(); state != openAIFirstOutputDeadlinePending {
+		return state == openAIFirstOutputDeadlineClaimed
+	}
+	if !time.Now().Before(g.deadline) {
+		g.expire()
+		return false
+	}
+	if g.state.CompareAndSwap(openAIFirstOutputDeadlinePending, openAIFirstOutputDeadlineClaimed) {
+		g.timer.Stop()
+		return true
+	}
+	return g.state.Load() == openAIFirstOutputDeadlineClaimed
+}
+
+func (g *openAIFirstOutputDeadlineGuard) timedOut() bool {
+	return g != nil && g.state.Load() == openAIFirstOutputDeadlineTimedOut
+}
+
+func (g *openAIFirstOutputDeadlineGuard) stop() {
+	if g == nil {
+		return
+	}
+	if g.state.CompareAndSwap(openAIFirstOutputDeadlinePending, openAIFirstOutputDeadlineStopped) {
+		g.timer.Stop()
+	}
 }
 
 func newOpenAIFirstOutputHeaderGuard(

@@ -236,6 +236,20 @@ func (h *SettingHandler) GetStreamTimeoutSettings(c *gin.Context) {
 	})
 }
 
+// GetCodexAdaptiveSchedulingSettings returns the runtime Codex overload policy.
+func (h *SettingHandler) GetCodexAdaptiveSchedulingSettings(c *gin.Context) {
+	settings, err := h.settingService.GetCodexAdaptiveSchedulingSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, dto.CodexAdaptiveSchedulingSettings{
+		Enabled:                             settings.Enabled,
+		NormalFirstOutputTimeoutSeconds:     settings.NormalFirstOutputTimeoutSeconds,
+		HighEffortFirstOutputTimeoutSeconds: settings.HighEffortFirstOutputTimeoutSeconds,
+	})
+}
+
 // GetRectifierSettings 获取请求整流器配置
 // GET /api/v1/admin/settings/rectifier
 func (h *SettingHandler) GetRectifierSettings(c *gin.Context) {
@@ -428,6 +442,35 @@ func (h *SettingHandler) UpdateStreamTimeoutSettings(c *gin.Context) {
 		TempUnschedMinutes:     updatedSettings.TempUnschedMinutes,
 		ThresholdCount:         updatedSettings.ThresholdCount,
 		ThresholdWindowMinutes: updatedSettings.ThresholdWindowMinutes,
+	})
+}
+
+type UpdateCodexAdaptiveSchedulingSettingsRequest struct {
+	Enabled                             bool `json:"enabled"`
+	NormalFirstOutputTimeoutSeconds     int  `json:"normal_first_output_timeout_seconds"`
+	HighEffortFirstOutputTimeoutSeconds int  `json:"high_effort_first_output_timeout_seconds"`
+}
+
+// UpdateCodexAdaptiveSchedulingSettings updates the complete policy atomically.
+func (h *SettingHandler) UpdateCodexAdaptiveSchedulingSettings(c *gin.Context) {
+	var req UpdateCodexAdaptiveSchedulingSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	settings := &service.CodexAdaptiveSchedulingSettings{
+		Enabled:                             req.Enabled,
+		NormalFirstOutputTimeoutSeconds:     req.NormalFirstOutputTimeoutSeconds,
+		HighEffortFirstOutputTimeoutSeconds: req.HighEffortFirstOutputTimeoutSeconds,
+	}
+	if err := h.settingService.SetCodexAdaptiveSchedulingSettings(c.Request.Context(), settings); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, dto.CodexAdaptiveSchedulingSettings{
+		Enabled:                             settings.Enabled,
+		NormalFirstOutputTimeoutSeconds:     settings.NormalFirstOutputTimeoutSeconds,
+		HighEffortFirstOutputTimeoutSeconds: settings.HighEffortFirstOutputTimeoutSeconds,
 	})
 }
 

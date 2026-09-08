@@ -120,10 +120,7 @@ func (h *UserMsgQueueHelper) waitForLockWithPing(
 			written, err, handledByKeepalive := service.WriteOpenAIStreamSSEHeartbeat(c, []byte(h.pingFormat))
 			if !handledByKeepalive {
 				if !*streamStarted {
-					c.Header("Content-Type", "text/event-stream")
-					c.Header("Cache-Control", "no-cache")
-					c.Header("Connection", "keep-alive")
-					c.Header("X-Accel-Buffering", "no")
+					service.SetEventStreamHeaders(c.Writer.Header())
 					*streamStarted = true
 				}
 				written, err = fmt.Fprint(c.Writer, string(h.pingFormat))
@@ -234,10 +231,7 @@ func (h *UserMsgQueueHelper) ThrottleWithPing(
 			written, err, handledByKeepalive := service.WriteOpenAIStreamSSEHeartbeat(c, []byte(h.pingFormat))
 			if !handledByKeepalive {
 				if !*streamStarted {
-					c.Header("Content-Type", "text/event-stream")
-					c.Header("Cache-Control", "no-cache")
-					c.Header("Connection", "keep-alive")
-					c.Header("X-Accel-Buffering", "no")
+					service.SetEventStreamHeaders(c.Writer.Header())
 					*streamStarted = true
 				}
 				written, err = fmt.Fprint(c.Writer, string(h.pingFormat))

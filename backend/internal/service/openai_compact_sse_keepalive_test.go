@@ -63,6 +63,7 @@ func TestStartOpenAIStreamSSEKeepalive_ProtectsPreHeaderWait(t *testing.T) {
 	require.True(t, StopOpenAICompactSSEKeepaliveCommitted(c))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
+	require.Equal(t, "no-cache, no-transform", rec.Header().Get("Cache-Control"))
 	require.Contains(t, rec.Body.String(), ": keepalive\n\n")
 	require.Equal(t, -1, OpenAICompactKeepaliveAdjustedWrittenSize(c), "comments are not semantic output")
 }
@@ -100,6 +101,7 @@ func TestOpenAICompactSSEKeepalive_CommitsHeadersAndComments(t *testing.T) {
 	require.True(t, StopOpenAICompactSSEKeepaliveCommitted(c))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
+	require.Equal(t, "no-cache, no-transform", rec.Header().Get("Cache-Control"))
 	require.Equal(t, "no", rec.Header().Get("X-Accel-Buffering"))
 	require.Contains(t, rec.Body.String(), ": keepalive\n\n")
 }

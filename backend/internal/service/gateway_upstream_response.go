@@ -711,7 +711,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 
 	// 设置SSE响应头
 	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
+	c.Header("Cache-Control", streamingCacheControlValue)
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 

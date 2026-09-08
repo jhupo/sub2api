@@ -22,6 +22,8 @@ const {
   getAccessBlockSettings,
   updateAccessBlockSettings,
   getStreamTimeoutSettings,
+  getCodexAdaptiveSchedulingSettings,
+  updateCodexAdaptiveSchedulingSettings,
   getRectifierSettings,
   getBetaPolicySettings,
   getUpstreamBillingProbeSettings,
@@ -79,6 +81,8 @@ const {
     panel_blacklist_window_seconds: 600,
   })),
   getStreamTimeoutSettings: vi.fn(),
+  getCodexAdaptiveSchedulingSettings: vi.fn(),
+  updateCodexAdaptiveSchedulingSettings: vi.fn(),
   getRectifierSettings: vi.fn(),
   getBetaPolicySettings: vi.fn(),
   getUpstreamBillingProbeSettings: vi.fn().mockResolvedValue({
@@ -121,6 +125,8 @@ vi.mock("@/api", () => ({
       getPanelRateLimitSettings,
       updatePanelRateLimitSettings,
       getStreamTimeoutSettings,
+      getCodexAdaptiveSchedulingSettings,
+      updateCodexAdaptiveSchedulingSettings,
       getRectifierSettings,
       getBetaPolicySettings,
     },
@@ -692,6 +698,8 @@ describe("admin SettingsView payment visible method controls", () => {
       panel_blacklist_window_seconds: 600,
     }));
     getStreamTimeoutSettings.mockReset();
+    getCodexAdaptiveSchedulingSettings.mockReset();
+    updateCodexAdaptiveSchedulingSettings.mockReset();
     getRectifierSettings.mockReset();
     getBetaPolicySettings.mockReset();
     getUpstreamBillingProbeSettings.mockReset();
@@ -743,6 +751,12 @@ describe("admin SettingsView payment visible method controls", () => {
       threshold_count: 3,
       threshold_window_minutes: 10,
     });
+    getCodexAdaptiveSchedulingSettings.mockResolvedValue({
+      enabled: false,
+      normal_first_output_timeout_seconds: 90,
+      high_effort_first_output_timeout_seconds: 240,
+    });
+    updateCodexAdaptiveSchedulingSettings.mockImplementation(async (payload) => payload);
     getRectifierSettings.mockResolvedValue({
       enabled: true,
       thinking_signature_enabled: true,
@@ -1451,6 +1465,34 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(summary.text()).not.toContain("透传");
   });
 
+  it("loads and saves Codex adaptive scheduling settings", async () => {
+    getCodexAdaptiveSchedulingSettings.mockResolvedValueOnce({
+      enabled: true,
+      normal_first_output_timeout_seconds: 90,
+      high_effort_first_output_timeout_seconds: 240,
+    });
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const card = wrapper.get('[data-testid="codex-adaptive-scheduling-settings"]');
+    expect(
+      (card.get('[data-testid="codex-adaptive-scheduling-toggle"]').element as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    await card.get('[data-testid="codex-adaptive-normal-timeout"]').setValue(120);
+    await card.get('[data-testid="codex-adaptive-high-timeout"]').setValue(300);
+    await card.get('[data-testid="codex-adaptive-scheduling-save"]').trigger("click");
+    await flushPromises();
+
+    expect(updateCodexAdaptiveSchedulingSettings).toHaveBeenCalledWith({
+      enabled: true,
+      normal_first_output_timeout_seconds: 120,
+      high_effort_first_output_timeout_seconds: 300,
+    });
+  });
+
   it("loads and saves upstream billing probe settings from the gateway tab", async () => {
     getUpstreamBillingProbeSettings.mockResolvedValueOnce({
       enabled: false,
@@ -1693,6 +1735,8 @@ describe("admin SettingsView wechat connect controls", () => {
     getRateLimit429CooldownSettings.mockReset();
     updateRateLimit429CooldownSettings.mockReset();
     getStreamTimeoutSettings.mockReset();
+    getCodexAdaptiveSchedulingSettings.mockReset();
+    updateCodexAdaptiveSchedulingSettings.mockReset();
     getRectifierSettings.mockReset();
     getBetaPolicySettings.mockReset();
     getGroups.mockReset();
@@ -1743,6 +1787,12 @@ describe("admin SettingsView wechat connect controls", () => {
       threshold_count: 3,
       threshold_window_minutes: 10,
     });
+    getCodexAdaptiveSchedulingSettings.mockResolvedValue({
+      enabled: false,
+      normal_first_output_timeout_seconds: 90,
+      high_effort_first_output_timeout_seconds: 240,
+    });
+    updateCodexAdaptiveSchedulingSettings.mockImplementation(async (payload) => payload);
     getRectifierSettings.mockResolvedValue({
       enabled: true,
       thinking_signature_enabled: true,
@@ -1939,6 +1989,8 @@ describe("admin SettingsView platform quota matrix", () => {
     getRateLimit429CooldownSettings.mockReset();
     updateRateLimit429CooldownSettings.mockReset();
     getStreamTimeoutSettings.mockReset();
+    getCodexAdaptiveSchedulingSettings.mockReset();
+    updateCodexAdaptiveSchedulingSettings.mockReset();
     getRectifierSettings.mockReset();
     getBetaPolicySettings.mockReset();
     getGroups.mockReset();
@@ -1965,6 +2017,12 @@ describe("admin SettingsView platform quota matrix", () => {
     getRateLimit429CooldownSettings.mockResolvedValue({});
     updateRateLimit429CooldownSettings.mockResolvedValue({});
     getStreamTimeoutSettings.mockResolvedValue({});
+    getCodexAdaptiveSchedulingSettings.mockResolvedValue({
+      enabled: false,
+      normal_first_output_timeout_seconds: 90,
+      high_effort_first_output_timeout_seconds: 240,
+    });
+    updateCodexAdaptiveSchedulingSettings.mockImplementation(async (payload) => payload);
     getRectifierSettings.mockResolvedValue({});
     getBetaPolicySettings.mockResolvedValue({});
     getGroups.mockResolvedValue([]);
