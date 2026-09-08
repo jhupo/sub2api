@@ -53,7 +53,7 @@ func StartOpenAICompactSSEKeepalive(c *gin.Context, interval time.Duration) func
 // installed.  Keeping the state in the existing manager makes the adjusted
 // writer-size and failover accounting apply consistently to both paths.
 func StartOpenAIStreamSSEKeepalive(c *gin.Context, interval time.Duration) func() {
-	return startOpenAISSEKeepalive(c, interval, true)
+	return startOpenAISSEKeepalive(c, interval, !OpenAIResponseHeadersRequired(c))
 }
 
 func startOpenAISSEKeepalive(c *gin.Context, interval time.Duration, enabled bool) func() {

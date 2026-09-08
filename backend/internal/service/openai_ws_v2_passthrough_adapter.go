@@ -260,34 +260,11 @@ func openAIWSPassthroughRequestModelFromSessionFrame(payload []byte) string {
 
 const openaiWSV2PassthroughModeFields = "ws_mode=passthrough ws_router=v2"
 
-var errOpenAIWSPassthroughFirstOutputTimeout = errors.New("openai websocket passthrough first output timeout")
 var errOpenAIWSPassthroughActiveTurnTimeout = errors.New("openai websocket passthrough active turn read timeout")
 
-type openAIWSPassthroughDeadlinePhase uint8
-
-const (
-	openAIWSPassthroughDeadlinePhaseFirstSemantic openAIWSPassthroughDeadlinePhase = iota + 1
-	openAIWSPassthroughDeadlinePhaseActiveRead
-)
-
-type openAIWSPassthroughFirstOutputDeadline struct {
-	timeout         time.Duration
-	startedAt       time.Time
-	requestModel    string
-	reasoningEffort string
-	phase           openAIWSPassthroughDeadlinePhase
-}
-
-type openAIWSPassthroughFirstOutputTimeoutError struct {
-	deadline openAIWSPassthroughFirstOutputDeadline
-}
-
-func (e *openAIWSPassthroughFirstOutputTimeoutError) Error() string {
-	return errOpenAIWSPassthroughFirstOutputTimeout.Error()
-}
-
-func (e *openAIWSPassthroughFirstOutputTimeoutError) Unwrap() error {
-	return errOpenAIWSPassthroughFirstOutputTimeout
+type openAIWSPassthroughActivityDeadline struct {
+	timeout   time.Duration
+	startedAt time.Time
 }
 
 type openAIWSPassthroughActiveTurnTimeoutError struct{}
@@ -300,10 +277,10 @@ func (e *openAIWSPassthroughActiveTurnTimeoutError) Unwrap() error {
 	return errOpenAIWSPassthroughActiveTurnTimeout
 }
 
-type openAIWSPassthroughFirstOutputDeadlineState struct {
+type openAIWSPassthroughActivityDeadlineState struct {
 	armed      bool
 	generation uint64
-	deadline   openAIWSPassthroughFirstOutputDeadline
+	deadline   openAIWSPassthroughActivityDeadline
 }
 
 type openAIWSPassthroughTurnLifecycle struct {
@@ -368,18 +345,18 @@ func (l *openAIWSPassthroughTurnLifecycle) finishTerminalWrite(succeeded bool, o
 	l.mu.Unlock()
 }
 
-type openAIWSPassthroughFirstOutputFrameConn struct {
+type openAIWSPassthroughActivityFrameConn struct {
+	limitAttempts     bool
 	inner             openaiwsv2.FrameConn
-	resolveDeadline   func(payload []byte) openAIWSPassthroughFirstOutputDeadline
 	activeReadTimeout time.Duration
 
 	mu              sync.Mutex
-	state           openAIWSPassthroughFirstOutputDeadlineState
+	state           openAIWSPassthroughActivityDeadlineState
 	stageDownstream bool
 	deadlineChanged chan struct{}
 }
 
-func (c *openAIWSPassthroughFirstOutputFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
+func (c *openAIWSPassthroughActivityFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
 	if c == nil || c.inner == nil {
 		return coderws.MessageText, nil, errOpenAIWSConnClosed
 	}
@@ -456,10 +433,7 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) ReadFrame(ctx context.Context)
 			}
 			cancelRead()
 			<-readResultCh
-			if state.deadline.phase == openAIWSPassthroughDeadlinePhaseActiveRead {
-				return coderws.MessageText, nil, &openAIWSPassthroughActiveTurnTimeoutError{}
-			}
-			return coderws.MessageText, nil, &openAIWSPassthroughFirstOutputTimeoutError{deadline: state.deadline}
+			return coderws.MessageText, nil, &openAIWSPassthroughActiveTurnTimeoutError{}
 		case <-ctx.Done():
 			cancelRead()
 			<-readResultCh
@@ -468,13 +442,18 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) ReadFrame(ctx context.Context)
 	}
 }
 
-func (c *openAIWSPassthroughFirstOutputFrameConn) WriteFrame(ctx context.Context, msgType coderws.MessageType, payload []byte) error {
+func (c *openAIWSPassthroughActivityFrameConn) WriteFrame(ctx context.Context, msgType coderws.MessageType, payload []byte) error {
 	if c == nil || c.inner == nil {
 		return errOpenAIWSConnClosed
 	}
 	generation := uint64(0)
 	if msgType == coderws.MessageText && strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
-		generation = c.armDeadline(payload)
+		if c.limitAttempts {
+			if err := consumeOpenAIRequestAttempt(ctx); err != nil {
+				return err
+			}
+		}
+		generation = c.armTurnDeadline()
 	}
 	if err := c.inner.WriteFrame(ctx, msgType, payload); err != nil {
 		c.disarmDeadline(generation)
@@ -483,37 +462,29 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) WriteFrame(ctx context.Context
 	return nil
 }
 
-func (c *openAIWSPassthroughFirstOutputFrameConn) Close() error {
+func (c *openAIWSPassthroughActivityFrameConn) Close() error {
 	if c == nil || c.inner == nil {
 		return nil
 	}
 	return c.inner.Close()
 }
 
-func (c *openAIWSPassthroughFirstOutputFrameConn) armDeadline(payload []byte) uint64 {
-	if c == nil || c.resolveDeadline == nil {
+func (c *openAIWSPassthroughActivityFrameConn) armTurnDeadline() uint64 {
+	if c == nil {
 		return 0
 	}
-	deadline := c.resolveDeadline(payload)
-	if deadline.timeout <= 0 {
-		return 0
-	}
-	if deadline.startedAt.IsZero() {
-		deadline.startedAt = time.Now()
-	}
-	deadline.phase = openAIWSPassthroughDeadlinePhaseFirstSemantic
 	c.mu.Lock()
 	c.state.generation++
 	generation := c.state.generation
-	c.state.armed = true
-	c.state.deadline = deadline
+	c.state.armed = c.activeReadTimeout > 0
+	c.state.deadline = openAIWSPassthroughActivityDeadline{timeout: c.activeReadTimeout, startedAt: time.Now()}
 	c.stageDownstream = true
 	c.mu.Unlock()
 	c.notifyDeadlineChanged()
 	return generation
 }
 
-func (c *openAIWSPassthroughFirstOutputFrameConn) observeUpstreamActivity(msgType coderws.MessageType, payload []byte) {
+func (c *openAIWSPassthroughActivityFrameConn) observeUpstreamActivity(msgType coderws.MessageType, payload []byte) {
 	if c == nil {
 		return
 	}
@@ -521,17 +492,10 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) observeUpstreamActivity(msgTyp
 		c.disarmDeadline(0)
 		return
 	}
-	state := c.deadlineState()
-	if state.armed && state.deadline.phase == openAIWSPassthroughDeadlinePhaseActiveRead {
-		c.armActiveReadDeadline()
-		return
-	}
-	if msgType == coderws.MessageText && openAIWSPassthroughStartsSemanticOutput(payload) {
-		c.armActiveReadDeadline()
-	}
+	c.armActiveReadDeadline()
 }
 
-func (c *openAIWSPassthroughFirstOutputFrameConn) armActiveReadDeadline() {
+func (c *openAIWSPassthroughActivityFrameConn) armActiveReadDeadline() {
 	if c == nil {
 		return
 	}
@@ -542,16 +506,15 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) armActiveReadDeadline() {
 	c.mu.Lock()
 	c.state.generation++
 	c.state.armed = true
-	c.state.deadline = openAIWSPassthroughFirstOutputDeadline{
+	c.state.deadline = openAIWSPassthroughActivityDeadline{
 		timeout:   c.activeReadTimeout,
 		startedAt: time.Now(),
-		phase:     openAIWSPassthroughDeadlinePhaseActiveRead,
 	}
 	c.mu.Unlock()
 	c.notifyDeadlineChanged()
 }
 
-func (c *openAIWSPassthroughFirstOutputFrameConn) disarmDeadline(generation uint64) {
+func (c *openAIWSPassthroughActivityFrameConn) disarmDeadline(generation uint64) {
 	if c == nil {
 		return
 	}
@@ -568,7 +531,7 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) disarmDeadline(generation uint
 	c.notifyDeadlineChanged()
 }
 
-func (c *openAIWSPassthroughFirstOutputFrameConn) shouldCommitDownstream(msgType coderws.MessageType, payload []byte) bool {
+func (c *openAIWSPassthroughActivityFrameConn) shouldCommitDownstream(msgType coderws.MessageType, payload []byte) bool {
 	if c == nil {
 		return true
 	}
@@ -584,8 +547,8 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) shouldCommitDownstream(msgType
 	eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
 	// response.created exposes the response ID needed by response.cancel and is
 	// therefore part of the public WS control protocol. Once it is forwarded,
-	// this turn must not be replayed on another account; the semantic-output
-	// deadline remains armed and will close the client cleanly if output stalls.
+	// this turn must not be replayed on another account. The independent
+	// upstream-activity deadline remains armed until a terminal frame.
 	committable := eventType == "response.created" ||
 		openAIStreamDataStartsClientOutput(string(payload), eventType) ||
 		isOpenAIWSTerminalEvent(eventType)
@@ -595,16 +558,16 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) shouldCommitDownstream(msgType
 	return committable
 }
 
-func (c *openAIWSPassthroughFirstOutputFrameConn) deadlineState() openAIWSPassthroughFirstOutputDeadlineState {
+func (c *openAIWSPassthroughActivityFrameConn) deadlineState() openAIWSPassthroughActivityDeadlineState {
 	if c == nil {
-		return openAIWSPassthroughFirstOutputDeadlineState{}
+		return openAIWSPassthroughActivityDeadlineState{}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.state
 }
 
-func (c *openAIWSPassthroughFirstOutputFrameConn) notifyDeadlineChanged() {
+func (c *openAIWSPassthroughActivityFrameConn) notifyDeadlineChanged() {
 	if c == nil || c.deadlineChanged == nil {
 		return
 	}
@@ -612,11 +575,6 @@ func (c *openAIWSPassthroughFirstOutputFrameConn) notifyDeadlineChanged() {
 	case c.deadlineChanged <- struct{}{}:
 	default:
 	}
-}
-
-func openAIWSPassthroughStartsSemanticOutput(payload []byte) bool {
-	eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
-	return openAIStreamDataStartsClientOutput(string(payload), eventType) || isOpenAIWSTerminalEvent(eventType)
 }
 
 func openAIWSPassthroughIsTerminalOutput(payload []byte) bool {
@@ -629,7 +587,7 @@ func openAIWSPassthroughIsTerminalOutput(payload []byte) bool {
 }
 
 var _ openaiwsv2.FrameConn = (*openAIWSClientFrameConn)(nil)
-var _ openaiwsv2.FrameConn = (*openAIWSPassthroughFirstOutputFrameConn)(nil)
+var _ openaiwsv2.FrameConn = (*openAIWSPassthroughActivityFrameConn)(nil)
 
 func (c *openAIWSClientFrameConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
 	if c == nil || c.conn == nil {
@@ -942,6 +900,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		dialCtx, cancelDial := context.WithTimeout(ctx, s.openAIWSDialTimeout())
 		upstreamConn, statusCode, handshakeHeaders, err = dialer.Dial(dialCtx, wsURL, headers, proxyURL)
 		cancelDial()
+		if account.UsesOpenAICodexProtocol() && !account.IsShadow() {
+			s.UpdateCodexUsageSnapshotFromHeaders(ctx, account.ID, handshakeHeaders)
+		}
 		if err == nil {
 			break
 		}
@@ -985,36 +946,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if !ok {
 		return errors.New("openai ws passthrough upstream connection does not support frame relay")
 	}
-	relayUpstreamFrameConn := &openAIWSPassthroughFirstOutputFrameConn{
+	relayUpstreamFrameConn := &openAIWSPassthroughActivityFrameConn{
+		limitAttempts:     codexAdaptiveAccountEligible(account),
 		inner:             upstreamFrameConn,
 		activeReadTimeout: s.openAIWSPassthroughIdleTimeout(),
 		deadlineChanged:   make(chan struct{}, 1),
-		resolveDeadline: func(payload []byte) openAIWSPassthroughFirstOutputDeadline {
-			reasoningEffort := ""
-			if current := usageMeta.reasoningEffort.Load(); current != nil {
-				reasoningEffort = *current
-			}
-			model := openAIWSPassthroughRequestModelForFrame(payload)
-			if model == "" {
-				model = usageMeta.requestModelForFrame(payload)
-			}
-			if model == "" {
-				model = requestModel
-			}
-			// Remote compaction can legitimately spend several minutes without a
-			// semantic frame. Keep the established WS idle guard, but do not apply
-			// the shorter adaptive first-output deadline to a compaction turn.
-			timeout := codexAdaptiveWSFirstOutputTimeout(ctx, account, payload, model, reasoningEffort)
-			if timeout <= 0 {
-				timeout = s.openAIWSPassthroughIdleTimeout()
-			}
-			return openAIWSPassthroughFirstOutputDeadline{
-				timeout:         timeout,
-				startedAt:       time.Now(),
-				requestModel:    model,
-				reasoningEffort: reasoningEffort,
-			}
-		},
 	}
 
 	completedTurns := atomic.Int32{}
@@ -1350,7 +1286,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				if context.Cause(ctx) != nil {
 					return
 				}
-				status, reason, ok := openAIWSPassthroughRelayClientClose(exit, int(completedTurns.Load()))
+				status, reason, ok := openAIWSPassthroughRelayClientClose(exit)
 				if !ok {
 					return
 				}
@@ -1360,9 +1296,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				if openAIWSPassthroughShouldEmitFailureEvent(exit) && turnLifecycle.hasInFlightTurn() {
 					responseID, _ := activeResponseID.Load().(string)
 					failureMessage := "upstream websocket disconnected before response.completed"
-					var timeoutErr *openAIWSPassthroughFirstOutputTimeoutError
-					if errors.As(exit.Err, &timeoutErr) {
-						failureMessage = "upstream produced no semantic output before the configured deadline"
+					var activeTurnTimeoutErr *openAIWSPassthroughActiveTurnTimeoutError
+					if errors.As(exit.Err, &activeTurnTimeoutErr) {
+						failureMessage = "upstream websocket read timeout before response.completed"
 					}
 					if eventBytes := buildOpenAIWSFailureEvent(responseID, loadCapturedSessionModel(), failureMessage); eventBytes != nil {
 						writeCtx, cancelWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
@@ -1515,34 +1451,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	)
 
 	relayErr := relayExit.Err
-	var firstOutputTimeoutErr *openAIWSPassthroughFirstOutputTimeoutError
-	if errors.As(relayErr, &firstOutputTimeoutErr) {
-		deadline := firstOutputTimeoutErr.deadline
-		failoverErr := s.newOpenAIFirstOutputTimeoutError(
-			ctx,
-			c,
-			account,
-			deadline.startedAt,
-			deadline.requestModel,
-			deadline.reasoningEffort,
-			deadline.timeout,
-			"websocket_first_semantic_output",
-			handshakeHeaders,
-		)
-		if turnCount == 0 && !relayExit.WroteDownstream {
-			relayErr = failoverErr
-		} else {
-			// The handler only retains the initial response.create across
-			// account attempts. Replaying it after a later-turn timeout would
-			// duplicate the first turn, so later turns end the client session.
-			s.ApplyCodexAdaptiveFailoverPolicy(ctx, account, deadline.requestModel, failoverErr)
-			relayErr = NewOpenAIWSRequestScopedClientCloseError(
-				coderws.StatusGoingAway,
-				"upstream produced no semantic output; please reconnect",
-				firstOutputTimeoutErr,
-			)
-		}
-	}
 	if errors.Is(relayErr, openaiwsv2.ErrDownstreamStageLimit) && !relayExit.WroteDownstream {
 		failoverErr := s.newOpenAIStreamFailoverError(
 			c, account, true, openAIWSHeaderValueForLog(handshakeHeaders, "x-request-id"), nil,
@@ -1580,7 +1488,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	return turnErr
 }
 
-func openAIWSPassthroughRelayClientClose(exit openaiwsv2.RelayExit, completedTurns int) (coderws.StatusCode, string, bool) {
+func openAIWSPassthroughRelayClientClose(exit openaiwsv2.RelayExit) (coderws.StatusCode, string, bool) {
 	var closeErr *OpenAIWSClientCloseError
 	if errors.As(exit.Err, &closeErr) {
 		return closeErr.StatusCode(), closeErr.Reason(), true
@@ -1588,13 +1496,6 @@ func openAIWSPassthroughRelayClientClose(exit openaiwsv2.RelayExit, completedTur
 	var activeTurnTimeoutErr *openAIWSPassthroughActiveTurnTimeoutError
 	if errors.As(exit.Err, &activeTurnTimeoutErr) {
 		return coderws.StatusGoingAway, "upstream websocket read timeout; please reconnect", true
-	}
-	var firstOutputTimeoutErr *openAIWSPassthroughFirstOutputTimeoutError
-	if errors.As(exit.Err, &firstOutputTimeoutErr) {
-		if completedTurns > 0 || exit.WroteDownstream {
-			return coderws.StatusGoingAway, "upstream produced no semantic output; please reconnect", true
-		}
-		return 0, "", false
 	}
 	if !exit.Graceful && exit.Stage == "read_upstream" {
 		return coderws.StatusInternalError, "upstream websocket proxy failed", true

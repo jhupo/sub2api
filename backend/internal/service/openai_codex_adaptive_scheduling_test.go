@@ -85,18 +85,21 @@ func (s *codexAdaptivePressureCacheStub) GetCodexAdaptivePressureBatch(_ context
 	return result, nil
 }
 
-func codexAdaptivePolicyContext(compact bool) context.Context {
+func codexAdaptivePolicyContext() context.Context {
 	return context.WithValue(context.Background(), codexAdaptiveRequestContextKey{}, &codexAdaptiveRequestState{
 		model:         "gpt-5.6-sol",
-		compact:       compact,
 		sessionMember: "session-member",
-		settings: CodexAdaptiveSchedulingSettings{
-			Enabled:                             true,
-			NormalFirstOutputTimeoutSeconds:     90,
-			HighEffortFirstOutputTimeoutSeconds: 240,
-		},
-		pressures: make(map[codexAdaptivePressureScope]int),
+		pressures:     make(map[codexAdaptivePressureScope]int),
 	})
+}
+
+func codexAdaptiveCapacityShedError() *UpstreamFailoverError {
+	return &UpstreamFailoverError{
+		StatusCode:             http.StatusServiceUnavailable,
+		ResponseBody:           []byte(`{"error":{"code":"server_is_overloaded"}}`),
+		RequestScopedTransient: true,
+		Reason:                 openAIUpstreamCapacityShedReason,
+	}
 }
 
 func TestCodexAdaptiveAccountEligibility(t *testing.T) {
@@ -124,21 +127,6 @@ func TestCodexAdaptiveAccountEligibility(t *testing.T) {
 	}
 }
 
-func TestCodexAdaptiveFirstOutputTimeoutSkipsCompressionAndThirdPartyKeys(t *testing.T) {
-	ctx := codexAdaptivePolicyContext(false)
-	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
-	officialAPIKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
-	thirdParty := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://relay.example/v1"}}
-
-	require.Equal(t, 90*time.Second, codexAdaptiveFirstOutputTimeout(ctx, oauth, "gpt-5.6-sol", "medium"))
-	require.Equal(t, 240*time.Second, codexAdaptiveFirstOutputTimeout(ctx, oauth, "gpt-5.6-sol", "high"))
-	require.Equal(t, 90*time.Second, codexAdaptiveFirstOutputTimeout(ctx, officialAPIKey, "gpt-5.6-sol", "medium"))
-	require.Zero(t, codexAdaptiveFirstOutputTimeout(codexAdaptivePolicyContext(true), oauth, "gpt-5.6-sol", "high"))
-	require.Zero(t, codexAdaptiveFirstOutputTimeout(ctx, thirdParty, "gpt-5.6-sol", "high"))
-	compactFrame := []byte(`{"type":"response.create","model":"gpt-5.6-sol","input":[{"type":"compaction_trigger"}]}`)
-	require.Zero(t, codexAdaptiveWSFirstOutputTimeout(ctx, oauth, compactFrame, "gpt-5.6-sol", "high"))
-}
-
 func TestCodexAdaptiveConcurrencyNeverRemovesLastSlot(t *testing.T) {
 	require.Equal(t, 20, codexAdaptiveConcurrencyLimit(20, 0))
 	require.Equal(t, 20, codexAdaptiveConcurrencyLimit(20, 1))
@@ -161,7 +149,7 @@ func TestCodexAdaptiveLoadFactorChangesOnlyWhenAdmissionIsReduced(t *testing.T) 
 
 	require.Equal(t, 50, svc.codexAdaptiveEffectiveLoadFactor(context.Background(), account, "gpt-5.6-sol"))
 
-	ctx := codexAdaptivePolicyContext(false)
+	ctx := codexAdaptivePolicyContext()
 	state := codexAdaptiveRequestFromContext(ctx)
 	scope := codexAdaptivePressureScopeFor(account.ID, "gpt-5.6-sol")
 	state.pressures[scope] = 1
@@ -175,7 +163,7 @@ func TestCodexAdaptiveLoadFactorChangesOnlyWhenAdmissionIsReduced(t *testing.T) 
 }
 
 func TestCodexAdaptivePressureIsolatedByAccountAndModel(t *testing.T) {
-	ctx := codexAdaptivePolicyContext(false)
+	ctx := codexAdaptivePolicyContext()
 	state := codexAdaptiveRequestFromContext(ctx)
 	state.pressures[codexAdaptivePressureScopeFor(1, "gpt-5.6-sol")] = 2
 	state.pressures[codexAdaptivePressureScopeFor(1, "gpt-5.6-terra")] = 3
@@ -189,20 +177,41 @@ func TestCodexAdaptivePressureIsolatedByAccountAndModel(t *testing.T) {
 	require.Equal(t, 20, svc.codexAdaptiveEffectiveConcurrency(ctx, accountTwo, "gpt-5.6-sol", accountTwo.Concurrency))
 }
 
+func TestCodexAdaptivePressureReducesAdmissionWithoutClosingAccount(t *testing.T) {
+	cache := &codexAdaptivePressureCacheStub{pressureByModel: map[string]map[int64]int{
+		"gpt-5.6-sol": {1: 3},
+	}}
+	svc := &OpenAIGatewayService{concurrencyService: NewConcurrencyService(cache)}
+	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 20}
+	ctx := codexAdaptivePolicyContext()
+
+	require.Equal(t, 7, svc.codexAdaptiveEffectiveConcurrency(ctx, account, "gpt-5.6-sol", account.Concurrency))
+	require.Equal(t, 1, cache.batchCalls["gpt-5.6-sol"])
+
+	require.Equal(t, 7, svc.codexAdaptiveEffectiveConcurrency(ctx, account, "gpt-5.6-sol", account.Concurrency))
+	compactErr := codexAdaptiveCapacityShedError()
+	require.True(t, svc.ApplyCodexAdaptiveFailoverPolicy(ctx, account, "gpt-5.6-sol", compactErr))
+	require.True(t, compactErr.RetryableOnSameAccount)
+	require.Equal(t, 1, compactErr.SameAccountRetryMax)
+	require.Equal(t, 1, cache.failures)
+
+	require.Equal(t, 5, svc.codexAdaptiveEffectiveConcurrency(ctx, account, "gpt-5.6-sol", account.Concurrency))
+}
+
 func TestCodexAdaptiveSessionPressureIdentityIsolatedByAPIKey(t *testing.T) {
-	repo := &codexAdaptiveSettingRepoStub{value: `{"enabled":true,"normal_first_output_timeout_seconds":90,"high_effort_first_output_timeout_seconds":240}`}
+	repo := &codexAdaptiveSettingRepoStub{value: `{"enabled":true}`}
 	settingsService := NewSettingService(repo, &config.Config{})
 	settingsService.WarmCodexAdaptiveSchedulingSettings(context.Background())
 	gateway := &OpenAIGatewayService{settingService: settingsService}
 
 	first := codexAdaptiveRequestFromContext(gateway.PrepareCodexAdaptiveSchedulingRequest(
-		context.Background(), 101, "shared-session", "gpt-5.6-sol", false,
+		context.Background(), 101, "shared-session", "gpt-5.6-sol",
 	))
 	sameTenant := codexAdaptiveRequestFromContext(gateway.PrepareCodexAdaptiveSchedulingRequest(
-		context.Background(), 101, "shared-session", "gpt-5.6-sol", false,
+		context.Background(), 101, "shared-session", "gpt-5.6-sol",
 	))
 	otherTenant := codexAdaptiveRequestFromContext(gateway.PrepareCodexAdaptiveSchedulingRequest(
-		context.Background(), 202, "shared-session", "gpt-5.6-sol", false,
+		context.Background(), 202, "shared-session", "gpt-5.6-sol",
 	))
 
 	require.NotNil(t, first)
@@ -216,7 +225,7 @@ func TestCodexAdaptivePolicyRecordsOnlyRecognizedPressure(t *testing.T) {
 	cache := &codexAdaptivePressureCacheStub{}
 	svc := &OpenAIGatewayService{concurrencyService: NewConcurrencyService(cache)}
 	account := &Account{ID: 11, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 20}
-	ctx := codexAdaptivePolicyContext(false)
+	ctx := codexAdaptivePolicyContext()
 	svc.ObserveCodexAdaptiveSuccess(ctx, account, "gpt-5.6-sol")
 	require.Zero(t, cache.successes, "the no-pressure success path must not write Redis")
 
@@ -224,34 +233,23 @@ func TestCodexAdaptivePolicyRecordsOnlyRecognizedPressure(t *testing.T) {
 	require.False(t, svc.ApplyCodexAdaptiveFailoverPolicy(ctx, account, "gpt-5.6-sol", ordinary))
 	require.Zero(t, cache.failures)
 
-	overload := &UpstreamFailoverError{
-		StatusCode:             http.StatusServiceUnavailable,
-		ResponseBody:           []byte(`{"error":{"code":"server_is_overloaded"}}`),
-		RequestScopedTransient: true,
-		Reason:                 openAIUpstreamCapacityShedReason,
-	}
+	overload := codexAdaptiveCapacityShedError()
 	require.True(t, svc.ApplyCodexAdaptiveFailoverPolicy(ctx, account, "gpt-5.6-sol", overload))
 	require.True(t, overload.RetryableOnSameAccount)
 	require.Equal(t, 1, overload.SameAccountRetryMax)
 	require.Equal(t, 1, cache.failures)
 
-	timeout := &UpstreamFailoverError{Reason: CodexFirstOutputTimeoutReason}
-	require.True(t, svc.ApplyCodexAdaptiveFailoverPolicy(ctx, account, "gpt-5.6-sol", timeout))
-	require.False(t, timeout.RetryableOnSameAccount)
-	require.Zero(t, timeout.SameAccountRetryMax)
+	ordinaryServerError := &UpstreamFailoverError{StatusCode: http.StatusServiceUnavailable, Reason: GatewayFailureReason("upstream_server_error")}
+	require.False(t, svc.ApplyCodexAdaptiveFailoverPolicy(ctx, account, "gpt-5.6-sol", ordinaryServerError))
+	require.Equal(t, 1, cache.failures)
+
+	compactOverload := codexAdaptiveCapacityShedError()
+	require.True(t, svc.ApplyCodexAdaptiveFailoverPolicy(codexAdaptivePolicyContext(), account, "gpt-5.6-sol", compactOverload))
 	require.Equal(t, 2, cache.failures)
 
-	compactTimeout := &UpstreamFailoverError{Reason: CodexFirstOutputTimeoutReason}
-	require.False(t, svc.ApplyCodexAdaptiveFailoverPolicy(codexAdaptivePolicyContext(true), account, "gpt-5.6-sol", compactTimeout))
-	require.Equal(t, 2, cache.failures)
-	compactOverload := &UpstreamFailoverError{
-		StatusCode:             http.StatusServiceUnavailable,
-		ResponseBody:           []byte(`{"error":{"code":"server_is_overloaded"}}`),
-		RequestScopedTransient: true,
-		Reason:                 openAIUpstreamCapacityShedReason,
-	}
-	require.True(t, svc.ApplyCodexAdaptiveFailoverPolicy(codexAdaptivePolicyContext(true), account, "gpt-5.6-sol", compactOverload))
-	require.Equal(t, 3, cache.failures, "compact requests only contribute explicit upstream capacity signals")
+	thirdParty := &Account{ID: 12, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://relay.example/v1"}}
+	require.False(t, svc.ApplyCodexAdaptiveFailoverPolicy(ctx, thirdParty, "gpt-5.6-sol", codexAdaptiveCapacityShedError()))
+	require.Equal(t, 2, cache.failures, "custom relay API keys must not change adaptive pressure")
 
 	svc.ObserveCodexAdaptiveSuccess(ctx, account, "gpt-5.6-sol")
 	require.Equal(t, 1, cache.successes)
@@ -261,7 +259,7 @@ func TestCodexAdaptiveWebSocketCapacityFailureRecordsPressure(t *testing.T) {
 	cache := &codexAdaptivePressureCacheStub{}
 	svc := &OpenAIGatewayService{concurrencyService: NewConcurrencyService(cache)}
 	account := &Account{ID: 12, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 20}
-	ctx := codexAdaptivePolicyContext(false)
+	ctx := codexAdaptivePolicyContext()
 	payload := []byte(`{"type":"response.failed","response":{"error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}}`)
 
 	require.True(t, svc.handleOpenAIWSFailureAccountSideEffects(ctx, account, "gpt-5.6-sol", nil, payload))
@@ -275,7 +273,7 @@ func TestCodexAdaptivePressurePrefetchBatchesByMappedModel(t *testing.T) {
 		"gpt-5.6-terra": {3: 4},
 	}}
 	svc := &OpenAIGatewayService{concurrencyService: NewConcurrencyService(cache)}
-	ctx := codexAdaptivePolicyContext(false)
+	ctx := codexAdaptivePolicyContext()
 	accounts := []*Account{
 		{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
 		{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
@@ -296,7 +294,7 @@ func TestCodexAdaptivePressurePrefetchBatchesByMappedModel(t *testing.T) {
 func TestCodexAdaptivePressurePrefetchFailsOpenOncePerRequest(t *testing.T) {
 	cache := &codexAdaptivePressureCacheStub{batchErr: errors.New("redis unavailable")}
 	svc := &OpenAIGatewayService{concurrencyService: NewConcurrencyService(cache)}
-	ctx := codexAdaptivePolicyContext(false)
+	ctx := codexAdaptivePolicyContext()
 	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 
 	svc.prefetchCodexAdaptivePressures(ctx, []*Account{account}, "gpt-5.6-sol")
@@ -309,7 +307,7 @@ func TestCodexAdaptivePressureSnapshotRefreshesBetweenWebSocketTurns(t *testing.
 		"gpt-5.6-sol": {1: 2},
 	}}
 	svc := &OpenAIGatewayService{concurrencyService: NewConcurrencyService(cache)}
-	ctx := codexAdaptivePolicyContext(false)
+	ctx := codexAdaptivePolicyContext()
 	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 
 	require.Equal(t, 2, svc.codexAdaptivePressure(ctx, account, "gpt-5.6-sol"))
@@ -322,37 +320,32 @@ func TestCodexAdaptivePressureSnapshotRefreshesBetweenWebSocketTurns(t *testing.
 }
 
 func TestCodexAdaptiveSettingsPublishRequestScopedSnapshot(t *testing.T) {
-	repo := &codexAdaptiveSettingRepoStub{value: `{"enabled":true,"normal_first_output_timeout_seconds":90,"high_effort_first_output_timeout_seconds":240}`}
+	repo := &codexAdaptiveSettingRepoStub{value: `{"enabled":true}`}
 	settingsService := NewSettingService(repo, &config.Config{})
 	warmed := settingsService.WarmCodexAdaptiveSchedulingSettings(context.Background())
 	require.True(t, warmed.Enabled)
 
 	gateway := &OpenAIGatewayService{settingService: settingsService}
-	ctx := gateway.PrepareCodexAdaptiveSchedulingRequest(context.Background(), 7, "session", "gpt-5.6-sol", false)
+	ctx := gateway.PrepareCodexAdaptiveSchedulingRequest(context.Background(), 7, "session", "gpt-5.6-sol")
 	state := codexAdaptiveRequestFromContext(ctx)
 	require.NotNil(t, state)
-	require.Equal(t, 90, state.settings.NormalFirstOutputTimeoutSeconds)
 
 	require.NoError(t, settingsService.SetCodexAdaptiveSchedulingSettings(context.Background(), DefaultCodexAdaptiveSchedulingSettings()))
 	require.Nil(t, codexAdaptiveRequestFromContext(gateway.PrepareCodexAdaptiveSchedulingRequest(
-		context.Background(), 7, "session", "gpt-5.6-sol", false,
+		context.Background(), 7, "session", "gpt-5.6-sol",
 	)))
-	require.True(t, state.settings.Enabled, "an in-flight request keeps its frozen policy")
+	require.Same(t, state, codexAdaptiveRequestFromContext(ctx), "an in-flight request keeps its frozen policy state")
 }
 
 func TestCodexAdaptiveHotPathServesStaleSnapshotWithoutBlocking(t *testing.T) {
 	block := make(chan struct{})
 	repo := &codexAdaptiveSettingRepoStub{
-		value: `{"enabled":false,"normal_first_output_timeout_seconds":90,"high_effort_first_output_timeout_seconds":240}`,
+		value: `{"enabled":false}`,
 		block: block,
 	}
 	settingsService := NewSettingService(repo, &config.Config{})
 	settingsService.codexAdaptiveSchedulingCache.Store(&cachedCodexAdaptiveSchedulingSettings{
-		settings: CodexAdaptiveSchedulingSettings{
-			Enabled:                             true,
-			NormalFirstOutputTimeoutSeconds:     90,
-			HighEffortFirstOutputTimeoutSeconds: 240,
-		},
+		settings:  CodexAdaptiveSchedulingSettings{Enabled: true},
 		expiresAt: time.Now().Add(-time.Second).UnixNano(),
 	})
 
@@ -361,4 +354,68 @@ func TestCodexAdaptiveHotPathServesStaleSnapshotWithoutBlocking(t *testing.T) {
 	require.Less(t, time.Since(started), 100*time.Millisecond)
 	require.True(t, snapshot.Enabled)
 	close(block)
+}
+
+func TestCodexAdaptiveStickyMigrationCommitsOnlyAfterSuccessfulFailover(t *testing.T) {
+	const sessionHash = "adaptive-migration"
+	cache := newCodexMigrationTestCache(sessionHash, 1)
+	svc := &OpenAIGatewayService{cache: cache}
+	ctx := codexAdaptivePolicyContext()
+	state := codexAdaptiveRequestFromContext(ctx)
+	state.sessionHash = sessionHash
+	accountA := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	accountB := &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	require.True(t, svc.ApplyCodexAdaptiveFailoverPolicy(ctx, accountA, "gpt-5.6-sol", codexAdaptiveCapacityShedError()))
+	require.True(t, codexAdaptiveStickyMigrationPending(ctx))
+	require.NoError(t, svc.BindStickySessionAfterProfitAdmission(ctx, nil, sessionHash, accountB.ID))
+	require.Equal(t, accountA.ID, cache.sessionBindings["openai:"+sessionHash], "candidate selection must not migrate before success")
+	selection, err := svc.coordinateCodexStickySelection(ctx, OpenAIAccountScheduleRequest{SessionHash: sessionHash}, &AccountSelectionResult{Account: accountB})
+	require.NoError(t, err)
+	require.Equal(t, accountB.ID, selection.Account.ID)
+	t.Cleanup(func() { FinishCodexAdaptiveSchedulingRequest(ctx) })
+
+	require.NoError(t, svc.CommitCodexAdaptiveStickyOnSuccess(ctx, nil, accountB, false))
+	require.Equal(t, accountB.ID, cache.sessionBindings["openai:"+sessionHash])
+	require.False(t, codexAdaptiveStickyMigrationPending(ctx))
+}
+
+func TestCodexAdaptiveStickyMigrationFailureKeepsOriginalBinding(t *testing.T) {
+	const sessionHash = "adaptive-failed-candidate"
+	cache := &stubGatewayCache{sessionBindings: map[string]int64{"openai:" + sessionHash: 1}}
+	svc := &OpenAIGatewayService{cache: cache}
+	ctx := codexAdaptivePolicyContext()
+	state := codexAdaptiveRequestFromContext(ctx)
+	state.sessionHash = sessionHash
+
+	require.True(t, svc.ApplyCodexAdaptiveFailoverPolicy(ctx, openAIFirstOutputTestAccount(1), "gpt-5.6-sol", codexAdaptiveCapacityShedError()))
+	require.NoError(t, svc.BindStickySessionAfterProfitAdmission(ctx, nil, sessionHash, 2))
+	require.Equal(t, int64(1), cache.sessionBindings["openai:"+sessionHash])
+	require.True(t, codexAdaptiveStickyMigrationPending(ctx), "a failed candidate must not consume the pending migration")
+}
+
+func TestCodexAdaptiveStickyMigrationContinuationNeverRebinds(t *testing.T) {
+	const sessionHash = "adaptive-continuation"
+	cache := &stubGatewayCache{sessionBindings: map[string]int64{"openai:" + sessionHash: 1}}
+	svc := &OpenAIGatewayService{cache: cache}
+	ctx := codexAdaptivePolicyContext()
+	state := codexAdaptiveRequestFromContext(ctx)
+	state.sessionHash = sessionHash
+
+	require.True(t, svc.ApplyCodexAdaptiveFailoverPolicy(ctx, openAIFirstOutputTestAccount(1), "gpt-5.6-sol", codexAdaptiveCapacityShedError()))
+	require.NoError(t, svc.CommitCodexAdaptiveStickyOnSuccess(ctx, nil, openAIFirstOutputTestAccount(2), true))
+	require.Equal(t, int64(1), cache.sessionBindings["openai:"+sessionHash])
+	require.False(t, codexAdaptiveStickyMigrationPending(ctx), "a successful continuation must consume request-local migration state")
+}
+
+func TestCodexAdaptiveStickyMigrationIsNotArmedByOrdinaryFailures(t *testing.T) {
+	ctx := codexAdaptivePolicyContext()
+	svc := &OpenAIGatewayService{}
+	account := openAIFirstOutputTestAccount(1)
+
+	require.False(t, svc.ApplyCodexAdaptiveFailoverPolicy(ctx, account, "gpt-5.6-sol", &UpstreamFailoverError{
+		StatusCode: http.StatusTooManyRequests,
+		Reason:     GatewayFailureReason("rate_limit_exceeded"),
+	}))
+	require.False(t, codexAdaptiveStickyMigrationPending(ctx), "ordinary 429 and slow output must not migrate sticky routing")
 }

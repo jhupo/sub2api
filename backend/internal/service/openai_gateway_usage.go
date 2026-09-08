@@ -1034,7 +1034,7 @@ func ParseCodexRateLimitHeaders(headers http.Header) *OpenAICodexUsageSnapshot {
 		return nil
 	}
 
-	snapshot.UpdatedAt = time.Now().Format(time.RFC3339)
+	snapshot.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	return snapshot
 }
 
@@ -1094,7 +1094,8 @@ func buildCodexUsageExtraUpdates(snapshot *OpenAICodexUsageSnapshot, fallbackNow
 	if snapshot.PrimaryOverSecondaryPercent != nil {
 		updates["codex_primary_over_secondary_percent"] = *snapshot.PrimaryOverSecondaryPercent
 	}
-	updates["codex_usage_updated_at"] = baseTime.Format(time.RFC3339)
+	updates["codex_usage_updated_at"] = baseTime.UTC().Format(time.RFC3339Nano)
+	updates["codex_usage_observed_at_us"] = baseTime.UnixMicro()
 
 	// 归一化到 5h/7d 规范字段
 	if normalized := snapshot.Normalize(); normalized != nil {
@@ -1145,31 +1146,72 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 	if len(updates) == 0 {
 		return
 	}
-	if !s.getCodexSnapshotThrottle().Allow(accountID, now) {
-		return
+	s.codexUsageMu.Lock()
+	if s.codexUsagePending == nil {
+		s.codexUsagePending = make(map[int64]map[string]any)
 	}
+	pending, running := s.codexUsagePending[accountID]
+	s.codexUsagePending[accountID] = mergeCodexQuotaObservations(pending, updates)
+	s.codexUsageMu.Unlock()
+	if !running {
+		go s.publishCodexUsageSnapshots(accountID)
+	}
+}
 
-	go func() {
+// Coalescing must have the same merge semantics as publishing observations in
+// order: a partial newer header must not discard another window from the tail.
+func mergeCodexQuotaObservations(left, right map[string]any) map[string]any {
+	if left == nil {
+		return right
+	}
+	if right == nil {
+		return left
+	}
+	if left["codex_usage_observed_at_us"].(int64) > right["codex_usage_observed_at_us"].(int64) {
+		left, right = right, left
+	}
+	merged := shallowCopyMap(left)
+	for key, value := range right {
+		merged[key] = value
+	}
+	return merged
+}
+
+// Coalesce busy accounts without dropping their final observation. Database
+// publication also checks observation order across processes and query paths.
+func (s *OpenAIGatewayService) publishCodexUsageSnapshots(accountID int64) {
+	failures := 0
+	for {
+		s.codexUsageMu.Lock()
+		updates := s.codexUsagePending[accountID]
+		if updates == nil {
+			delete(s.codexUsagePending, accountID)
+			s.codexUsageMu.Unlock()
+			return
+		}
+		s.codexUsagePending[accountID] = nil
+		s.codexUsageMu.Unlock()
 		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
 		if err := s.accountRepo.UpdateExtra(updateCtx, accountID, updates); err != nil {
-			return
-		}
-		notifyOpenAIAutoReset(accountID)
-		if s.codexQuotaOverdraft == nil || (!codexQuotaOverdraftSnapshotPrearmReached(updates) && !codexQuotaOverdraftWasInjected(ctx, accountID)) {
-			return
-		}
-		account, err := s.accountRepo.GetByID(updateCtx, accountID)
-		if err != nil || account == nil || account.IsShadow() {
-			return
-		}
-		mergeAccountExtra(account, updates)
-		if codexQuotaOverdraftWasInjected(ctx, accountID) {
-			s.codexQuotaOverdraft.ObserveBusinessSuccess(account, "")
+			logger.LegacyPrintf("service.openai_gateway", "Codex quota snapshot publication failed: account=%d error=%v", accountID, err)
+			failures++
+			if failures < 3 {
+				s.codexUsageMu.Lock()
+				s.codexUsagePending[accountID] = mergeCodexQuotaObservations(updates, s.codexUsagePending[accountID])
+				s.codexUsageMu.Unlock()
+			}
 		} else {
-			s.codexQuotaOverdraft.ObserveAccount(account, "")
+			failures = 0
+			notifyOpenAIAutoReset(accountID)
+			if s.codexQuotaOverdraft != nil && codexQuotaOverdraftSnapshotPrearmReached(updates) {
+				if account, err := s.accountRepo.GetByID(updateCtx, accountID); err == nil && account != nil && !account.IsShadow() {
+					s.codexQuotaOverdraft.ObserveAccount(account, "")
+				}
+			}
 		}
-	}()
+		cancel()
+		time.Sleep(time.Second)
+	}
 }
 
 func (s *OpenAIGatewayService) UpdateCodexUsageSnapshotFromHeaders(ctx context.Context, accountID int64, headers http.Header) {
@@ -1179,4 +1221,17 @@ func (s *OpenAIGatewayService) UpdateCodexUsageSnapshotFromHeaders(ctx context.C
 	if snapshot := ParseCodexRateLimitHeaders(headers); snapshot != nil {
 		s.updateCodexUsageSnapshot(ctx, accountID, snapshot)
 	}
+}
+
+func codexUsageUpdatesFromResponse(resp *http.Response) (map[string]any, error) {
+	if resp == nil {
+		return nil, nil
+	}
+	if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
+		return buildCodexUsageExtraUpdates(snapshot, time.Now()), nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("OpenAI usage response returned status %d", resp.StatusCode)
+	}
+	return nil, nil
 }

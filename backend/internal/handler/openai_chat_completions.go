@@ -149,8 +149,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	sessionHash := h.gatewayService.GenerateScopedSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
 	c.Request = c.Request.WithContext(h.gatewayService.PrepareCodexAdaptiveSchedulingRequest(
-		c.Request.Context(), apiKey.ID, sessionHash, reqModel, false,
+		c.Request.Context(), apiKey.ID, sessionHash, reqModel,
 	))
+	defer service.FinishCodexAdaptiveSchedulingRequest(c.Request.Context())
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
@@ -451,6 +452,11 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		forwardSucceeded := openAIForwardSucceededForScheduling(result)
 		if forwardSucceeded {
+			if err := h.gatewayService.CommitCodexAdaptiveStickyOnSuccess(
+				c.Request.Context(), apiKey.GroupID, account, false,
+			); err != nil {
+				reqLog.Warn("openai_chat_completions.codex_adaptive_sticky_migration_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+			}
 			h.gatewayService.ObserveCodexAdaptiveSuccess(
 				c.Request.Context(), account,
 				openAIAccountScheduleModel(c, account, reqModel, false, result),

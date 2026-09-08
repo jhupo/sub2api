@@ -487,6 +487,47 @@ func TestPassthroughLifecycle_ActiveTurnActivityRefreshesReadTimeout(t *testing.
 	}
 }
 
+func TestPassthroughLifecycle_PreOutputActivityRefreshesReadTimeout(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	controlCtx, cancelControl := context.WithCancelCause(context.Background())
+	defer cancelControl(context.Canceled)
+	upstream := newStagedPassthroughConn()
+	upstream.Send(`{"type":"response.created","response":{"id":"resp_progress","model":"gpt-5.1"}}`)
+	go func() {
+		for _, event := range []string{
+			`{"type":"response.in_progress","response":{"id":"resp_progress","model":"gpt-5.1"}}`,
+			`{"type":"response.in_progress","response":{"id":"resp_progress","model":"gpt-5.1"}}`,
+			`{"type":"response.completed","response":{"id":"resp_progress","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`,
+		} {
+			timer := time.NewTimer(600 * time.Millisecond)
+			<-timer.C
+			timer.Stop()
+			upstream.Send(event)
+		}
+	}()
+	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream), passthroughLifecycleAccount())
+	defer server.Close()
+	clientConn := dialPassthroughLifecycleClient(t, server)
+	defer func() { _ = clientConn.CloseNow() }()
+
+	for _, wantType := range []string{
+		"response.created",
+		"response.in_progress",
+		"response.in_progress",
+		"response.completed",
+	} {
+		frame, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
+		require.NoError(t, err)
+		require.Equal(t, wantType, gjson.GetBytes(frame, "type").String())
+	}
+	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
+	select {
+	case <-serverErr:
+	case <-time.After(3 * time.Second):
+		t.Fatal("passthrough pre-output activity refresh test did not exit")
+	}
+}
+
 func TestPassthroughLifecycle_TerminalSwitchesToInterTurnIdleTimeout(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	controlCtx, cancelControl := context.WithCancelCause(context.Background())
@@ -532,7 +573,7 @@ func TestPassthroughLifecycle_TerminalSwitchesToInterTurnIdleTimeout(t *testing.
 	}
 }
 
-func TestPassthroughLifecycle_FirstOutputTimeoutRemainsBounded(t *testing.T) {
+func TestPassthroughLifecycle_NoUpstreamActivityUsesReadTimeout(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	controlCtx, cancelControl := context.WithCancelCause(context.Background())
 	defer cancelControl(context.Canceled)
@@ -542,18 +583,27 @@ func TestPassthroughLifecycle_FirstOutputTimeoutRemainsBounded(t *testing.T) {
 	clientConn := dialPassthroughLifecycleClient(t, server)
 	defer func() { _ = clientConn.CloseNow() }()
 
+	failed, err := readPassthroughLifecycleFrame(t, clientConn, 2500*time.Millisecond)
+	require.NoError(t, err)
+	require.Equal(t, "response.failed", gjson.GetBytes(failed, "type").String())
+	_, err = readPassthroughLifecycleFrame(t, clientConn, 2500*time.Millisecond)
+	var websocketCloseErr coderws.CloseError
+	require.ErrorAs(t, err, &websocketCloseErr)
+	require.Equal(t, coderws.StatusGoingAway, websocketCloseErr.Code)
+	require.Equal(t, "upstream websocket read timeout; please reconnect", websocketCloseErr.Reason)
 	select {
 	case err := <-serverErr:
 		var failoverErr *UpstreamFailoverError
-		require.ErrorAs(t, err, &failoverErr)
-		require.Equal(t, http.StatusGatewayTimeout, failoverErr.StatusCode)
-		require.Contains(t, string(failoverErr.ResponseBody), "first_output_timeout")
+		require.NotErrorAs(t, err, &failoverErr, "an idle transport timeout is not an OpenAI capacity signal")
+		var closeErr *OpenAIWSClientCloseError
+		require.ErrorAs(t, err, &closeErr)
+		require.Equal(t, "upstream websocket read timeout; please reconnect", closeErr.Reason())
 	case <-time.After(2500 * time.Millisecond):
-		t.Fatal("passthrough first output was left unbounded")
+		t.Fatal("passthrough upstream inactivity was left unbounded")
 	}
 }
 
-func TestPassthroughLifecycle_ResponseCreatedTimeoutClosesWithoutFailover(t *testing.T) {
+func TestPassthroughLifecycle_ResponseCreatedInactivityClosesWithoutFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	controlCtx, cancelControl := context.WithCancelCause(context.Background())
 	defer cancelControl(context.Canceled)
@@ -575,7 +625,7 @@ func TestPassthroughLifecycle_ResponseCreatedTimeoutClosesWithoutFailover(t *tes
 	var websocketCloseErr coderws.CloseError
 	require.ErrorAs(t, err, &websocketCloseErr)
 	require.Equal(t, coderws.StatusGoingAway, websocketCloseErr.Code)
-	require.Equal(t, "upstream produced no semantic output; please reconnect", websocketCloseErr.Reason)
+	require.Equal(t, "upstream websocket read timeout; please reconnect", websocketCloseErr.Reason)
 	select {
 	case err := <-serverErr:
 		var failoverErr *UpstreamFailoverError
@@ -583,7 +633,7 @@ func TestPassthroughLifecycle_ResponseCreatedTimeoutClosesWithoutFailover(t *tes
 		var closeErr *OpenAIWSClientCloseError
 		require.ErrorAs(t, err, &closeErr)
 		require.Equal(t, coderws.StatusGoingAway, closeErr.StatusCode())
-		require.Equal(t, "upstream produced no semantic output; please reconnect", closeErr.Reason())
+		require.Equal(t, "upstream websocket read timeout; please reconnect", closeErr.Reason())
 	case <-time.After(2500 * time.Millisecond):
 		t.Fatal("response.created timeout did not close the passthrough connection")
 	}
@@ -628,7 +678,7 @@ func TestPassthroughLifecycle_UpstreamCloseBeforeTerminalEmitsResponseFailed(t *
 	}
 }
 
-func TestPassthroughLifecycle_SecondTurnTimeoutIsNotFailoverSafe(t *testing.T) {
+func TestPassthroughLifecycle_SecondTurnInactivityIsNotFailoverSafe(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	controlCtx, cancelControl := context.WithCancelCause(context.Background())
 	defer cancelControl(context.Canceled)
@@ -661,7 +711,7 @@ func TestPassthroughLifecycle_SecondTurnTimeoutIsNotFailoverSafe(t *testing.T) {
 	var websocketCloseErr coderws.CloseError
 	require.ErrorAs(t, err, &websocketCloseErr)
 	require.Equal(t, coderws.StatusGoingAway, websocketCloseErr.Code)
-	require.Equal(t, "upstream produced no semantic output; please reconnect", websocketCloseErr.Reason)
+	require.Equal(t, "upstream websocket read timeout; please reconnect", websocketCloseErr.Reason)
 	select {
 	case err := <-serverErr:
 		var failoverErr *UpstreamFailoverError
@@ -670,7 +720,7 @@ func TestPassthroughLifecycle_SecondTurnTimeoutIsNotFailoverSafe(t *testing.T) {
 		require.ErrorAs(t, err, &closeErr)
 		require.Equal(t, coderws.StatusGoingAway, closeErr.StatusCode())
 	case <-time.After(2500 * time.Millisecond):
-		t.Fatal("second turn first semantic output was left unbounded")
+		t.Fatal("second turn upstream inactivity was left unbounded")
 	}
 }
 

@@ -1038,13 +1038,9 @@ export default {
       },
       codexAdaptiveScheduling: {
         title: 'Codex 自适应过载调度',
-        description: '仅作用于 OpenAI OAuth、Setup Token 与 api.openai.com 官方 API Key；压缩绕过首字上限，自定义中转不参与该策略',
+        description: '适用于 OpenAI OAuth、Setup Token 和官方 API Key，包含压缩请求；仅根据明确的过载错误降载，自定义中转不参与',
         enabled: '启用 Codex 自适应过载调度',
-        enabledHint: '启用后记录真实压力并立即参与调度；不会因单个会话失败暂停整个账号',
-        normalTimeout: '普通请求单次首输出上限（秒）',
-        normalTimeoutHint: '单个账号尝试等待首个可提交输出的最长时间（30-600 秒）；超时会直接换号，换号和容量降载重试可能使整次请求耗时超过此值',
-        highTimeout: '高推理请求单次首输出上限（秒）',
-        highTimeoutHint: 'high、xhigh、max、ultra 的单个账号尝试上限（30-1800 秒）；推理输出或加密状态已开始后不会为追求可见文本而切号',
+        enabledHint: '启用后按账号、模型和独立会话统计真实过载压力，动态降低并发上限；首字耗时只记录，不会中止请求或触发换号',
         saved: 'Codex 自适应过载调度设置保存成功',
         saveFailed: '保存 Codex 自适应过载调度设置失败'
       },

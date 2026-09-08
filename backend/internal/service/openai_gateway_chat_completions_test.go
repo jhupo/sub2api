@@ -76,8 +76,6 @@ func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadError(t *testing.T) {
 		"gpt-5.6-sol",
 		"gpt-5.6-sol",
 		time.Now(),
-		time.Now(),
-		"",
 		0,
 	)
 

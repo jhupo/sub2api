@@ -753,8 +753,6 @@ describe("admin SettingsView payment visible method controls", () => {
     });
     getCodexAdaptiveSchedulingSettings.mockResolvedValue({
       enabled: false,
-      normal_first_output_timeout_seconds: 90,
-      high_effort_first_output_timeout_seconds: 240,
     });
     updateCodexAdaptiveSchedulingSettings.mockImplementation(async (payload) => payload);
     getRectifierSettings.mockResolvedValue({
@@ -1468,8 +1466,6 @@ describe("admin SettingsView payment visible method controls", () => {
   it("loads and saves Codex adaptive scheduling settings", async () => {
     getCodexAdaptiveSchedulingSettings.mockResolvedValueOnce({
       enabled: true,
-      normal_first_output_timeout_seconds: 90,
-      high_effort_first_output_timeout_seconds: 240,
     });
     const wrapper = mountView();
 
@@ -1481,15 +1477,11 @@ describe("admin SettingsView payment visible method controls", () => {
       (card.get('[data-testid="codex-adaptive-scheduling-toggle"]').element as HTMLInputElement)
         .checked,
     ).toBe(true);
-    await card.get('[data-testid="codex-adaptive-normal-timeout"]').setValue(120);
-    await card.get('[data-testid="codex-adaptive-high-timeout"]').setValue(300);
     await card.get('[data-testid="codex-adaptive-scheduling-save"]').trigger("click");
     await flushPromises();
 
     expect(updateCodexAdaptiveSchedulingSettings).toHaveBeenCalledWith({
       enabled: true,
-      normal_first_output_timeout_seconds: 120,
-      high_effort_first_output_timeout_seconds: 300,
     });
   });
 
@@ -1789,8 +1781,6 @@ describe("admin SettingsView wechat connect controls", () => {
     });
     getCodexAdaptiveSchedulingSettings.mockResolvedValue({
       enabled: false,
-      normal_first_output_timeout_seconds: 90,
-      high_effort_first_output_timeout_seconds: 240,
     });
     updateCodexAdaptiveSchedulingSettings.mockImplementation(async (payload) => payload);
     getRectifierSettings.mockResolvedValue({
@@ -2019,8 +2009,6 @@ describe("admin SettingsView platform quota matrix", () => {
     getStreamTimeoutSettings.mockResolvedValue({});
     getCodexAdaptiveSchedulingSettings.mockResolvedValue({
       enabled: false,
-      normal_first_output_timeout_seconds: 90,
-      high_effort_first_output_timeout_seconds: 240,
     });
     updateCodexAdaptiveSchedulingSettings.mockImplementation(async (payload) => payload);
     getRectifierSettings.mockResolvedValue({});

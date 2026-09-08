@@ -968,38 +968,17 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
 	// 国产模型默认 effort 补充：此处 reqModel 已被 mapping 重写为 billingModel。
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, reqModel)
-	reasoningEffortValue := ""
-	if reasoningEffort != nil {
-		reasoningEffortValue = *reasoningEffort
-	}
-	firstOutputTimeout := time.Duration(0)
-	if reqStream && account.Platform == PlatformOpenAI {
-		firstOutputTimeout = codexAdaptiveFirstOutputTimeout(ctx, account, upstreamModel, reasoningEffortValue)
-	}
-
 	httpInvalidEncryptedContentRetryTried := false
 	responsesLiteParallelToolCallsRetryTried := false
 	compactModelFallbackRetried := false
 	agentTaskRecoveryTried := false
 	rejectedFieldRetryState := openAIResponsesRejectedFieldRetryStateForRequest(c, body)
 	for {
-		attemptStartTime := time.Now()
 		// Build upstream request
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-		var headerGuard *openAIFirstOutputHeaderGuard
-		if firstOutputTimeout > 0 {
-			upstreamCtx, headerGuard = newOpenAIFirstOutputHeaderGuard(
-				upstreamCtx, releaseUpstreamCtx, attemptStartTime.Add(firstOutputTimeout),
-			)
-		}
 		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
-		if headerGuard == nil {
-			releaseUpstreamCtx()
-		}
+		releaseUpstreamCtx()
 		if err != nil {
-			if headerGuard != nil {
-				headerGuard.close()
-			}
 			return nil, err
 		}
 
@@ -1013,30 +992,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		upstreamStart := time.Now()
 		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
-		if headerGuard != nil && headerGuard.stopHeaderWait() {
-			if resp != nil && resp.Body != nil {
-				_ = resp.Body.Close()
-			}
-			headerGuard.close()
-			return nil, s.newOpenAIFirstOutputTimeoutError(
-				ctx, c, account, attemptStartTime, originalModel, reasoningEffortValue,
-				firstOutputTimeout, "response_headers", nil,
-			)
-		}
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
-			}
-			if headerGuard != nil {
-				headerGuard.close()
 			}
 			// Transport-level failure (proxy/DNS/TCP/TLS — no HTTP response). Convert to
 			// a failover so the handler switches to a healthy account, and temporarily
 			// unschedule the account on durable faults (e.g. rejected proxy credentials).
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
-		}
-		if headerGuard != nil {
-			resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: headerGuard.close}
 		}
 
 		// Handle error response
@@ -1213,10 +1176,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			return forwardResult
 		}
 		if reqStream {
-			streamResult, err := s.handleStreamingResponseWithReasoning(
-				ctx, resp, c, account, startTime, attemptStartTime,
-				originalModel, upstreamModel, reasoningEffortValue,
-			)
+			streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, upstreamModel)
 			if streamResult != nil {
 				usage = streamResult.usage
 				firstTokenMs = streamResult.firstTokenMs
@@ -1289,16 +1249,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			nonBillableUpstreamError = nonStreamResult.nonBillableUpstreamError
 		}
 		s.bindHTTPResponseAccount(ctx, c, account, responseID)
-
-		// Extract and save Codex usage snapshot from response headers (for OAuth accounts).
-		// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
-		if account.UsesOpenAICodexProtocol() && !account.IsShadow() {
-			if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
-				s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
-			}
-		} else if account.IsShadow() && account.ParentAccountID != nil {
-			notifyOpenAIAutoReset(*account.ParentAccountID)
-		}
 
 		return buildForwardResult(), nil
 	}

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/sha256"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,7 +19,7 @@ const openAICodexTurnStateHeader = "x-codex-turn-state"
 // turn-state blob 是上游在"出站身份"（含 #5553 指纹收敛改写后的
 // installation/session/thread 标识）下铸造的，同账号回放自洽；跨账号回放
 // （failover 换号后客户端仍回带旧账号的 blob）是代理链独有、真实 Codex
-// 永远不会产生的矛盾信号。溯源表记录每个下游会话最近一次铸造该 blob 的
+// 永远不会产生的矛盾信号。溯源表独立记录每个下游会话中铸造各个 blob 的
 // 账号，出站守卫据此剥离已知异账号的回带值。
 type openAICodexTurnStateOrigin struct {
 	accountID int64
@@ -56,12 +57,12 @@ func (s *OpenAIGatewayService) relayOpenAICodexTurnState(c *gin.Context, account
 		return
 	}
 	c.Writer.Header().Set(canonical, state)
-	s.noteOpenAICodexTurnStateProvenance(c, account)
+	s.noteOpenAICodexTurnStateProvenance(c, account, state)
 }
 
 // stageOpenAICodexTurnState 将上游 turn-state 暂存到延迟提交的响应头集合
-// （首输出守卫路径先缓存头、见到首个输出事件才提交）。此处**不**记录铸造
-// 账号：该 attempt 仍可能在首输出超时后 failover，暂存头会被整体丢弃，
+// （先缓存头，在首个输出事件或心跳时提交）。此处**不**记录铸造
+// 账号：该 attempt 仍可能在提交前遇到上游错误并 failover，暂存头会被整体丢弃，
 // 客户端从未收到该 blob。溯源必须在真正提交时记录，见
 // noteStagedOpenAICodexTurnStateCommitted。
 func stageOpenAICodexTurnState(dst *http.Header, upstream http.Header) {
@@ -89,7 +90,7 @@ func (s *OpenAIGatewayService) noteStagedOpenAICodexTurnStateCommitted(c *gin.Co
 	if staged == nil || strings.TrimSpace(staged.Get(openAICodexTurnStateHeader)) == "" {
 		return
 	}
-	s.noteOpenAICodexTurnStateProvenance(c, account)
+	s.noteOpenAICodexTurnStateProvenance(c, account, staged.Get(openAICodexTurnStateHeader))
 }
 
 func extractOpenAICodexTurnState(upstream http.Header) string {
@@ -99,12 +100,13 @@ func extractOpenAICodexTurnState(upstream http.Header) string {
 	return strings.TrimSpace(upstream.Get(openAICodexTurnStateHeader))
 }
 
-// noteOpenAICodexTurnStateProvenance 记录（下游会话 → 铸造账号）。
-func (s *OpenAIGatewayService) noteOpenAICodexTurnStateProvenance(c *gin.Context, account *Account) {
+// Track each opaque token independently: concurrent old/new-account responses
+// may complete out of order within the same client session.
+func (s *OpenAIGatewayService) noteOpenAICodexTurnStateProvenance(c *gin.Context, account *Account, state string) {
 	if s == nil || account == nil || account.ID <= 0 {
 		return
 	}
-	seed := openAICodexTurnStateSeed(c)
+	seed := openAICodexTurnStateOriginKey(c, state)
 	if seed == "" {
 		return
 	}
@@ -126,7 +128,7 @@ func (s *OpenAIGatewayService) guardOpenAICodexTurnStateEcho(c *gin.Context, acc
 	if strings.TrimSpace(h.Get(openAICodexTurnStateHeader)) == "" {
 		return
 	}
-	seed := openAICodexTurnStateSeed(c)
+	seed := openAICodexTurnStateOriginKey(c, h.Get(openAICodexTurnStateHeader))
 	if seed == "" {
 		return
 	}
@@ -148,6 +150,15 @@ func (s *OpenAIGatewayService) guardOpenAICodexTurnStateEcho(c *gin.Context, acc
 	}
 }
 
+func openAICodexTurnStateOriginKey(c *gin.Context, state string) string {
+	seed := openAICodexTurnStateSeed(c)
+	if seed == "" || strings.TrimSpace(state) == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(strings.TrimSpace(state)))
+	return seed + "\x00" + string(digest[:])
+}
+
 // sweepOpenAICodexTurnStateOrigins 机会式清扫过期溯源记录：每 256 次写入
 // 全量遍历一轮，防止仅靠读侧惰性删除导致的慢泄漏（会话键无上界）。
 func (s *OpenAIGatewayService) sweepOpenAICodexTurnStateOrigins() {
@@ -155,10 +166,13 @@ func (s *OpenAIGatewayService) sweepOpenAICodexTurnStateOrigins() {
 		return
 	}
 	now := time.Now()
+	retained := 0
 	s.openaiCodexTurnStateOrigins.Range(func(key, value any) bool {
 		origin, ok := value.(openAICodexTurnStateOrigin)
-		if !ok || (!origin.expiresAt.IsZero() && now.After(origin.expiresAt)) {
+		if !ok || (!origin.expiresAt.IsZero() && now.After(origin.expiresAt)) || retained >= 32768 {
 			s.openaiCodexTurnStateOrigins.Delete(key)
+		} else {
+			retained++
 		}
 		return true
 	})

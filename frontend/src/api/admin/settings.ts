@@ -1390,8 +1390,6 @@ export async function updateStreamTimeoutSettings(
 
 export interface CodexAdaptiveSchedulingSettings {
   enabled: boolean;
-  normal_first_output_timeout_seconds: number;
-  high_effort_first_output_timeout_seconds: number;
 }
 
 export async function getCodexAdaptiveSchedulingSettings(): Promise<CodexAdaptiveSchedulingSettings> {

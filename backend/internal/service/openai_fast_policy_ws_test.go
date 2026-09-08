@@ -546,7 +546,7 @@ func TestWSResponseCreate_IngressFiltersServiceTierBeforeUpstream(t *testing.T) 
 	require.Equal(t, "gpt-5.5", upstream["model"])
 }
 
-func TestWSIngress_FirstOutputTimeoutAfterResponseCreatedTerminatesWithoutReplay(t *testing.T) {
+func TestWSIngress_ProgressFramesAllowLongFirstOutput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{}
@@ -560,15 +560,17 @@ func TestWSIngress_FirstOutputTimeoutAfterResponseCreatedTerminatesWithoutReplay
 	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
 	cfg.Gateway.OpenAIWS.QueueLimitPerConn = 8
 	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
-	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 1
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 
 	captureConn := &openAIWSCaptureConn{
 		events: [][]byte{
-			[]byte(`{"type":"response.created","response":{"id":"resp_ws_created_timeout","model":"gpt-5.5"}}`),
-			[]byte(`{"type":"response.in_progress","response":{"id":"resp_ws_created_timeout","model":"gpt-5.5"}}`),
+			[]byte(`{"type":"response.created","response":{"id":"resp_ws_slow","model":"gpt-5.5"}}`),
+			[]byte(`{"type":"response.in_progress","response":{"id":"resp_ws_slow","model":"gpt-5.5"}}`),
+			[]byte(`{"type":"response.in_progress","response":{"id":"resp_ws_slow","model":"gpt-5.5"}}`),
+			[]byte(`{"type":"response.completed","response":{"id":"resp_ws_slow","model":"gpt-5.5","usage":{"input_tokens":1,"output_tokens":1}}}`),
 		},
-		readDelays: []time.Duration{0, 3 * time.Second},
+		readDelays: []time.Duration{0, 700 * time.Millisecond, 700 * time.Millisecond, 700 * time.Millisecond},
 	}
 	pool := newOpenAIWSConnPool(cfg)
 	pool.setClientDialerForTest(&openAIWSCaptureDialer{conn: captureConn})
@@ -615,7 +617,7 @@ func TestWSIngress_FirstOutputTimeoutAfterResponseCreatedTerminatesWithoutReplay
 			serverErrCh <- readErr
 			return
 		}
-		adaptiveCtx := withCodexAdaptiveTestPolicy(r.Context(), 1, 1, false)
+		adaptiveCtx := withCodexAdaptiveTestPolicy(r.Context())
 		proxyErr := svc.ProxyResponsesWebSocketFromClient(adaptiveCtx, ginCtx, conn, account, "sk-test", firstMessage, nil)
 		var closeErr *OpenAIWSClientCloseError
 		if errors.As(proxyErr, &closeErr) {
@@ -641,28 +643,20 @@ func TestWSIngress_FirstOutputTimeoutAfterResponseCreatedTerminatesWithoutReplay
 	require.NoError(t, err, "response.created must remain available for prompt response.cancel")
 	require.Equal(t, "response.created", gjson.GetBytes(createdEvent, "type").String())
 
-	failedCtx, cancelFailed := context.WithTimeout(context.Background(), 2*time.Second)
-	_, failedEvent, err := clientConn.Read(failedCtx)
-	cancelFailed()
-	require.NoError(t, err)
-	require.Equal(t, "response.failed", gjson.GetBytes(failedEvent, "type").String())
-	require.Equal(t, "resp_ws_created_timeout", gjson.GetBytes(failedEvent, "response.id").String())
-
-	closeCtx, cancelClose := context.WithTimeout(context.Background(), 2*time.Second)
-	_, _, closeReadErr := clientConn.Read(closeCtx)
-	cancelClose()
-	require.Error(t, closeReadErr)
+	for _, wantType := range []string{"response.in_progress", "response.in_progress", "response.completed"} {
+		readCtx, cancelRead := context.WithTimeout(context.Background(), 2*time.Second)
+		_, event, readErr := clientConn.Read(readCtx)
+		cancelRead()
+		require.NoError(t, readErr)
+		require.Equal(t, wantType, gjson.GetBytes(event, "type").String())
+	}
+	require.NoError(t, clientConn.Close(coderws.StatusNormalClosure, "done"))
 
 	select {
 	case serverErr := <-serverErrCh:
-		var closeErr *OpenAIWSClientCloseError
-		require.ErrorAs(t, serverErr, &closeErr)
-		require.Equal(t, coderws.StatusGoingAway, closeErr.StatusCode())
-		require.True(t, IsOpenAIWSRequestScopedClientCloseError(serverErr))
-		var failoverErr *UpstreamFailoverError
-		require.False(t, errors.As(serverErr, &failoverErr), "a committed response must not re-enter account failover")
+		require.NoError(t, serverErr)
 	case <-time.After(3 * time.Second):
-		t.Fatal("waiting for ingress timeout close")
+		t.Fatal("waiting for ingress websocket close")
 	}
 }
 

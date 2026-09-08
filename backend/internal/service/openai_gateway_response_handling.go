@@ -48,29 +48,11 @@ type openaiNonStreamingResult struct {
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string) (*openaiStreamingResult, error) {
-	return s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, startTime, originalModel, mappedModel, "")
-}
-
-func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(
-	ctx context.Context,
-	resp *http.Response,
-	c *gin.Context,
-	account *Account,
-	requestStartTime time.Time,
-	attemptStartTime time.Time,
-	originalModel string,
-	mappedModel string,
-	reasoningEffort string,
-) (*openaiStreamingResult, error) {
+	requestStartTime := startTime
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
 	}
-	firstOutputTimeout := time.Duration(0)
-	if account != nil && account.Platform == PlatformOpenAI {
-		firstOutputTimeout = codexAdaptiveFirstOutputTimeout(ctx, account, mappedModel, reasoningEffort)
-	}
-	guardFirstOutput := firstOutputTimeout > 0
 	stageFirstOutput := account != nil && account.Platform == PlatformOpenAI
 	var attemptResponseHeaders http.Header
 	if stageFirstOutput {
@@ -100,13 +82,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(
 		c.Header("x-request-id", v)
 	}
 	applyAttemptResponseHeaders := func() {
-		if !stageFirstOutput || len(attemptResponseHeaders) == 0 || c.Writer.Written() {
+		if !stageFirstOutput || c.Writer.Written() {
 			return
 		}
+		c.Writer.Header().Del(openAICodexTurnStateHeader)
 		for key, values := range attemptResponseHeaders {
-			for _, value := range values {
-				c.Writer.Header().Add(key, value)
-			}
+			c.Writer.Header()[key] = append([]string(nil), values...)
 		}
 		// 暂存头此刻才真正写给客户端：turn-state 溯源在这里记录（见
 		// noteStagedOpenAICodexTurnStateCommitted 的 failover 说明）。
@@ -219,20 +200,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(
 		keepaliveCh = keepaliveTicker.C
 	}
 
-	var firstOutputGuard *openAIFirstOutputDeadlineGuard
-	var firstOutputCh <-chan struct{}
-	if firstOutputTimeout > 0 {
-		firstOutputGuard = newOpenAIFirstOutputDeadlineGuard(attemptStartTime.Add(firstOutputTimeout))
-		firstOutputCh = firstOutputGuard.timeoutC()
-		defer firstOutputGuard.stop()
-	}
-	stopFirstOutputTimer := func() {
-		if firstOutputGuard == nil {
-			return
-		}
-		firstOutputGuard.stop()
-		firstOutputCh = nil
-	}
 	// Track downstream writes separately from upstream reads: pre-output failover
 	// can buffer response.created / response.in_progress, so keepalive must be
 	// based on downstream idle time.
@@ -261,12 +228,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(
 	suppressCurrentEvent := false
 	var bareErrorPayload []byte
 	bareErrorAccountSideEffectsPending := false
-	firstOutputTimeoutError := func() *UpstreamFailoverError {
-		return s.newOpenAIFirstOutputTimeoutError(
-			ctx, c, account, attemptStartTime, originalModel, reasoningEffort,
-			firstOutputTimeout, "semantic_output", resp.Header,
-		)
-	}
 	pendingSSEEventType := ""
 	eventInProgress := false
 	eventStartsClientOutput := false
@@ -293,14 +254,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(
 		completedVisibleEvent := eventStartsVisibleOutput
 		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
 		eventInProgress = false
-		if completedProgressEvent && !firstOutputProgressObserved && firstOutputGuard != nil && !firstOutputGuard.claimOutput() {
-			streamEarlyErr = firstOutputTimeoutError()
-			_ = resp.Body.Close()
-			eventStartsClientOutput = false
-			eventStartsVisibleOutput = false
-			eventShouldFlush = false
-			return
-		}
 		if !clientDisconnected {
 			if completedProgressEvent {
 				applyAttemptResponseHeaders()
@@ -318,7 +271,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(
 		if completedProgressEvent && !firstOutputProgressObserved {
 			firstOutputScanGuard.Store(false)
 			firstOutputProgressObserved = true
-			stopFirstOutputTimer()
 		}
 		if completedVisibleEvent && firstTokenMs == nil {
 			ms := int(time.Since(requestStartTime).Milliseconds())
@@ -753,10 +705,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(
 			}
 
 			// Record first token time
-			if !guardFirstOutput && firstTokenMs == nil && startsVisibleOutput {
+			if firstTokenMs == nil && startsVisibleOutput {
 				ms := int(time.Since(requestStartTime).Milliseconds())
 				firstTokenMs = &ms
-				stopFirstOutputTimer()
 			}
 			s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
 			return
@@ -839,7 +790,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(
 	}
 
 	// 无超时/无 keepalive 的常见路径走同步扫描，减少 goroutine 与 channel 开销。
-	if streamInterval <= 0 && keepaliveInterval <= 0 && firstOutputTimeout <= 0 {
+	if streamInterval <= 0 && keepaliveInterval <= 0 {
 		defer putSSEScannerBuf64K(scanBuf)
 		for documentScanner.Scan() {
 			processSSELine(documentScanner.Text(), true)
@@ -859,10 +810,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(
 		processed chan struct{}
 	}
 	// 独立 goroutine 读取上游，避免读取阻塞影响 keepalive/超时处理
-	// Guard mode permits one queued token plus the token being processed. With
-	// the guarded scanner cap this bounds scanner/channel retention near 16 MiB;
-	// the timeout-disabled path preserves the legacy depth of 16.
-	events := make(chan scanEvent, openAIFirstOutputEventQueueSize(guardFirstOutput))
+	// Before first output, acknowledge each token before scanning the next to
+	// bound retention. After output begins, use the normal buffered queue.
+	events := make(chan scanEvent, openAIDefaultStreamQueueSize)
 	done := make(chan struct{})
 	sendEvent := func(ev scanEvent) bool {
 		if firstOutputScanGuard.Load() {
@@ -959,21 +909,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(
 			sendErrorEvent("stream_timeout")
 			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
 
-		case <-firstOutputCh:
-			if firstOutputProgressObserved {
-				stopFirstOutputTimer()
-				continue
-			}
-			if codexFailureTerminal && sawBareError && !sawResponseFailed && len(events) == 0 {
-				_ = resp.Body.Close()
-				return finalizeStream()
-			}
-			_ = resp.Body.Close()
-			for ev := range events {
-				markEventProcessed(ev)
-			}
-			return resultWithUsage(), firstOutputTimeoutError()
-
 		case <-keepaliveCh:
 			if clientDisconnected || failureDelivered {
 				continue
@@ -985,8 +920,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(
 				continue
 			}
 			if stageFirstOutput {
-				// Bypass attempt-local buffered frames. The stable SSE headers may be
-				// committed here, but account headers remain private until semantic output.
+				// The heartbeat commits this attempt's protocol state. From this point
+				// failures are delivered in-stream; they cannot be replayed elsewhere.
+				applyAttemptResponseHeaders()
+				c.Set(openAIStreamAttemptCommittedKey, true)
 				n, err := w.Write([]byte(":\n\n"))
 				recordOpenAIStreamKeepaliveBytes(c, n)
 				if err != nil {

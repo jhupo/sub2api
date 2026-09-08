@@ -101,6 +101,8 @@ type codexQuotaOverdraftPauseClearer interface {
 // CodexQuotaOverdraftCoordinator implements the bounded real-request gate used
 // by cpa-account-config-manager before it disables a quota-exhausted account.
 type CodexQuotaOverdraftCoordinator struct {
+	settingService      *SettingService
+	concurrencyService  *ConcurrencyService
 	accountRepo         AccountRepository
 	httpUpstream        HTTPUpstream
 	openAITokenProvider *OpenAITokenProvider
@@ -126,8 +128,12 @@ func NewCodexQuotaOverdraftCoordinator(
 	tempUnschedCache TempUnschedCache,
 	runtimeBlocker AccountRuntimeBlocker,
 	rateLimitService *RateLimitService,
+	concurrencyService *ConcurrencyService,
+	settingService *SettingService,
 ) *CodexQuotaOverdraftCoordinator {
 	coordinator := &CodexQuotaOverdraftCoordinator{
+		settingService:      settingService,
+		concurrencyService:  concurrencyService,
 		accountRepo:         accountRepo,
 		httpUpstream:        httpUpstream,
 		openAITokenProvider: openAITokenProvider,
@@ -600,6 +606,36 @@ func (c *CodexQuotaOverdraftCoordinator) runProbeAttempt(ctx context.Context, ac
 		return c.probeAttemptForTest(ctx, account, model)
 	}
 	result := codexQuotaOverdraftProbeResult{Model: model}
+	if c.concurrencyService == nil {
+		result.Status, result.ReasonCode = "inconclusive", "concurrency_unavailable"
+		return result
+	}
+	latest, loadErr := c.accountRepo.GetByID(ctx, account.ID)
+	if loadErr != nil || latest == nil || !isCodexQuotaOverdraftAccount(latest) || !latest.IsActive() || !latest.Schedulable {
+		result.Status, result.ReasonCode = "inconclusive", "account_unavailable"
+		return result
+	}
+	account = latest
+	now := c.currentTime()
+	if (account.AutoPauseOnExpired && account.ExpiresAt != nil && !now.Before(*account.ExpiresAt)) || account.IsOverloaded() ||
+		(account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) && !IsAccountSchedulingThresholdReason(account.TempUnschedulableReason)) {
+		result.Status, result.ReasonCode = "inconclusive", "account_unavailable"
+		return result
+	}
+	policy := AccountSlotAdmission{MaxConcurrency: account.Concurrency}
+	if c.settingService != nil && c.settingService.codexAdaptiveSchedulingSnapshot().Enabled {
+		policy.PressureModel = canonicalOpenAIAccountSchedulingModel(account, model)
+		policy.PressureWindow = codexAdaptivePressureWindow
+	}
+	ctx = context.WithValue(ctx, accountSlotAdmissionKey{}, accountSlotAdmissionResolver(func(context.Context, int64) (*AccountSlotAdmission, error) {
+		return &policy, nil
+	}))
+	slot, slotErr := c.concurrencyService.AcquireAccountSlot(ctx, account.ID, account.Concurrency)
+	if slotErr != nil || slot == nil || !slot.Acquired {
+		result.Status, result.ReasonCode = "inconclusive", "account_busy"
+		return result
+	}
+	defer slot.ReleaseFunc()
 	upstreamModel := normalizeOpenAIModelForUpstream(account, account.GetMappedModel(model))
 	payload := map[string]any{
 		"model": upstreamModel,
@@ -682,6 +718,13 @@ func (c *CodexQuotaOverdraftCoordinator) runProbeAttempt(ctx context.Context, ac
 		tlsProfile = c.tlsFPProfileService.ResolveTLSProfile(account)
 	}
 	resp, err := c.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, tlsProfile)
+	if resp != nil && !account.IsShadow() {
+		if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
+			if err := c.accountRepo.UpdateExtra(ctx, account.ID, buildCodexUsageExtraUpdates(snapshot, c.currentTime())); err != nil {
+				slog.Warn("codex_quota_probe_snapshot_failed", "account_id", account.ID, "error", err)
+			}
+		}
+	}
 	if err != nil {
 		result.Status = "inconclusive"
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {

@@ -349,18 +349,32 @@ type UserLoadInfo struct {
 // If the account is at max concurrency, it waits until a slot is available or timeout.
 // Returns a release function that MUST be called when the request completes.
 func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {
-	// If maxConcurrency is 0 or negative, no limit
-	if maxConcurrency <= 0 {
-		return &AcquireResult{
-			Acquired:    true,
-			ReleaseFunc: func() {}, // no-op
-		}, nil
+	if ctx == nil {
+		ctx = context.Background()
 	}
-
+	policy, err := resolveAccountSlotAdmission(ctx, accountID, maxConcurrency)
+	if err != nil {
+		return nil, err
+	}
+	if policy.MaxConcurrency <= 0 {
+		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
+	}
+	if s == nil || s.cache == nil {
+		return nil, errAdaptiveAdmissionUnavailable
+	}
 	// Generate unique request ID for this slot
 	requestID := generateRequestID()
 
-	acquired, err := s.cache.AcquireAccountSlot(ctx, accountID, maxConcurrency, requestID)
+	var acquired bool
+	if policy.PressureWindow > 0 {
+		cache, ok := s.cache.(adaptiveAccountSlotCache)
+		if !ok {
+			return nil, errAdaptiveAdmissionUnavailable
+		}
+		acquired, err = cache.AcquireAdaptiveAccountSlot(ctx, accountID, *policy, requestID)
+	} else {
+		acquired, err = s.cache.AcquireAccountSlot(ctx, accountID, policy.MaxConcurrency, requestID)
+	}
 	if err != nil {
 		return nil, err
 	}

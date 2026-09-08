@@ -328,32 +328,15 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		// 既有 body/session/conversation 行为。身份头在 post-build 阶段统一恢复。
 		setOpenAICompatMessagesBridgeContext(c, true)
 	}
-	reasoningEffortValue := strings.TrimSpace(gjson.GetBytes(responsesBody, "reasoning.effort").String())
-	firstOutputTimeout := time.Duration(0)
-	if clientStream {
-		firstOutputTimeout = codexAdaptiveFirstOutputTimeout(ctx, account, upstreamModel, reasoningEffortValue)
-	}
-	attemptStartTime := time.Now()
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-	var headerGuard *openAIFirstOutputHeaderGuard
-	if firstOutputTimeout > 0 {
-		upstreamCtx, headerGuard = newOpenAIFirstOutputHeaderGuard(
-			upstreamCtx, releaseUpstreamCtx, attemptStartTime.Add(firstOutputTimeout),
-		)
-	}
 	var upstreamReq *http.Request
 	if account.Platform == PlatformGrok {
 		upstreamReq, err = buildGrokResponsesRequest(upstreamCtx, c, account, responsesBody, token, grokCacheIdentity, s.cfg, s.settingService)
 	} else {
 		upstreamReq, err = s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, isStream, promptCacheKey, false)
 	}
-	if headerGuard == nil {
-		releaseUpstreamCtx()
-	}
+	releaseUpstreamCtx()
 	if err != nil {
-		if headerGuard != nil {
-			headerGuard.close()
-		}
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
@@ -407,22 +390,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			}
 		}
 		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
-		if headerGuard != nil && headerGuard.stopHeaderWait() {
-			if resp != nil && resp.Body != nil {
-				_ = resp.Body.Close()
-			}
-			headerGuard.close()
-			return nil, s.newOpenAIFirstOutputTimeoutError(
-				ctx, c, account, attemptStartTime, originalModel, reasoningEffortValue,
-				firstOutputTimeout, "response_headers", nil,
-			)
-		}
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
-			}
-			if headerGuard != nil {
-				headerGuard.close()
 			}
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 		}
@@ -456,9 +426,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			zap.Bool("cache_identity_present", strings.TrimSpace(grokCacheIdentity) != ""),
 			zap.String("upstream_error_preview", truncateOpenAIWSLogValue(string(respBody), 240)),
 		)
-	}
-	if headerGuard != nil {
-		resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: headerGuard.close}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -521,7 +488,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	if clientStream {
 		result, handleErr = s.handleAnthropicStreamingResponse(
 			ctx, resp, c, account, originalModel, billingModel, upstreamModel,
-			startTime, attemptStartTime, reasoningEffortValue,
+			startTime,
 		)
 	} else {
 		// Client wants JSON: buffer the streaming response and assemble a JSON reply.
@@ -554,16 +521,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			re := responsesReq.Reasoning.Effort
 			result.ReasoningEffort = &re
 		}
-	}
-
-	// Extract and save Codex usage snapshot from response headers (for OAuth accounts).
-	// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
-	if handleErr == nil && account.Type == AccountTypeOAuth && !account.IsShadow() && account.Platform != PlatformGrok {
-		if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
-			s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
-		}
-	} else if handleErr == nil && account.IsShadow() && account.ParentAccountID != nil {
-		notifyOpenAIAutoReset(*account.ParentAccountID)
 	}
 
 	return result, handleErr
@@ -949,19 +906,10 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	billingModel string,
 	upstreamModel string,
 	startTime time.Time,
-	attemptStartTime time.Time,
-	reasoningEffort string,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
-	firstOutputTimeout := codexAdaptiveFirstOutputTimeout(ctx, account, upstreamModel, reasoningEffort)
-	var firstOutputGuard *openAIFirstOutputDeadlineGuard
-	if firstOutputTimeout > 0 {
-		firstOutputGuard = newOpenAIFirstOutputDeadlineGuard(attemptStartTime.Add(firstOutputTimeout))
-		defer firstOutputGuard.stop()
-	}
-	firstOutputReady := firstOutputGuard == nil
-	firstOutputCh := firstOutputGuard.timeoutC()
+	firstOutputReady := false
 
 	state := apicompat.NewResponsesEventToAnthropicState()
 	state.Model = originalModel
@@ -1057,13 +1005,6 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		}
 		return out
 	}
-	firstOutputTimeoutError := func() *UpstreamFailoverError {
-		return s.newOpenAIFirstOutputTimeoutError(
-			ctx, c, account, attemptStartTime, originalModel, reasoningEffort,
-			firstOutputTimeout, "response_body", resp.Header,
-		)
-	}
-
 	// processDataLine handles a single "data: ..." SSE line from upstream.
 	processDataLine := func(payload string) bool {
 		payload = string(restoreCodexToolNamesFromContext(c, []byte(payload)))
@@ -1084,12 +1025,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 
 		eventType := strings.TrimSpace(event.Type)
 		if !firstOutputReady && openAIStreamDataStartsClientOutput(payload, eventType) {
-			if !firstOutputGuard.claimOutput() {
-				streamFailoverErr = firstOutputTimeoutError()
-				return true
-			}
 			firstOutputReady = true
-			firstOutputCh = nil
 		}
 		if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(payload, eventType) {
 			ms := int(time.Since(startTime).Milliseconds())
@@ -1301,7 +1237,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	}
 
 	// ── No keepalive: fast synchronous path (no goroutine overhead) ──
-	if streamInterval <= 0 && keepaliveInterval <= 0 && firstOutputGuard == nil {
+	if streamInterval <= 0 && keepaliveInterval <= 0 {
 		var parser openAICompatSSEFrameParser
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -1336,7 +1272,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		line string
 		err  error
 	}
-	events := make(chan scanEvent, openAIFirstOutputEventQueueSize(firstOutputGuard != nil))
+	events := make(chan scanEvent, openAIDefaultStreamQueueSize)
 	done := make(chan struct{})
 	var lastReadAt int64
 	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
@@ -1376,15 +1312,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 
 	for {
 		select {
-		case <-firstOutputCh:
-			_ = resp.Body.Close()
-			return nil, firstOutputTimeoutError()
-
 		case ev, ok := <-events:
 			if !ok {
-				if firstOutputGuard.timedOut() {
-					return nil, firstOutputTimeoutError()
-				}
 				// Upstream closed
 				if frame, ok := parser.Finish(); ok {
 					if strings.TrimSpace(frame.Data) == "[DONE]" {
@@ -1397,9 +1326,6 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				return missingTerminalErr()
 			}
 			if ev.err != nil {
-				if firstOutputGuard.timedOut() {
-					return nil, firstOutputTimeoutError()
-				}
 				handleScanErr(ev.err)
 				return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", ev.err)
 			}

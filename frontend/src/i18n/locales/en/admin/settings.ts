@@ -1044,13 +1044,9 @@ export default {
       },
       codexAdaptiveScheduling: {
         title: 'Codex Adaptive Overload Scheduling',
-        description: 'Applies only to OpenAI OAuth, Setup Token, and official api.openai.com API keys; compaction bypasses the first-output limit, while custom relays bypass this policy entirely',
+        description: 'Applies to OpenAI OAuth, Setup Token, and official API keys, including compaction; only explicit overload errors reduce concurrency, while custom relays are excluded',
         enabled: 'Enable Codex Adaptive Overload Scheduling',
-        enabledHint: 'When enabled, observed pressure immediately affects scheduling without suspending an account for a single-session failure',
-        normalTimeout: 'Normal Per-attempt First-output Limit (seconds)',
-        normalTimeoutHint: 'Maximum wait for committable output from one account attempt (30-600 seconds); account switching and capacity-shed retries can make the full request take longer',
-        highTimeout: 'High-reasoning Per-attempt First-output Limit (seconds)',
-        highTimeoutHint: 'Per-account limit for high, xhigh, max, and ultra (30-1800 seconds); once reasoning output or encrypted state starts, the gateway will not switch accounts merely to obtain visible text sooner',
+        enabledHint: 'Tracks real overload pressure by account, model, and independent session to reduce concurrency dynamically; TTFT remains observational and never aborts or reroutes a request',
         saved: 'Codex adaptive overload scheduling settings saved',
         saveFailed: 'Failed to save Codex adaptive overload scheduling settings'
       },

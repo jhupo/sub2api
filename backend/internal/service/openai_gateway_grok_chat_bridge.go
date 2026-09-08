@@ -654,7 +654,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 	if clientStream {
 		result, err = s.handleChatStreamingResponse(
 			ctx, resp, c, account, originalModel, billingModel, upstreamModel,
-			startTime, startTime, "", len(body),
+			startTime, len(body),
 		)
 	} else {
 		result, err = s.handleChatBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)

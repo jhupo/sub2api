@@ -81,6 +81,8 @@ func (s *OpenAIGatewayService) codexQuotaOverdraftCoordinator(
 			tempUnschedCache,
 			s,
 			s.rateLimitService,
+			s.concurrencyService,
+			s.settingService,
 		)
 	})
 	return s.codexQuotaOverdraft

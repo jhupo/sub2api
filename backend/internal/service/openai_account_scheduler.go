@@ -77,6 +77,7 @@ type OpenAIAccountScheduleRequest struct {
 	StickyWeighted          bool
 	SubscriptionPriority    bool
 	PreserveStickyBinding   bool
+	StickyMigrationTarget   bool
 	RequirePrivacySet       bool
 	PreviousResponseID      string
 	PreviousResponseCanMove bool
@@ -577,7 +578,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		return nil, false, nil
 	}
 	escapeCfg := s.service.openAIStickyEscapeConfig()
-	if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyAccount(accountID, escapeCfg); shouldEscape {
+	if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyAccount(accountID, escapeCfg); shouldEscape && !req.StickyMigrationTarget {
 		slog.Info("sticky_escape_triggered",
 			"account_id", accountID,
 			"reason", reason,
@@ -603,7 +604,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	// WaitPlan.MaxConcurrency controls the Redis admission limit and therefore
 	// uses the same request-scoped adaptive limit as the immediate acquire.
 	if s.service.concurrencyService != nil {
-		if escapeCfg.enabled && acquireErr == nil && result != nil && !result.Acquired {
+		if escapeCfg.enabled && !req.StickyMigrationTarget && acquireErr == nil && result != nil && !result.Acquired {
 			errorRate, ttft, _ := s.stats.snapshot(accountID)
 			slog.Info("sticky_escape_triggered",
 				"account_id", accountID,
@@ -2373,8 +2374,8 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	platform string,
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
-) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	selection, decision, err := s.selectAccountWithSchedulerOnce(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+) (selection *AccountSelectionResult, decision OpenAIAccountScheduleDecision, err error) {
+	selection, decision, err = s.selectAccountWithSchedulerOnce(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
 	if err == nil || openAIProxyStreamQuarantineBypassed(ctx) {
 		return selection, decision, err
 	}
@@ -2439,7 +2440,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	platform string,
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
-) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+) (selection *AccountSelectionResult, decision OpenAIAccountScheduleDecision, err error) {
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)
 	ctx = withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
@@ -2453,7 +2454,78 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		ctx = s.withOpenAIProfitControlGate(ctx, groupID)
 	}
 	platform = NormalizeOpenAICompatiblePlatform(platform)
-	decision := OpenAIAccountScheduleDecision{}
+	defer func() {
+		if err != nil {
+			return
+		}
+		if selection != nil && selection.Account != nil && selection.WaitPlan != nil &&
+			codexAdaptiveRequestFromContext(ctx) != nil && codexAdaptiveAccountEligible(selection.Account) {
+			selection.WaitPlan.Timeout = boundCodexAdaptiveQueueTimeout(selection.WaitPlan.Timeout)
+			// Briefly wait for the cache-affine account, then try spare capacity.
+			// A migration lease and response-ID ownership take priority over spillover.
+			if previousResponseID == "" && len(excludedIDs) == 0 && !codexAdaptiveStickyMigrationPending(ctx) {
+				waitCtx, cancel := context.WithTimeout(ctx, min(750*time.Millisecond, selection.WaitPlan.Timeout))
+				release, acquired, waitErr := s.waitForCodexAffinitySlot(waitCtx, selection)
+				cancel()
+				if waitErr != nil {
+					err = waitErr
+					return
+				}
+				if acquired {
+					selection.Acquired, selection.ReleaseFunc, selection.WaitPlan = true, release, nil
+				} else if ctx.Err() == nil {
+					spilloverExcluded := map[int64]struct{}{selection.Account.ID: {}}
+					spare, spareDecision, spareErr := s.selectAccountWithSchedulerOnce(ctx, groupID, "", sessionHash, requestedModel, spilloverExcluded, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
+					if spareErr == nil && spare != nil && spare.Acquired {
+						selection, decision = spare, spareDecision
+					}
+				}
+			}
+		}
+		if ctx.Err() != nil {
+			if selection != nil && selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+			selection, err = nil, ctx.Err()
+			return
+		}
+		selection, err = s.coordinateCodexStickySelection(ctx, OpenAIAccountScheduleRequest{
+			GroupID: groupID, PreviousResponseID: previousResponseID, SessionHash: sessionHash,
+			RequestedModel: requestedModel, ExcludedIDs: excludedIDs, Platform: platform,
+			RequiredTransport: requiredTransport, RequiredCapability: requiredCapability,
+			RequiredImageCapability: requiredImageCapability, RequireCompact: requireCompact,
+			RequirePrivacySet: s.openAIGroupRequiresPrivacySet(ctx, groupID), UseUpstreamTokenCost: useUpstreamTokenCost,
+		}, selection)
+		if selection != nil && selection.Account != nil {
+			decision.SelectedAccountID = selection.Account.ID
+			decision.SelectedAccountType = selection.Account.Type
+		}
+	}()
+	if state := codexAdaptiveRequestFromContext(ctx); state != nil {
+		state.mu.Lock()
+		state.legacyCompact = requireCompact
+		state.admissionRequest = &OpenAIAccountScheduleRequest{
+			GroupID: groupID, Platform: platform,
+			RequiredTransport: requiredTransport, RequiredCapability: requiredCapability,
+			RequiredImageCapability: requiredImageCapability,
+			RequirePrivacySet:       s.openAIGroupRequiresPrivacySet(ctx, groupID),
+		}
+		state.mu.Unlock()
+		if sessionHash != "" && previousResponseID == "" && platform == PlatformOpenAI {
+			if s.cache == nil {
+				return nil, decision, fmt.Errorf("OpenAI sticky migration store unavailable")
+			}
+			stickyID, stickyErr := s.getStickySessionAccountID(ctx, groupID, sessionHash)
+			if stickyErr != nil {
+				return nil, decision, stickyErr
+			}
+			// Publish once per selection. Every scheduler branch sees the same
+			// migration owner, and store failures cannot degrade into random routing.
+			ctx = context.WithValue(ctx, codexStickySelectionSnapshotKey{}, codexStickySelectionSnapshot{
+				groupID: derefGroupID(groupID), session: sessionHash, accountID: stickyID,
+			})
+		}
+	}
 	preserveGuardianParentBinding := preserveOpenAIGuardianParentBinding(ctx, sessionHash)
 	guardianParentAccountID := int64(0)
 	if strings.TrimSpace(previousResponseID) == "" {

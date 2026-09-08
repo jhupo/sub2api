@@ -498,45 +498,26 @@ func TestOpenAIResponseFlush_RecentBareErrorAllowsCompletedBeforeIdleTimeout(t *
 }
 
 func TestOpenAIResponseFlush_BareErrorTimeoutSynthesizesFailed(t *testing.T) {
-	tests := []struct {
-		name                      string
-		cfg                       config.GatewayConfig
-		firstOutputTimeoutSeconds int
-	}{
-		{
-			name: "stream interval timeout",
-			cfg:  config.GatewayConfig{StreamDataIntervalTimeout: 1},
-		},
-		{
-			name:                      "first output timeout",
-			firstOutputTimeoutSeconds: 1,
-		},
+	reader, writer := io.Pipe()
+	defer func() { _ = writer.Close() }()
+	recorder := newOpenAIResponseFlushRecorder()
+	resultCh, errCh := runOpenAIResponseFlushTestAsync(recorder, reader, config.GatewayConfig{StreamDataIntervalTimeout: 1})
+
+	_, writeErr := io.WriteString(writer, "data: {\"type\":\"error\",\"error\":{\"code\":\"invalid_request\",\"message\":\"bad request\"}}\n\n")
+	require.NoError(t, writeErr)
+
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "upstream response failed")
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for bare error terminal synthesis")
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			reader, writer := io.Pipe()
-			defer func() { _ = writer.Close() }()
-			recorder := newOpenAIResponseFlushRecorder()
-			resultCh, errCh := runOpenAIResponseFlushTestAsyncWithPolicy(recorder, reader, tt.cfg, tt.firstOutputTimeoutSeconds)
-
-			_, writeErr := io.WriteString(writer, "data: {\"type\":\"error\",\"error\":{\"code\":\"invalid_request\",\"message\":\"bad request\"}}\n\n")
-			require.NoError(t, writeErr)
-
-			select {
-			case err := <-errCh:
-				require.Error(t, err)
-				require.Contains(t, err.Error(), "upstream response failed")
-			case <-time.After(3 * time.Second):
-				t.Fatal("timed out waiting for bare error terminal synthesis")
-			}
-			require.NotNil(t, <-resultCh)
-			body, flushes := recorder.snapshot()
-			require.NotContains(t, body, `"type":"error"`)
-			require.Equal(t, 1, strings.Count(body, `"type":"response.failed"`))
-			require.Len(t, flushes, 1)
-		})
-	}
+	require.NotNil(t, <-resultCh)
+	body, flushes := recorder.snapshot()
+	require.NotContains(t, body, `"type":"error"`)
+	require.Equal(t, 1, strings.Count(body, `"type":"response.failed"`))
+	require.Len(t, flushes, 1)
 }
 
 func TestOpenAIResponseFlush_ReusedTypeKeepsSSEBytesAndTerminalSemantics(t *testing.T) {
@@ -612,21 +593,6 @@ func runOpenAIResponseFlushTestWithContext(ctx context.Context, recorder *openAI
 		Body:       body,
 	}
 	return svc.handleStreamingResponse(ctx, resp, c, account, time.Now(), "gpt-5", "gpt-5")
-}
-
-func runOpenAIResponseFlushTestAsyncWithPolicy(recorder *openAIResponseFlushRecorder, body io.ReadCloser, gatewayCfg config.GatewayConfig, timeoutSeconds int) (<-chan *openaiStreamingResult, <-chan error) {
-	resultCh := make(chan *openaiStreamingResult, 1)
-	errCh := make(chan error, 1)
-	go func() {
-		ctx := context.Background()
-		if timeoutSeconds > 0 {
-			ctx = withCodexAdaptiveTestPolicy(ctx, timeoutSeconds, timeoutSeconds, false)
-		}
-		result, err := runOpenAIResponseFlushTestWithContext(ctx, recorder, body, gatewayCfg, openAIFirstOutputTestAccount(1))
-		resultCh <- result
-		errCh <- err
-	}()
-	return resultCh, errCh
 }
 
 func runOpenAIResponseFlushTestAsync(recorder *openAIResponseFlushRecorder, body io.ReadCloser, gatewayCfg config.GatewayConfig) (<-chan *openaiStreamingResult, <-chan error) {

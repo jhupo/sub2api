@@ -63,6 +63,15 @@ func TestSameAccountRetryDelayFor(t *testing.T) {
 		err := &service.UpstreamFailoverError{SameAccountRetryDelay: 3 * time.Second}
 		require.Equal(t, 3*time.Second, sameAccountRetryDelayFor(err, 1))
 	})
+	t.Run("capacity retry honors upstream delay despite an explicit local delay", func(t *testing.T) {
+		err := &service.UpstreamFailoverError{
+			Reason: "openai_upstream_capacity_shed", SameAccountRetryDelay: time.Millisecond,
+			ResponseHeaders: http.Header{"Retry-After": []string{"2"}},
+		}
+		delay := sameAccountRetryDelayFor(err, 1)
+		require.GreaterOrEqual(t, delay, 2*time.Second)
+		require.LessOrEqual(t, delay, 2250*time.Millisecond)
+	})
 }
 
 func TestSameAccountRetryAllowedCombinesDeadlineAndPoolCount(t *testing.T) {

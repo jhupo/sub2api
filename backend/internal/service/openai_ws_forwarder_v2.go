@@ -267,6 +267,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		lease.Release()
 	}()
 	connID := strings.TrimSpace(lease.ConnID())
+	if !lease.Reused() && account.UsesOpenAICodexProtocol() && !account.IsShadow() {
+		s.UpdateCodexUsageSnapshotFromHeaders(ctx, account.ID, lease.HandshakeHeaders())
+	}
 	logOpenAIWSModeDebug(
 		"connected account_id=%d account_type=%s transport=%s conn_id=%s conn_reused=%v conn_pick_ms=%d queue_wait_ms=%d has_previous_response_id=%v",
 		account.ID,
@@ -320,11 +323,20 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		if stateStore != nil && stateSessionHash != "" {
 			stateStore.BindSessionTurnState(groupID, stateSessionHash, handshakeTurnState, s.openAIWSSessionStickyTTL())
 		}
-		if c != nil {
-			c.Header(http.CanonicalHeaderKey(openAIWSTurnStateHeader), handshakeTurnState)
+	}
+	applyAttemptHeaders := func() {
+		if c == nil || c.Writer.Written() {
+			return
 		}
+		s.relayOpenAICodexTurnState(c, account, lease.HandshakeHeaders())
+		c.Header("X-Request-Id", lease.HandshakeHeader("X-Request-Id"))
 	}
 
+	if codexAdaptiveAccountEligible(account) {
+		if err := consumeOpenAIRequestAttempt(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.performOpenAIWSGeneratePrewarm(
 		ctx,
 		lease,
@@ -373,6 +385,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		mappedModelBytes = []byte(mappedModel)
 	}
 	bufferedStreamEvents := make([][]byte, 0, 4)
+	bufferedStreamBytes := 0
 	eventCount := 0
 	tokenEventCount := 0
 	terminalEventCount := 0
@@ -421,6 +434,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		if clientDisconnected {
 			return
 		}
+		applyAttemptHeaders()
+		c.Set(openAIStreamAttemptCommittedKey, true)
 		frame := make([]byte, 0, len(message)+8)
 		frame = append(frame, "data: "...)
 		frame = append(frame, message...)
@@ -444,6 +459,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			emitStreamMessage(buffered, false)
 		}
 		bufferedStreamEvents = bufferedStreamEvents[:0]
+		bufferedStreamBytes = 0
 		flushStreamWriter(true)
 		flushedBufferedEventCount += flushed
 		if debugEnabled {
@@ -460,6 +476,29 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	}
 
 	readTimeout := s.openAIWSReadTimeout()
+	keepaliveInterval := time.Duration(0)
+	if reqStream && s.cfg != nil {
+		keepaliveInterval = time.Duration(s.cfg.Gateway.StreamKeepaliveInterval) * time.Second
+	}
+	reader := newOpenAIWSHeartbeatReader(ctx, func(readCtx context.Context) ([]byte, error) {
+		return lease.ReadMessageWithContextTimeout(readCtx, readTimeout)
+	}, keepaliveInterval, func() {
+		if clientDisconnected || time.Since(lastFlushAt) < keepaliveInterval {
+			return
+		}
+		applyAttemptHeaders()
+		c.Set(openAIStreamAttemptCommittedKey, true)
+		wroteDownstream = true
+		n, err := c.Writer.Write([]byte(":\n\n"))
+		recordOpenAIStreamKeepaliveBytes(c, n)
+		if err != nil {
+			clientDisconnected = true
+			return
+		}
+		flusher.Flush()
+		lastFlushAt = time.Now()
+	})
+	defer reader.Close()
 	var pendingJSONDocuments [][]byte
 
 	for {
@@ -469,7 +508,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			message = pendingJSONDocuments[0]
 			pendingJSONDocuments = pendingJSONDocuments[1:]
 		} else {
-			message, readErr = lease.ReadMessageWithContextTimeout(ctx, readTimeout)
+			message, readErr = reader.Read()
 			if readErr == nil {
 				if documents, repaired := splitOpenAIConcatenatedJSONDocuments(message); repaired {
 					logOpenAIWSModeInfo(
@@ -664,6 +703,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				emitStreamMessage(message, true)
 			}
 			if !reqStream {
+				applyAttemptHeaders()
 				c.JSON(statusCode, gin.H{
 					"error": gin.H{
 						"type":    "upstream_error",
@@ -679,6 +719,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			// 以便上游早期断连时仍可安全回退到 HTTP，不给下游发送半截流。
 			shouldBuffer := firstTokenMs == nil && !isTokenEvent && !isTerminalEvent
 			if shouldBuffer {
+				if len(message) > openAIFirstOutputStageMaxBytes-bufferedStreamBytes {
+					return nil, errOpenAIFirstOutputStageLimit
+				}
+				bufferedStreamBytes += len(message)
 				buffered := make([]byte, len(message))
 				copy(buffered, message)
 				bufferedStreamEvents = append(bufferedStreamEvents, buffered)
@@ -743,6 +787,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			responseID = strings.TrimSpace(gjson.GetBytes(finalResponse, "id").String())
 		}
 
+		applyAttemptHeaders()
 		c.Data(http.StatusOK, "application/json", finalResponse)
 	} else {
 		flushStreamWriter(true)

@@ -470,9 +470,7 @@ type StreamTimeoutSettings struct {
 }
 
 type CodexAdaptiveSchedulingSettings struct {
-	Enabled                             bool `json:"enabled"`
-	NormalFirstOutputTimeoutSeconds     int  `json:"normal_first_output_timeout_seconds"`
-	HighEffortFirstOutputTimeoutSeconds int  `json:"high_effort_first_output_timeout_seconds"`
+	Enabled bool `json:"enabled"`
 }
 
 // RectifierSettings 请求整流器配置 DTO

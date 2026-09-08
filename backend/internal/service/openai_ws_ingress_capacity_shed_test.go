@@ -29,7 +29,8 @@ func (r *openAIWSIngressCapacityShedRepo) UpdateExtra(context.Context, int64, ma
 	return nil
 }
 
-// ctx_pool 的 ingress 直写路径把 error / response.failed 交给 WS 客户端前，必须和
+// ctx_pool 的 ingress 在 response.created 已提交、无法安全换号后，把 error /
+// response.failed 交给 WS 客户端前必须和
 // HTTP/SSE（openai_gateway_response_handling.go）与 http_bridge
 // （openai_ws_http_bridge.go）两条路径一样，把容量降载码改写为可重试的
 // server_error：Codex 按闭集判定，server_is_overloaded / slow_down 属致命集，
@@ -48,6 +49,7 @@ func TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient(t *
 		{
 			name: "capacity_shed_error_and_failed_are_rewritten",
 			upstreamEvents: [][]byte{
+				[]byte(`{"type":"response.created","response":{"id":"resp_shed","model":"gpt-5.1"}}`),
 				[]byte(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`),
 				[]byte(`{"type":"response.failed","response":{"id":"resp_shed","status":"failed","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}}`),
 			},
@@ -60,6 +62,7 @@ func TestProxyResponsesWebSocketFromClient_RewritesCapacityShedCodeForClient(t *
 		{
 			name: "non_capacity_error_code_is_passed_through",
 			upstreamEvents: [][]byte{
+				[]byte(`{"type":"response.created","response":{"id":"resp_suspended","model":"gpt-5.1"}}`),
 				[]byte(`{"type":"error","error":{"type":"invalid_request_error","code":"workspace_suspended","message":"workspace is suspended"}}`),
 				[]byte(`{"type":"response.failed","response":{"id":"resp_suspended","status":"failed","error":{"code":"workspace_suspended","message":"workspace is suspended"}}}`),
 			},

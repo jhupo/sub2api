@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/imroc/req/v3"
 )
@@ -87,6 +89,7 @@ type OpenAIQuotaUsage struct {
 	AdditionalRateLimits  []OpenAIAdditionalRateLimit  `json:"additional_rate_limits,omitempty"`
 	RateLimitResetCredits *OpenAIRateLimitResetCredits `json:"rate_limit_reset_credits,omitempty"`
 	FetchedAt             int64                        `json:"fetched_at"`
+	observedAt            time.Time
 	autoResetCandidates   []openAIAutoResetCreditCandidate
 }
 
@@ -115,6 +118,7 @@ type OpenAIQuotaResetResult struct {
 // for OpenAI OAuth accounts. It reuses the privacy client factory so all calls
 // flow through the impersonated HTTP client (Cloudflare-friendly TLS fingerprint).
 type OpenAIQuotaService struct {
+	usageFlight          singleflight.Group
 	accountRepo          AccountRepository
 	proxyRepo            ProxyRepository
 	tokenProvider        *OpenAITokenProvider
@@ -144,6 +148,27 @@ func NewOpenAIQuotaService(
 // OAuth account. Returns infraerrors so the handler layer can map them to
 // stable error codes / HTTP statuses.
 func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*OpenAIQuotaUsage, error) {
+	if s == nil {
+		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_QUOTA_NOT_CONFIGURED", "openai quota service is not configured")
+	}
+	result := s.usageFlight.DoChan(fmt.Sprint(accountID), func() (any, error) {
+		queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openaiQuotaUpstreamTimeout)
+		defer cancel()
+		return s.queryUsage(queryCtx, accountID)
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case result := <-result:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		usage := *result.Val.(*OpenAIQuotaUsage)
+		return &usage, nil
+	}
+}
+
+func (s *OpenAIQuotaService) queryUsage(ctx context.Context, accountID int64) (*OpenAIQuotaUsage, error) {
 	accessToken, chatGPTAccountID, proxyURL, fedRAMP, err := s.prepareUpstreamCall(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -192,7 +217,8 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 		break
 	}
 
-	payload.FetchedAt = time.Now().Unix()
+	payload.observedAt = time.Now().UTC()
+	payload.FetchedAt = payload.observedAt.Unix()
 	details := s.queryResetCreditDetails(callCtx, client, accessToken, chatGPTAccountID, fedRAMP, accountID)
 	if details != nil {
 		payload.autoResetCandidates = details.AutoResetCandidates
@@ -237,7 +263,7 @@ func (s *OpenAIQuotaService) CachePostResetSnapshot(ctx context.Context, account
 		ctx,
 		accountID,
 		usage.RateLimitResetCredits,
-		buildOpenAIAutoResetUsageUpdates(usage, time.Now()),
+		buildCodexQuotaUsageUpdates(usage, time.Now()),
 	)
 }
 
@@ -395,6 +421,8 @@ func (s *OpenAIQuotaService) resetCredit(ctx context.Context, accountID int64, c
 		"code", payload.Code,
 		"windows_reset", payload.WindowsReset,
 	)
+	// A post-reset read must not join a GET started before the reset.
+	s.usageFlight.Forget(fmt.Sprint(accountID))
 	return &payload, nil
 }
 
@@ -616,65 +644,48 @@ func buildCodexSparkWindowExtraUpdates(usage *OpenAIQuotaUsage, now time.Time) m
 		return nil
 	}
 
-	// Reuse OpenAICodexUsageSnapshot / Normalize to map primary/secondary windows
-	// to canonical 5h/7d buckets (same logic as probeOpenAICodexSnapshot).
-	snap := &OpenAICodexUsageSnapshot{}
-	if w := spark.PrimaryWindow; w != nil {
-		p := w.UsedPercent
-		snap.PrimaryUsedPercent = &p
-		ra := int(w.ResetAfterSeconds)
-		snap.PrimaryResetAfterSeconds = &ra
-		wm := int(w.LimitWindowSeconds / 60)
-		snap.PrimaryWindowMinutes = &wm
-	}
-	if w := spark.SecondaryWindow; w != nil {
-		p := w.UsedPercent
-		snap.SecondaryUsedPercent = &p
-		ra := int(w.ResetAfterSeconds)
-		snap.SecondaryResetAfterSeconds = &ra
-		wm := int(w.LimitWindowSeconds / 60)
-		snap.SecondaryWindowMinutes = &wm
-	}
-
-	normalized := snap.Normalize()
-	if normalized == nil {
-		return nil
-	}
-
-	updates := make(map[string]any)
-	if normalized.Used5hPercent != nil {
-		updates["codex_5h_used_percent"] = *normalized.Used5hPercent
-	}
-	if normalized.Reset5hSeconds != nil {
-		updates["codex_5h_reset_after_seconds"] = *normalized.Reset5hSeconds
-	}
-	if normalized.Window5hMinutes != nil {
-		updates["codex_5h_window_minutes"] = *normalized.Window5hMinutes
-	}
-	if normalized.Used7dPercent != nil {
-		updates["codex_7d_used_percent"] = *normalized.Used7dPercent
-	}
-	if normalized.Reset7dSeconds != nil {
-		updates["codex_7d_reset_after_seconds"] = *normalized.Reset7dSeconds
-	}
-	if normalized.Window7dMinutes != nil {
-		updates["codex_7d_window_minutes"] = *normalized.Window7dMinutes
-	}
-	if r := codexResetAtRFC3339(now, normalized.Reset5hSeconds); r != nil {
-		updates["codex_5h_reset_at"] = *r
-	}
-	if r := codexResetAtRFC3339(now, normalized.Reset7dSeconds); r != nil {
-		updates["codex_7d_reset_at"] = *r
-	}
-	if len(updates) == 0 {
-		return nil
-	}
-	updates["codex_usage_updated_at"] = now.Format(time.RFC3339)
-	return updates
+	return buildCodexQuotaUsageUpdates(&OpenAIQuotaUsage{
+		RateLimit:  spark,
+		observedAt: usage.observedAt,
+	}, now)
 }
 
-// mapUpstreamStatus collapses upstream HTTP statuses into a stable set we
-// surface from the admin handler. 4xx upstream errors are surfaced as 502
+func buildCodexQuotaUsageUpdates(usage *OpenAIQuotaUsage, now time.Time) map[string]any {
+	if usage == nil || usage.RateLimit == nil || (usage.RateLimit.PrimaryWindow == nil && usage.RateLimit.SecondaryWindow == nil) {
+		return nil
+	}
+	rateLimit := usage.RateLimit
+	if !usage.observedAt.IsZero() {
+		now = usage.observedAt
+	}
+	snapshot := &OpenAICodexUsageSnapshot{UpdatedAt: now.UTC().Format(time.RFC3339Nano)}
+	applyWindow := func(window *OpenAIRateLimitWindow, primary bool) {
+		if window == nil {
+			return
+		}
+		used := window.UsedPercent
+		resetAfter := int(window.ResetAfterSeconds)
+		if window.ResetAt > 0 {
+			resetAfter = max(0, int(time.Unix(window.ResetAt, 0).Sub(now).Seconds()))
+		}
+		windowMinutes := int(window.LimitWindowSeconds / 60)
+		if primary {
+			snapshot.PrimaryUsedPercent = &used
+			snapshot.PrimaryResetAfterSeconds = &resetAfter
+			snapshot.PrimaryWindowMinutes = &windowMinutes
+		} else {
+			snapshot.SecondaryUsedPercent = &used
+			snapshot.SecondaryResetAfterSeconds = &resetAfter
+			snapshot.SecondaryWindowMinutes = &windowMinutes
+		}
+	}
+	applyWindow(rateLimit.PrimaryWindow, true)
+	applyWindow(rateLimit.SecondaryWindow, false)
+	return buildCodexUsageExtraUpdates(snapshot, now)
+}
+
+// mapUpstreamStatus maps upstream errors to the statuses exposed by the admin API.
+// 4xx upstream errors are surfaced as 502
 // (BadGateway) so callers can distinguish "your input is bad" (400) from
 // "upstream said no" (502); 401/403 are bubbled directly to hint at re-auth.
 func mapUpstreamStatus(status int) int {

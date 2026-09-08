@@ -396,7 +396,7 @@ func TestOpenAIStreamPairedFailureAppliesAccountSideEffectsOnce(t *testing.T) {
 		}
 
 		result, err := svc.handleStreamingResponsePassthrough(
-			context.Background(), resp, c, account, time.Now(), time.Now(), "gpt-5", "gpt-5", "",
+			context.Background(), resp, c, account, time.Now(), "gpt-5", "gpt-5",
 		)
 
 		require.Error(t, err)

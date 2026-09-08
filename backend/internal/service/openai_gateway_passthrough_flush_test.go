@@ -98,8 +98,6 @@ func runPassthroughFlushTest(
 		c,
 		&Account{ID: 1, Platform: PlatformOpenAI, Name: "flush-test"},
 		time.Now(),
-		time.Now(),
-		"",
 		"",
 		"",
 	)

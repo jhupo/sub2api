@@ -431,6 +431,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	legacyCompact := service.IsOpenAIResponsesCompactPath(c)
+	if !legacyCompact {
+		service.RequireOpenAIResponseHeaders(c)
+	}
 	nativeV2 := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(body)
 	if nativeV2 {
 		// 原生 v2 压缩出站前补注 x-codex-beta-features: remote_compaction_v2，
@@ -610,8 +613,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// Generate session hash (header first; fallback to prompt_cache_key)
 	sessionHash := h.gatewayService.GenerateScopedSessionHash(c, sessionHashBody)
 	c.Request = c.Request.WithContext(h.gatewayService.PrepareCodexAdaptiveSchedulingRequest(
-		c.Request.Context(), apiKey.ID, sessionHash, forwardModel, legacyCompact || nativeV2,
+		c.Request.Context(), apiKey.ID, sessionHash, forwardModel,
 	))
+	defer service.FinishCodexAdaptiveSchedulingRequest(c.Request.Context())
 	if h.rejectIfCyberSessionBlocked(c, apiKey, sessionHashBody, reqModel, cyberBlockFormatResponses) {
 		return
 	}
@@ -665,14 +669,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		defer deferBalancePreauthorizationRefund(reqLog, balanceGuard)
 		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
 	}
-	// Cloudflare's proxied HTTP edge can terminate a request that has not
-	// produced any origin bytes for roughly 120s.  The normal stream keepalive
-	// starts only after an upstream response header arrives, so a provider that
-	// stalls before headers can still cause a 524 while fill scheduling is
-	// trying the next account.  For Responses streaming, emit protocol-safe SSE
-	// comments during the whole account-selection/failover loop.  The keepalive
-	// manager subtracts comment bytes from failover write accounting and turns a
-	// post-commit error into response.failed rather than corrupting JSON.
+	// Native Responses must preserve upstream turn-state headers. Their heartbeat
+	// starts in the stream reader after upstream headers arrive; converted streams
+	// that do not expose upstream response headers may keep the pre-header timer.
 	stopStreamHeaderKeepalive := func() {}
 	if reqStream {
 		stopStreamHeaderKeepalive = service.StartOpenAIStreamSSEKeepalive(c, h.openAICompactKeepaliveInterval())
@@ -990,16 +989,17 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			}
 		}
 		if openAIForwardSucceededForScheduling(result) {
+			if err := h.gatewayService.CommitCodexAdaptiveStickyOnSuccess(
+				c.Request.Context(), apiKey.GroupID, account, previousResponseID != "",
+			); err != nil {
+				reqLog.Warn("openai.codex_adaptive_sticky_migration_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+			}
 			h.gatewayService.ObserveCodexAdaptiveSuccess(
 				c.Request.Context(), account,
 				openAIAccountScheduleModel(c, account, forwardModel, requireCompact, result),
 			)
 		}
 		if result != nil {
-			// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
-			if account.Type == service.AccountTypeOAuth && !account.IsShadow() {
-				h.gatewayService.UpdateCodexUsageSnapshotFromHeaders(c.Request.Context(), account.ID, result.ResponseHeaders)
-			}
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, result), openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
 			if openAIForwardSucceededForScheduling(result) {
 				h.gatewayService.ObserveCodexQuotaOverdraftScheduleSuccess(c.Request.Context(), account, forwardModel)
@@ -1284,8 +1284,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	sessionHash, promptCacheKey = resolveOpenAIMessagesMetadataSession(c, sessionHash, promptCacheKey, reqModel, body)
 	sessionHash = h.gatewayService.ScopeSessionHash(c, sessionHash)
 	c.Request = c.Request.WithContext(h.gatewayService.PrepareCodexAdaptiveSchedulingRequest(
-		c.Request.Context(), apiKey.ID, sessionHash, routingModel, false,
+		c.Request.Context(), apiKey.ID, sessionHash, routingModel,
 	))
+	defer service.FinishCodexAdaptiveSchedulingRequest(c.Request.Context())
 	if h.rejectIfCyberSessionBlocked(c, apiKey, body, reqModel, cyberBlockFormatAnthropic) {
 		return
 	}
@@ -1596,6 +1597,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			}
 		}
 		if openAIForwardSucceededForScheduling(result) {
+			if err := h.gatewayService.CommitCodexAdaptiveStickyOnSuccess(
+				c.Request.Context(), apiKey.GroupID, account, false,
+			); err != nil {
+				reqLog.Warn("openai_messages.codex_adaptive_sticky_migration_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+			}
 			h.gatewayService.ObserveCodexAdaptiveSuccess(
 				c.Request.Context(), account,
 				openAIAccountScheduleModel(c, account, currentRoutingModel, false, result),
@@ -2549,7 +2555,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		firstMessage,
 		openAIWSIngressFallbackSessionSeed(subject.UserID, apiKey.ID, apiKey.GroupID),
 	)
-	ctx = h.gatewayService.PrepareCodexAdaptiveSchedulingRequest(ctx, apiKey.ID, sessionHash, wsForwardModel, false)
+	ctx = h.gatewayService.PrepareCodexAdaptiveSchedulingRequest(
+		ctx, apiKey.ID, sessionHash, wsForwardModel,
+	)
+	defer service.FinishCodexAdaptiveSchedulingRequest(ctx)
 	ctx = service.WithOpenAIGuardianParentAffinity(ctx, c, firstMessage, reqModel)
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
@@ -2559,6 +2568,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	var lastFailoverErr *service.UpstreamFailoverError
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	wsAttemptMessage := append([]byte(nil), firstMessage...)
+	currentBusinessTurn := 1
+	relayTurnBase := 0
 	waitForWSSameAccountRetry := func(account *service.Account, failoverErr *service.UpstreamFailoverError, adaptiveFailover bool) bool {
 		legacyRateLimitRetry := failoverErr != nil && failoverErr.StatusCode == http.StatusTooManyRequests && !failoverErr.SameAccountRetryDeadline.IsZero()
 		if account == nil || failoverErr == nil || (!adaptiveFailover && !legacyRateLimitRetry) {
@@ -2785,6 +2796,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		var requestPayloadHash string
 		var turnStartsMu sync.Mutex
 		turnStarts := make(map[int]time.Time, 4)
+		turnHasPreviousResponseID := map[int]bool{
+			1: strings.TrimSpace(gjson.GetBytes(wsAttemptMessage, "previous_response_id").String()) != "",
+		}
 		recordTurnStart := func(turn int, startedAt time.Time) {
 			if turn <= 0 || startedAt.IsZero() {
 				return
@@ -2799,6 +2813,21 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			delete(turnStarts, turn)
 			turnStartsMu.Unlock()
 			return startedAt
+		}
+		recordTurnContinuation := func(turn int, payload []byte) {
+			if turn <= 0 || strings.TrimSpace(gjson.GetBytes(payload, "previous_response_id").String()) == "" {
+				return
+			}
+			turnStartsMu.Lock()
+			turnHasPreviousResponseID[turn] = true
+			turnStartsMu.Unlock()
+		}
+		takeTurnContinuation := func(turn int) bool {
+			turnStartsMu.Lock()
+			hasPreviousResponseID := turnHasPreviousResponseID[turn]
+			delete(turnHasPreviousResponseID, turn)
+			turnStartsMu.Unlock()
+			return hasPreviousResponseID
 		}
 		// Passthrough rejects overlapping response.create frames, so one immutable
 		// turn-tagged slot preserves the exact mapping used for the in-flight request.
@@ -2822,9 +2851,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			ReasoningEffortMappings:     reasoningEffortMappings,
 			TurnStarted:                 recordTurnStart,
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
+				currentBusinessTurn = relayTurnBase + turn
+				service.BeginOpenAIRequestTurn(ctx, currentBusinessTurn)
 				c.Set(securityAuditWSTurnContextKey, turn)
 				service.BeginOpsStreamTurn(c, turn)
 				setCyberTurnBody(turn, payload)
+				recordTurnContinuation(turn, payload)
+				service.SetCodexAdaptiveTurnModel(ctx, originalModel)
 				if turn == 1 {
 					return nil
 				}
@@ -2855,6 +2888,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				setOpsRequestContext(c, model, true)
 				mapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(scheduling.ctx, apiKey.GroupID, model)
+				service.SetCodexAdaptiveTurnModel(scheduling.ctx, mapping.MappedModel)
 				freshAccount, freshOK := h.gatewayService.RefreshSchedulerAccountFreshness(scheduling.ctx, scheduling.account, apiKey.GroupID, mapping.MappedModel)
 				if !freshOK {
 					return "", service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is no longer schedulable for this model, please reconnect", nil)
@@ -2950,6 +2984,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				turnCtx := scheduling.ctx
 				turnAccount := scheduling.account
 				turnStart := getTurnStart(turn)
+				hasPreviousResponseID := takeTurnContinuation(turn)
 				cyberBlockBody := takeCyberTurnBody(turn)
 				// F1: cyber 标记按 turn 生命周期清理——defer 保证任意早返回路径都执行；
 				// CyberBlocked 必须在 submit 前同步预捕获（task 闭包由 worker 池异步执行，
@@ -3002,6 +3037,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				forwardSucceeded := openAIForwardSucceededForScheduling(result)
 				if forwardSucceeded {
 					delete(sameAccountRetryCount, turnAccount.ID)
+					if err := h.gatewayService.CommitCodexAdaptiveStickyOnSuccess(
+						turnCtx, apiKey.GroupID, turnAccount, hasPreviousResponseID,
+					); err != nil {
+						reqLog.Warn("openai.websocket_codex_adaptive_sticky_migration_failed", zap.Int64("account_id", turnAccount.ID), zap.Error(err))
+					}
 					h.gatewayService.ObserveCodexAdaptiveSuccess(turnCtx, turnAccount, turnUpstreamModel)
 				}
 				result.BillingModel = openAIWSTurnBillingModel(result, turnMapping, turnRequestedModel, turnUpstreamModel)
@@ -3011,10 +3051,6 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					zap.String("turn_upstream_model", turnUpstreamModel),
 					zap.String("billing_model", result.BillingModel),
 				)
-				// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
-				if turnAccount.Type == service.AccountTypeOAuth && !turnAccount.IsShadow() {
-					h.gatewayService.UpdateCodexUsageSnapshotFromHeaders(turnCtx, turnAccount.ID, result.ResponseHeaders)
-				}
 				scheduleModel := turnUpstreamModel
 				if scheduleModel == "" {
 					scheduleModel = turnRequestedModel
@@ -3081,6 +3117,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		})
 
 		for {
+			relayTurnBase = currentBusinessTurn - 1
 			err := h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks)
 			if scheduling := connectionScheduling.Load(); scheduling != nil && scheduling.account != nil {
 				ctx = scheduling.ctx
@@ -3706,6 +3743,9 @@ func openAIForwardErrorAlreadyCommunicated(c *gin.Context, writerSizeBeforeForwa
 
 func openAIForwardMayFailover(c *gin.Context, writerSizeBeforeForward int, failoverErr *service.UpstreamFailoverError) bool {
 	if c == nil || c.Writer == nil {
+		return false
+	}
+	if service.OpenAIStreamAttemptCommitted(c) {
 		return false
 	}
 	if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) == writerSizeBeforeForward {

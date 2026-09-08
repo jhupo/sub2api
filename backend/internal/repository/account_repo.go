@@ -81,6 +81,7 @@ var schedulerNeutralExtraKeyPrefixes = []string{
 
 var schedulerNeutralExtraKeys = map[string]struct{}{
 	"codex_usage_updated_at":     {},
+	"codex_usage_observed_at_us": {},
 	"grok_billing_snapshot":      {},
 	"session_window_utilization": {},
 }
@@ -671,7 +672,7 @@ func (r *accountRepository) updateLockedAccount(
 	explicitRateSyncEnabled *bool,
 	explicitRateMultiplier *float64,
 ) (*dbent.Account, error) {
-	extra, err := lockAndMergeAccountProbeExtra(ctx, client, account, explicitProbeEnabled, explicitRateSyncEnabled)
+	extra, err := lockAndMergeAccountExtra(ctx, client, account, explicitProbeEnabled, explicitRateSyncEnabled)
 	if err != nil {
 		return nil, err
 	}
@@ -760,7 +761,7 @@ func (r *accountRepository) updateLockedAccount(
 	return builder.Save(ctx)
 }
 
-func lockAndMergeAccountProbeExtra(
+func lockAndMergeAccountExtra(
 	ctx context.Context,
 	client *dbent.Client,
 	account *service.Account,
@@ -797,7 +798,8 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'upstream_billing_probe',
 			extra -> 'ollama_cloud_usage_session',
 			extra -> 'ollama_cloud_usage_auto_refresh',
-			extra -> 'ollama_cloud_usage_snapshot'
+			extra -> 'ollama_cloud_usage_snapshot',
+			extra
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
@@ -823,6 +825,7 @@ func lockAndMergeAccountProbeExtra(
 		currentOllamaSession         []byte
 		currentOllamaAutoRefresh     []byte
 		currentOllamaSnapshot        []byte
+		currentExtra                 []byte
 	)
 	if err := rows.Scan(
 		&identityUnchanged,
@@ -834,6 +837,7 @@ func lockAndMergeAccountProbeExtra(
 		&currentOllamaSession,
 		&currentOllamaAutoRefresh,
 		&currentOllamaSnapshot,
+		&currentExtra,
 	); err != nil {
 		return nil, err
 	}
@@ -842,6 +846,23 @@ func lockAndMergeAccountProbeExtra(
 	}
 
 	extra := copyJSONMap(normalizeJSONMap(account.Extra))
+	var observedExtra map[string]any
+	if len(currentExtra) > 0 {
+		if err := json.Unmarshal(currentExtra, &observedExtra); err != nil {
+			return nil, err
+		}
+	}
+	// The locked row, not the edit form's snapshot, owns provider observations.
+	for key := range extra {
+		if service.IsCodexQuotaObservationExtraKey(key) {
+			delete(extra, key)
+		}
+	}
+	for key, value := range observedExtra {
+		if service.IsCodexQuotaObservationExtraKey(key) {
+			extra[key] = value
+		}
+	}
 	for _, key := range []string{
 		service.UpstreamBillingProbeEnabledExtraKey,
 		service.UpstreamBillingRateSyncEnabledExtraKey,
@@ -2718,6 +2739,12 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 		return nil
 	}
 
+	observation, quotaSnapshot := updates["codex_usage_observed_at_us"]
+	observedAt, validObservation := observation.(int64)
+	if quotaSnapshot && (!validObservation || observedAt <= 0) {
+		return errors.New("Codex quota observation requires a positive int64 timestamp")
+	}
+
 	// 使用 JSONB 合并操作实现原子更新，避免读-改-写的并发丢失更新问题
 	payload, err := json.Marshal(updates)
 	if err != nil {
@@ -2749,10 +2776,18 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	if service.ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates) {
 		extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
 	}
+	where := " WHERE id = $2 AND deleted_at IS NULL"
+	args := []any{string(payload), id}
+	if quotaSnapshot {
+		// Compare observation time in the same statement as publication. A stream
+		// completion or delayed worker must not replace a newer quota window.
+		where += " AND COALESCE((extra->>'codex_usage_observed_at_us')::bigint, 0) < $3"
+		args = append(args, observedAt)
+	}
 	result, err := client.ExecContext(
 		ctx,
-		"UPDATE accounts SET extra = "+extraExpression+", updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL",
-		string(payload), id,
+		"UPDATE accounts SET extra = "+extraExpression+", updated_at = NOW()"+where,
+		args...,
 	)
 
 	if err != nil {
@@ -2764,6 +2799,15 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 		return err
 	}
 	if affected == 0 {
+		if quotaSnapshot {
+			exists, queryErr := client.Account.Query().Where(dbaccount.ID(id), dbaccount.DeletedAtIsNil()).Exist(ctx)
+			if queryErr != nil {
+				return queryErr
+			}
+			if exists {
+				return nil
+			}
+		}
 		return service.ErrAccountNotFound
 	}
 	if durableSchedulerChange {

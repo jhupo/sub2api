@@ -128,6 +128,10 @@ func (s *OpenAIGatewayService) openAIStickyLegacyTTL(ttl time.Duration) time.Dur
 }
 
 func (s *OpenAIGatewayService) getStickySessionAccountID(ctx context.Context, groupID *int64, sessionHash string) (int64, error) {
+	if snapshot, ok := ctx.Value(codexStickySelectionSnapshotKey{}).(codexStickySelectionSnapshot); ok &&
+		snapshot.groupID == derefGroupID(groupID) && snapshot.session == sessionHash {
+		return snapshot.accountID, nil
+	}
 	if s == nil || s.cache == nil {
 		return 0, nil
 	}
@@ -137,8 +141,36 @@ func (s *OpenAIGatewayService) getStickySessionAccountID(ctx context.Context, gr
 		return 0, nil
 	}
 
+	if state := codexAdaptiveRequestFromContext(ctx); state != nil {
+		cache, ok := s.cache.(OpenAIStickyMigrationCache)
+		if !ok {
+			return 0, fmt.Errorf("OpenAI sticky migration store unavailable")
+		}
+		migration, err := cache.GetOpenAIStickyMigration(ctx, derefGroupID(groupID), primaryKey)
+		if err != nil {
+			return 0, err
+		}
+		state.mu.Lock()
+		model := state.model
+		state.mu.Unlock()
+		if migration != nil && migration.Model == model {
+			state.mu.Lock()
+			state.stickyMigrationPending = true
+			state.stickySourceID = migration.SourceID
+			state.migration = *migration
+			state.mu.Unlock()
+			return migration.TargetID, nil
+		}
+	}
 	accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), primaryKey)
 	if err == nil && accountID > 0 {
+		if state := codexAdaptiveRequestFromContext(ctx); state != nil {
+			state.mu.Lock()
+			if !state.stickyMigrationPending {
+				state.stickySourceID = accountID
+			}
+			state.mu.Unlock()
+		}
 		return accountID, nil
 	}
 	if !s.openAISessionHashReadOldFallbackEnabled() {
@@ -166,6 +198,16 @@ func (s *OpenAIGatewayService) setStickySessionAccountID(ctx context.Context, gr
 	primaryKey := s.openAISessionCacheKey(sessionHash)
 	if primaryKey == "" {
 		return nil
+	}
+	if codexAdaptiveStickyMigrationPending(ctx) {
+		return nil
+	}
+	if codexAdaptiveRequestFromContext(ctx) != nil {
+		cache, ok := s.cache.(OpenAIStickyMigrationCache)
+		if !ok {
+			return fmt.Errorf("OpenAI sticky migration store unavailable")
+		}
+		return cache.SetOpenAIStickySessionIfAbsent(ctx, derefGroupID(groupID), primaryKey, accountID, ttl)
 	}
 
 	if err := s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), primaryKey, accountID, ttl); err != nil {
@@ -213,6 +255,12 @@ func (s *OpenAIGatewayService) deleteStickySessionAccountID(ctx context.Context,
 	}
 	primaryKey := s.openAISessionCacheKey(sessionHash)
 	if primaryKey == "" {
+		return nil
+	}
+	if state := codexAdaptiveRequestFromContext(ctx); state != nil {
+		state.mu.Lock()
+		state.stickyMigrationPending = state.stickySourceID > 0
+		state.mu.Unlock()
 		return nil
 	}
 

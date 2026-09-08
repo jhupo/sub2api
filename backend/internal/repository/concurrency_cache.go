@@ -85,6 +85,14 @@ var (
 		local timeResult = redis.call('TIME')
 		local now = tonumber(timeResult[1])
 		local expireBefore = now - ttl
+		if #KEYS >= 3 then
+			local window = tonumber(ARGV[4])
+			redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', now - window)
+			local pressure = redis.call('ZCARD', KEYS[3])
+			if pressure >= 2 then
+				maxConcurrency = math.max(1, math.ceil(maxConcurrency / pressure))
+			end
+		end
 
 		-- 清理过期槽位
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
@@ -667,6 +675,19 @@ func (c *concurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int
 	}
 	if result == 1 {
 		// 成功占槽后标记活跃账号，后台清理即可从索引定位候选账号。
+		c.touchActiveIndexAt(ctx, accountActiveIndexKey, accountID, now+int64(c.slotTTLSeconds))
+	}
+	return result == 1, nil
+}
+
+func (c *concurrencyCache) AcquireAdaptiveAccountSlot(ctx context.Context, accountID int64, policy service.AccountSlotAdmission, requestID string) (bool, error) {
+	keys := []string{accountSlotKey(accountID), liveAccountSlotKey(accountID), codexAdaptivePressureKey(accountID, policy.PressureModel)}
+	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, keys,
+		policy.MaxConcurrency, c.slotTTLSeconds, requestID, codexAdaptiveWindowSeconds(policy.PressureWindow))
+	if err != nil {
+		return false, err
+	}
+	if result == 1 {
 		c.touchActiveIndexAt(ctx, accountActiveIndexKey, accountID, now+int64(c.slotTTLSeconds))
 	}
 	return result == 1, nil

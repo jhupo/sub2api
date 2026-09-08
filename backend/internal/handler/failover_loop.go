@@ -2,7 +2,9 @@ package handler
 
 import (
 	"context"
+	"math/rand/v2"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -92,6 +94,15 @@ const profitVetoExhaustedMessage = "No available accounts: all candidates reject
 func sameAccountRetryDelayFor(failoverErr *service.UpstreamFailoverError, retryCount int) time.Duration {
 	if failoverErr == nil {
 		return sameAccountRetryDelay
+	}
+	if failoverErr.IsOpenAICapacityShed() {
+		delay := max(sameAccountRetryDelay, failoverErr.SameAccountRetryDelay)
+		if seconds, err := strconv.Atoi(failoverErr.ResponseHeaders.Get("Retry-After")); err == nil && seconds > 0 {
+			delay = max(delay, time.Duration(min(seconds, 86400))*time.Second)
+		} else if at, err := http.ParseTime(failoverErr.ResponseHeaders.Get("Retry-After")); err == nil {
+			delay = max(delay, time.Until(at))
+		}
+		return delay + time.Duration(rand.IntN(251))*time.Millisecond
 	}
 	if failoverErr.SameAccountRetryDelay > 0 {
 		return failoverErr.SameAccountRetryDelay

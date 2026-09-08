@@ -244,9 +244,7 @@ func (h *SettingHandler) GetCodexAdaptiveSchedulingSettings(c *gin.Context) {
 		return
 	}
 	response.Success(c, dto.CodexAdaptiveSchedulingSettings{
-		Enabled:                             settings.Enabled,
-		NormalFirstOutputTimeoutSeconds:     settings.NormalFirstOutputTimeoutSeconds,
-		HighEffortFirstOutputTimeoutSeconds: settings.HighEffortFirstOutputTimeoutSeconds,
+		Enabled: settings.Enabled,
 	})
 }
 
@@ -446,9 +444,7 @@ func (h *SettingHandler) UpdateStreamTimeoutSettings(c *gin.Context) {
 }
 
 type UpdateCodexAdaptiveSchedulingSettingsRequest struct {
-	Enabled                             bool `json:"enabled"`
-	NormalFirstOutputTimeoutSeconds     int  `json:"normal_first_output_timeout_seconds"`
-	HighEffortFirstOutputTimeoutSeconds int  `json:"high_effort_first_output_timeout_seconds"`
+	Enabled bool `json:"enabled"`
 }
 
 // UpdateCodexAdaptiveSchedulingSettings updates the complete policy atomically.
@@ -459,18 +455,14 @@ func (h *SettingHandler) UpdateCodexAdaptiveSchedulingSettings(c *gin.Context) {
 		return
 	}
 	settings := &service.CodexAdaptiveSchedulingSettings{
-		Enabled:                             req.Enabled,
-		NormalFirstOutputTimeoutSeconds:     req.NormalFirstOutputTimeoutSeconds,
-		HighEffortFirstOutputTimeoutSeconds: req.HighEffortFirstOutputTimeoutSeconds,
+		Enabled: req.Enabled,
 	}
 	if err := h.settingService.SetCodexAdaptiveSchedulingSettings(c.Request.Context(), settings); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
 	response.Success(c, dto.CodexAdaptiveSchedulingSettings{
-		Enabled:                             settings.Enabled,
-		NormalFirstOutputTimeoutSeconds:     settings.NormalFirstOutputTimeoutSeconds,
-		HighEffortFirstOutputTimeoutSeconds: settings.HighEffortFirstOutputTimeoutSeconds,
+		Enabled: settings.Enabled,
 	})
 }
 

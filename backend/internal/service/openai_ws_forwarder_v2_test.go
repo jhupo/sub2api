@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
@@ -93,4 +94,42 @@ func TestForwardOpenAIWSV2_KeepsOutboundAndObservedServiceTiersSeparate(t *testi
 				"outbound WS payload still carries the requested Fast tier")
 		})
 	}
+}
+
+func TestForwardOpenAIWSV2_HeartbeatCommitsHeadersWithoutTTFTOrReplay(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, rec := newTurnStateTestContext(t, 99, "ws-heartbeat")
+	RequireOpenAIResponseHeaders(c)
+	cfg := &config.Config{}
+	cfg.Gateway.StreamKeepaliveInterval = 1
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 5
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+	conn := &openAIWSCaptureConn{
+		readDelays: []time.Duration{1200 * time.Millisecond},
+		events:     [][]byte{[]byte(`{"type":"error","error":{"code":"server_error","message":"upstream failed"}}`)},
+	}
+	pool := newOpenAIWSConnPool(cfg)
+	pool.setClientDialerForTest(&openAIWSCaptureDialer{conn: conn, handshake: http.Header{
+		"X-Codex-Turn-State": []string{"state-ws"}, "X-Request-Id": []string{"req-ws"},
+	}})
+	upstream := &httpUpstreamRecorder{}
+	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream, cache: &stubGatewayCache{},
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg), toolCorrector: NewCodexToolCorrector(), openaiWSPool: pool}
+	account := &Account{ID: 5899, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Status: StatusActive, Schedulable: true, Concurrency: 1,
+		Credentials: map[string]any{"api_key": "test"}, Extra: map[string]any{"responses_websockets_v2_enabled": true}}
+	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":"hello"}`))
+	require.Error(t, err)
+	if result != nil {
+		require.Nil(t, result.FirstTokenMs)
+	}
+	require.Nil(t, upstream.lastReq, "committed WS protocol headers forbid HTTP replay")
+	require.True(t, OpenAIStreamAttemptCommitted(c))
+	require.Equal(t, "state-ws", rec.Result().Header.Get("X-Codex-Turn-State"))
+	require.Equal(t, "req-ws", rec.Result().Header.Get("X-Request-Id"))
+	require.Contains(t, rec.Body.String(), ":\n\n")
 }

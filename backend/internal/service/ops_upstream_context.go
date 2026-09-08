@@ -368,6 +368,10 @@ type OpsUpstreamErrorEvent struct {
 	// Outcome
 	UpstreamStatusCode int    `json:"upstream_status_code,omitempty"`
 	UpstreamRequestID  string `json:"upstream_request_id,omitempty"`
+	// Attempt usage is diagnostic upstream evidence, never an additional user
+	// charge. Missing usage is unknown, not a zero-cost inference.
+	UpstreamUsageStatus string       `json:"upstream_usage_status,omitempty"`
+	UpstreamUsage       *OpenAIUsage `json:"upstream_usage,omitempty"`
 
 	// UpstreamURL is the actual upstream URL that was called (host + path, query/fragment stripped).
 	// Helps debug 404/routing errors by showing which endpoint was targeted.
@@ -402,6 +406,9 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 		ev.AtUnixMs = time.Now().UnixMilli()
 	}
 	ev.Platform = strings.TrimSpace(ev.Platform)
+	if ev.Platform == PlatformOpenAI && ev.UpstreamUsageStatus == "" {
+		annotateOpenAIAttemptUsage(&ev, []byte(ev.UpstreamResponseBody))
+	}
 	ev.UpstreamRequestID = strings.TrimSpace(ev.UpstreamRequestID)
 	ev.UpstreamResponseBody = strings.TrimSpace(ev.UpstreamResponseBody)
 	ev.Kind = strings.TrimSpace(ev.Kind)

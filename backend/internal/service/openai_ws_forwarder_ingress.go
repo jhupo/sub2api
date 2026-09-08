@@ -903,6 +903,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			return nil, acquireErr
 		}
 		connID := strings.TrimSpace(lease.ConnID())
+		if !lease.Reused() && account.UsesOpenAICodexProtocol() && !account.IsShadow() {
+			s.UpdateCodexUsageSnapshotFromHeaders(ctx, account.ID, lease.HandshakeHeaders())
+		}
 		if handshakeTurnState := strings.TrimSpace(lease.HandshakeHeader(openAIWSTurnStateHeader)); handshakeTurnState != "" {
 			turnState = handshakeTurnState
 			if stateStore != nil && stateSessionHash != "" {
@@ -939,6 +942,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		turnStart := time.Now()
 		wroteDownstream := false
+		if codexAdaptiveAccountEligible(account) {
+			if err := consumeOpenAIRequestAttempt(ctx); err != nil {
+				return nil, err
+			}
+		}
 		if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(payload), s.openAIWSWriteTimeout()); err != nil {
 			return nil, wrapOpenAIWSIngressTurnError(
 				"write_upstream",
@@ -986,23 +994,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				mappedModelBytes = []byte(mappedModel)
 			}
 		}
-		reasoningEffort := strings.TrimSpace(gjson.GetBytes(payload, "reasoning.effort").String())
-		firstOutputTimeout := codexAdaptiveWSFirstOutputTimeout(ctx, account, payload, mappedModel, reasoningEffort)
-		firstOutputDeadline := turnStart.Add(firstOutputTimeout)
-		var firstOutputGuard *openAIFirstOutputDeadlineGuard
-		if firstOutputTimeout > 0 {
-			firstOutputGuard = newOpenAIFirstOutputDeadlineGuard(firstOutputDeadline)
-			defer firstOutputGuard.stop()
-		}
-		firstOutputReady := firstOutputGuard == nil
+		firstOutputReady := false
 		pendingClientMessages := make([][]byte, 0, 4)
 		pendingClientMessageBytes := int64(0)
-		firstOutputTimeoutError := func() *UpstreamFailoverError {
-			return s.newOpenAIFirstOutputTimeoutError(
-				ctx, c, account, turnStart, originalModel, reasoningEffort,
-				firstOutputTimeout, "websocket_first_semantic_output", lease.HandshakeHeaders(),
-			)
-		}
 		writeClientMessages := func(messages ...[]byte) error {
 			for _, message := range messages {
 				if clientDisconnected {
@@ -1032,51 +1026,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			return nil
 		}
-		finishFirstOutputTimeout := func() error {
-			lease.MarkBroken()
-			failoverErr := firstOutputTimeoutError()
-			if !wroteDownstream {
-				return failoverErr
-			}
-			// response.created is already public at this point, so replaying the
-			// turn on another account would expose two response IDs. Record the
-			// adaptive pressure, terminate this response, and require a reconnect.
-			s.ApplyCodexAdaptiveFailoverPolicy(ctx, account, mappedModel, failoverErr)
-			if !clientDisconnected {
-				failureEvent := buildOpenAIWSFailureEvent(
-					responseID,
-					originalModel,
-					"upstream produced no semantic output before the configured deadline",
-				)
-				if len(failureEvent) > 0 {
-					if err := writeClientMessages(failureEvent); err == nil && !clientDisconnected {
-						markOpenAIWSClientVisibleFailure(c, "response.failed", failureEvent)
-					}
-				}
-			}
-			return NewOpenAIWSRequestScopedClientCloseError(
-				coderws.StatusGoingAway,
-				"upstream produced no semantic output; please reconnect",
-				context.DeadlineExceeded,
-			)
-		}
 		for {
 			readTimeout := s.openAIWSReadTimeout()
-			if !firstOutputReady {
-				remaining := time.Until(firstOutputDeadline)
-				if remaining <= 0 {
-					return nil, finishFirstOutputTimeout()
-				}
-				if readTimeout <= 0 || remaining < readTimeout {
-					readTimeout = remaining
-				}
-			}
 			upstreamMessage, readErr := lease.ReadMessageWithContextTimeout(ctx, readTimeout)
 			if readErr != nil {
 				lease.MarkBroken()
-				if !firstOutputReady && (firstOutputGuard.timedOut() || !time.Now().Before(firstOutputDeadline)) {
-					return nil, finishFirstOutputTimeout()
-				}
 				return nil, wrapOpenAIWSIngressTurnError(
 					"read_upstream",
 					fmt.Errorf("read upstream websocket event: %w", readErr),
@@ -1187,7 +1141,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					lease.MarkBroken()
 					return nil, s.newOpenAIWSRateLimitFailoverError(account, lease.HandshakeHeaders(), upstreamMessage, errMsgRaw)
 				}
-				if !wroteDownstream && firstOutputGuard != nil && openAIStreamErrorEventShouldFailover(upstreamMessage, errMsgRaw) {
+				if !wroteDownstream && openAIStreamErrorEventShouldFailover(upstreamMessage, errMsgRaw) {
 					lease.MarkBroken()
 					return nil, s.newOpenAIStreamFailoverError(
 						c, account, true, lease.HandshakeHeader("x-request-id"), upstreamMessage, errMsgRaw, lease.HandshakeHeaders(),
@@ -1223,7 +1177,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 						UpstreamOutTok: usage.OutputTokens,
 					})
 				}
-				if !wroteDownstream && firstOutputGuard != nil {
+				if !wroteDownstream {
 					failedMessage := extractOpenAISSEErrorMessage(upstreamMessage)
 					if openAIStreamFailedEventShouldFailover(upstreamMessage, failedMessage) {
 						lease.MarkBroken()
@@ -1276,9 +1230,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 						pendingClientMessages = append(pendingClientMessages, append([]byte(nil), clientMessage...))
 						pendingClientMessageBytes += int64(len(clientMessage))
 						continue
-					}
-					if startsClientOutput && !firstOutputGuard.claimOutput() {
-						return nil, finishFirstOutputTimeout()
 					}
 					if startsClientOutput {
 						firstOutputReady = true

@@ -117,6 +117,7 @@ func TestDuplicateAccountCopiesConfigurationAndResetsRuntimeState(t *testing.T) 
 			"quota_daily_start":               "2026-07-15T00:00:00Z",
 			"model_rate_limits":               map[string]any{"gpt-5": "2099-01-01T00:00:00Z"},
 			"codex_5h_used_percent":           80,
+			"codex_usage_observed_at_us":      int64(1788920000000000),
 			"codex_cli_only":                  true,
 			"grok_usage_snapshot":             map[string]any{"status_code": 429},
 			"openai_responses_supported":      false,

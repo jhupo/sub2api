@@ -126,23 +126,7 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	"antigravity_force_token_refresh_at":     {},
 	"antigravity_force_token_refresh_reason": {},
 	// Codex fingerprint convergence uses a per-account random seed, never copied from another account.
-	codexFingerprintSeedExtraKey:           {},
-	"codex_primary_used_percent":           {},
-	"codex_primary_reset_after_seconds":    {},
-	"codex_primary_window_minutes":         {},
-	"codex_secondary_used_percent":         {},
-	"codex_secondary_reset_after_seconds":  {},
-	"codex_secondary_window_minutes":       {},
-	"codex_primary_over_secondary_percent": {},
-	"codex_usage_updated_at":               {},
-	"codex_5h_used_percent":                {},
-	"codex_5h_reset_after_seconds":         {},
-	"codex_5h_window_minutes":              {},
-	"codex_5h_reset_at":                    {},
-	"codex_7d_used_percent":                {},
-	"codex_7d_reset_after_seconds":         {},
-	"codex_7d_window_minutes":              {},
-	"codex_7d_reset_at":                    {},
+	codexFingerprintSeedExtraKey: {},
 }
 
 func duplicateAccountExtra(value map[string]any) (map[string]any, error) {
@@ -152,6 +136,11 @@ func duplicateAccountExtra(value map[string]any) (map[string]any, error) {
 	}
 	for key := range duplicateAccountDiscardedExtraKeys {
 		delete(cloned, key)
+	}
+	for key := range cloned {
+		if IsCodexQuotaObservationExtraKey(key) {
+			delete(cloned, key)
+		}
 	}
 	return cloned, nil
 }
@@ -883,6 +872,11 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
 	updates = sanitizedCodexFingerprintExtraUpdates(updates)
 	updates = stripOpenAIAutoResetCreditManagedExtra(updates, true)
+	for key := range updates {
+		if IsCodexQuotaObservationExtraKey(key) {
+			delete(updates, key)
+		}
+	}
 	delete(updates, UpstreamBillingProbeEnabledExtraKey)
 	delete(updates, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(updates, UpstreamBillingProbeExtraKey)
@@ -910,6 +904,11 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// Managed probe/session state may only enter through dedicated typed endpoints.
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
 	input.Extra = stripOpenAIAutoResetCreditManagedExtra(input.Extra, true)
+	for key := range input.Extra {
+		if IsCodexQuotaObservationExtraKey(key) {
+			delete(input.Extra, key)
+		}
+	}
 	delete(input.Extra, UpstreamBillingProbeEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingProbeExtraKey)

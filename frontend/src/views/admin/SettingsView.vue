@@ -631,52 +631,6 @@
                 </div>
 
                 <div
-                  v-if="codexAdaptiveSchedulingForm.enabled"
-                  class="grid grid-cols-1 gap-4 border-t border-gray-100 pt-4 sm:grid-cols-2 dark:border-dark-700"
-                >
-                  <div>
-                    <label
-                      for="codex-normal-first-output-timeout"
-                      class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
-                    >
-                      {{ t("admin.settings.codexAdaptiveScheduling.normalTimeout") }}
-                    </label>
-                    <input
-                      id="codex-normal-first-output-timeout"
-                      v-model.number="codexAdaptiveSchedulingForm.normal_first_output_timeout_seconds"
-                      type="number"
-                      min="30"
-                      max="600"
-                      class="input w-32"
-                      data-testid="codex-adaptive-normal-timeout"
-                    />
-                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                      {{ t("admin.settings.codexAdaptiveScheduling.normalTimeoutHint") }}
-                    </p>
-                  </div>
-                  <div>
-                    <label
-                      for="codex-high-first-output-timeout"
-                      class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
-                    >
-                      {{ t("admin.settings.codexAdaptiveScheduling.highTimeout") }}
-                    </label>
-                    <input
-                      id="codex-high-first-output-timeout"
-                      v-model.number="codexAdaptiveSchedulingForm.high_effort_first_output_timeout_seconds"
-                      type="number"
-                      min="30"
-                      max="1800"
-                      class="input w-32"
-                      data-testid="codex-adaptive-high-timeout"
-                    />
-                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                      {{ t("admin.settings.codexAdaptiveScheduling.highTimeoutHint") }}
-                    </p>
-                  </div>
-                </div>
-
-                <div
                   class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700"
                 >
                   <button
@@ -9033,8 +8987,6 @@ const codexAdaptiveSchedulingLoading = ref(true);
 const codexAdaptiveSchedulingSaving = ref(false);
 const codexAdaptiveSchedulingForm = reactive({
   enabled: false,
-  normal_first_output_timeout_seconds: 90,
-  high_effort_first_output_timeout_seconds: 240,
 });
 
 // Rectifier 状态
@@ -12012,10 +11964,6 @@ async function saveCodexAdaptiveSchedulingSettings() {
     const updated =
       await adminAPI.settings.updateCodexAdaptiveSchedulingSettings({
         enabled: codexAdaptiveSchedulingForm.enabled,
-        normal_first_output_timeout_seconds:
-          codexAdaptiveSchedulingForm.normal_first_output_timeout_seconds,
-        high_effort_first_output_timeout_seconds:
-          codexAdaptiveSchedulingForm.high_effort_first_output_timeout_seconds,
       });
     Object.assign(codexAdaptiveSchedulingForm, updated);
     appStore.showSuccess(
