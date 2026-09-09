@@ -32,22 +32,22 @@ func (s *RedeemCacheSuite) TestIncrementAndGetRedeemAttemptCount() {
 	userID := int64(1)
 	key := fmt.Sprintf("%s%d", redeemRateLimitKeyPrefix, userID)
 
-	require.NoError(s.T(), s.cache.IncrementRedeemAttemptCount(s.ctx, userID), "IncrementRedeemAttemptCount")
+	require.NoError(s.T(), s.cache.IncrementRedeemAttemptCount(s.ctx, userID, 10*time.Minute), "IncrementRedeemAttemptCount")
 	count, err := s.cache.GetRedeemAttemptCount(s.ctx, userID)
 	require.NoError(s.T(), err, "GetRedeemAttemptCount")
 	require.Equal(s.T(), 1, count, "count mismatch")
 
 	ttl, err := s.rdb.TTL(s.ctx, key).Result()
 	require.NoError(s.T(), err, "TTL")
-	s.AssertTTLWithin(ttl, 1*time.Second, redeemRateLimitDuration)
+	s.AssertTTLWithin(ttl, 1*time.Second, 10*time.Minute)
 }
 
 func (s *RedeemCacheSuite) TestMultipleIncrements() {
 	userID := int64(2)
 
-	require.NoError(s.T(), s.cache.IncrementRedeemAttemptCount(s.ctx, userID))
-	require.NoError(s.T(), s.cache.IncrementRedeemAttemptCount(s.ctx, userID))
-	require.NoError(s.T(), s.cache.IncrementRedeemAttemptCount(s.ctx, userID))
+	require.NoError(s.T(), s.cache.IncrementRedeemAttemptCount(s.ctx, userID, 10*time.Minute))
+	require.NoError(s.T(), s.cache.IncrementRedeemAttemptCount(s.ctx, userID, 10*time.Minute))
+	require.NoError(s.T(), s.cache.IncrementRedeemAttemptCount(s.ctx, userID, 10*time.Minute))
 
 	count, err := s.cache.GetRedeemAttemptCount(s.ctx, userID)
 	require.NoError(s.T(), err)

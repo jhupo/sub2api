@@ -321,20 +321,56 @@ const (
 
 // resolveRedeemAction decides the idempotency action based on an existing redeem code lookup.
 // existing is the result of GetByCode; lookupErr is the error from that call.
-func resolveRedeemAction(existing *RedeemCode, lookupErr error) redeemAction {
-	if existing == nil || lookupErr != nil {
-		return redeemActionCreate
+func resolveRedeemAction(existing *RedeemCode, lookupErr error) (redeemAction, error) {
+	if lookupErr != nil {
+		if errors.Is(lookupErr, ErrRedeemCodeNotFound) {
+			return redeemActionCreate, nil
+		}
+		return redeemActionCreate, fmt.Errorf("lookup redeem code: %w", lookupErr)
+	}
+	if existing == nil {
+		return redeemActionCreate, errors.New("redeem code lookup returned nil without error")
 	}
 	if existing.IsUsed() {
-		return redeemActionSkipCompleted
+		return redeemActionSkipCompleted, nil
 	}
-	return redeemActionRedeem
+	return redeemActionRedeem, nil
+}
+
+func validatePaymentRedeemCode(o *dbent.PaymentOrder, code *RedeemCode) error {
+	if o == nil || code == nil {
+		return errors.New("payment redeem code validation requires an order and code")
+	}
+	if code.Code != o.RechargeCode || code.Type != RedeemTypeBalance ||
+		math.IsNaN(code.Value) || math.IsInf(code.Value, 0) ||
+		math.IsNaN(o.Amount) || math.IsInf(o.Amount, 0) || math.Abs(code.Value-o.Amount) > 1e-8 {
+		return infraerrors.Conflict("REDEEM_CODE_CONFLICT", "redeem code does not match the payment order")
+	}
+	switch code.Status {
+	case StatusUnused:
+		if code.UsedBy == nil {
+			return nil
+		}
+	case StatusUsed:
+		if code.UsedBy != nil && *code.UsedBy == o.UserID {
+			return nil
+		}
+	}
+	return infraerrors.Conflict("REDEEM_CODE_CONFLICT", "redeem code state does not match the payment order")
 }
 
 func (s *PaymentService) doBalance(ctx context.Context, o *dbent.PaymentOrder, lease *paymentFulfillmentLease) error {
 	// Idempotency: check if redeem code already exists (from a previous partial run)
 	existing, lookupErr := s.redeemService.GetByCode(ctx, o.RechargeCode)
-	action := resolveRedeemAction(existing, lookupErr)
+	action, actionErr := resolveRedeemAction(existing, lookupErr)
+	if actionErr != nil {
+		return actionErr
+	}
+	if existing != nil {
+		if err := validatePaymentRedeemCode(o, existing); err != nil {
+			return err
+		}
+	}
 
 	switch action {
 	case redeemActionSkipCompleted:
@@ -351,7 +387,7 @@ func (s *PaymentService) doBalance(ctx context.Context, o *dbent.PaymentOrder, l
 	case redeemActionRedeem:
 		// Code exists but unused — skip creation, proceed to redeem
 	}
-	if _, err := s.redeemService.Redeem(ContextSkipRedeemAffiliate(ctx), o.UserID, o.RechargeCode); err != nil {
+	if _, err := s.redeemService.redeemForPaymentFulfillment(ctx, o.UserID, o.RechargeCode); err != nil {
 		return fmt.Errorf("redeem balance: %w", err)
 	}
 	if err := s.applyAffiliateRebateForOrder(ctx, o); err != nil {

@@ -674,6 +674,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			requestView = newOpenAIRequestView(body)
 		}
 	}
+	// Ollama Cloud applies a provider-specific output ceiling after all request
+	// normalization so max_tokens aliases cannot bypass the limit.
+	if clampedBody := clampOllamaCloudResponsesMaxTokens(account, body); !bytes.Equal(clampedBody, body) {
+		body = clampedBody
+		requestView = newOpenAIRequestView(body)
+		reqBody = nil
+	}
 	// Run after orphan-output filtering and all request-map rebuilds so a
 	// compaction trigger cannot remain ahead of surviving history items.
 	if normalizedBody, changed, normalizeErr := NormalizeCompactionTriggerInputOrder(body); normalizeErr != nil {

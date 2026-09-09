@@ -26,8 +26,8 @@ var (
 )
 
 const (
-	redeemMaxErrorsPerHour  = 20
-	redeemRateLimitDuration = time.Hour
+	redeemMaxFailedAttempts = 30
+	redeemRateLimitDuration = 10 * time.Minute
 	redeemLockDuration      = 10 * time.Second // 锁超时时间，防止死锁
 )
 
@@ -43,7 +43,7 @@ func ContextSkipRedeemAffiliate(ctx context.Context) context.Context {
 // RedeemCache defines cache operations for redeem service
 type RedeemCache interface {
 	GetRedeemAttemptCount(ctx context.Context, userID int64) (int, error)
-	IncrementRedeemAttemptCount(ctx context.Context, userID int64) error
+	IncrementRedeemAttemptCount(ctx context.Context, userID int64, window time.Duration) error
 
 	AcquireRedeemLock(ctx context.Context, code string, ttl time.Duration) (bool, error)
 	ReleaseRedeemLock(ctx context.Context, code string) error
@@ -388,7 +388,7 @@ func (s *RedeemService) checkRedeemRateLimit(ctx context.Context, userID int64) 
 		return nil
 	}
 
-	if count >= redeemMaxErrorsPerHour {
+	if count >= redeemMaxFailedAttempts {
 		return ErrRedeemRateLimited
 	}
 
@@ -401,7 +401,7 @@ func (s *RedeemService) incrementRedeemErrorCount(ctx context.Context, userID in
 		return
 	}
 
-	_ = s.cache.IncrementRedeemAttemptCount(ctx, userID)
+	_ = s.cache.IncrementRedeemAttemptCount(ctx, userID, redeemRateLimitDuration)
 }
 
 // acquireRedeemLock 尝试获取兑换码的分布式锁
@@ -436,10 +436,11 @@ func unsupportedRedeemTypeError(codeType string) error {
 }
 
 // Redeem 使用兑换码
-func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (*RedeemCode, error) {
-	// 检查限流
-	if err := s.checkRedeemRateLimit(ctx, userID); err != nil {
-		return nil, err
+func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, enforceRateLimit bool) (*RedeemCode, error) {
+	if enforceRateLimit {
+		if err := s.checkRedeemRateLimit(ctx, userID); err != nil {
+			return nil, err
+		}
 	}
 
 	// 获取分布式锁，防止同一兑换码并发使用
@@ -452,7 +453,9 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 	redeemCode, err := s.redeemRepo.GetByCode(ctx, code)
 	if err != nil {
 		if errors.Is(err, ErrRedeemCodeNotFound) {
-			s.incrementRedeemErrorCount(ctx, userID)
+			if enforceRateLimit {
+				s.incrementRedeemErrorCount(ctx, userID)
+			}
 			return nil, ErrRedeemCodeNotFound
 		}
 		return nil, fmt.Errorf("get redeem code: %w", err)
@@ -460,11 +463,15 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 
 	// 检查兑换码状态和码本身的过期时间
 	if redeemCode.IsExpired() {
-		s.incrementRedeemErrorCount(ctx, userID)
+		if enforceRateLimit {
+			s.incrementRedeemErrorCount(ctx, userID)
+		}
 		return nil, ErrRedeemCodeExpired
 	}
 	if !redeemCode.CanUse() {
-		s.incrementRedeemErrorCount(ctx, userID)
+		if enforceRateLimit {
+			s.incrementRedeemErrorCount(ctx, userID)
+		}
 		return nil, ErrRedeemCodeUsed
 	}
 
@@ -574,6 +581,22 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 	}
 
 	return redeemCode, nil
+}
+
+// Redeem applies the public-user redemption policy, including abuse limiting.
+func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (*RedeemCode, error) {
+	return s.redeem(ctx, userID, code, true)
+}
+
+// redeemForPaymentFulfillment is used by verified payment orders. Payment
+// retries must not consume or be blocked by the public redemption limiter.
+func (s *RedeemService) redeemForPaymentFulfillment(ctx context.Context, userID int64, code string) (*RedeemCode, error) {
+	return s.redeem(ContextSkipRedeemAffiliate(ctx), userID, code, false)
+}
+
+// RedeemForAdminFulfillment is used by authenticated administrative actions.
+func (s *RedeemService) RedeemForAdminFulfillment(ctx context.Context, userID int64, code string) (*RedeemCode, error) {
+	return s.redeem(ctx, userID, code, false)
 }
 
 // invalidateRedeemCaches 失效兑换相关的缓存

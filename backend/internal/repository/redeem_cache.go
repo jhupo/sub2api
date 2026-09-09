@@ -10,10 +10,17 @@ import (
 )
 
 const (
-	redeemRateLimitKeyPrefix = "redeem:ratelimit:"
+	redeemRateLimitKeyPrefix = "redeem:ratelimit:v2:"
 	redeemLockKeyPrefix      = "redeem:lock:"
-	redeemRateLimitDuration  = 24 * time.Hour
 )
+
+const redeemAttemptWindowScript = `
+local count = redis.call('INCR', KEYS[1])
+if count == 1 or redis.call('TTL', KEYS[1]) < 0 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+end
+return count
+`
 
 // redeemRateLimitKey generates the Redis key for redeem attempt rate limiting.
 func redeemRateLimitKey(userID int64) string {
@@ -42,12 +49,9 @@ func (c *redeemCache) GetRedeemAttemptCount(ctx context.Context, userID int64) (
 	return count, err
 }
 
-func (c *redeemCache) IncrementRedeemAttemptCount(ctx context.Context, userID int64) error {
+func (c *redeemCache) IncrementRedeemAttemptCount(ctx context.Context, userID int64, window time.Duration) error {
 	key := redeemRateLimitKey(userID)
-	pipe := c.rdb.Pipeline()
-	pipe.Incr(ctx, key)
-	pipe.Expire(ctx, key, redeemRateLimitDuration)
-	_, err := pipe.Exec(ctx)
+	_, err := c.rdb.Eval(ctx, redeemAttemptWindowScript, []string{key}, window.Milliseconds()).Result()
 	return err
 }
 

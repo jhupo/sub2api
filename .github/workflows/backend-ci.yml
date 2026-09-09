@@ -40,6 +40,11 @@ jobs:
       - name: Unit tests
         working-directory: backend
         run: make test-unit
+      - name: Concurrency regression tests
+        working-directory: backend
+        run: >-
+          go test -race -tags=unit -parallel=1 ./internal/repository ./internal/service
+          -run '^Test(PgDumper|RedeemAttemptWindow|TrustedRedeem|PaymentRedeem|PaymentLookup|ExecuteBalanceFulfillment|AccountSlotAdmission|OpenAIStickyMigration|OpenAIRequestAttempt|.*QuotaObservation)'
       - name: Integration tests
         working-directory: backend
         run: make test-integration
