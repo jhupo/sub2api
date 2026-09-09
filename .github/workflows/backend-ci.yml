@@ -86,5 +86,5 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.13
-          args: --timeout=30m
+          args: --timeout=30m --max-issues-per-linter=0 --max-same-issues=0
           working-directory: backend

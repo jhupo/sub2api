@@ -53,7 +53,8 @@ func TestCodexAdaptivePressureExpiresOutsideWindow(t *testing.T) {
 	redisServer.SetTime(now)
 	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	cache := NewConcurrencyCache(client, 15, 900)
-	pressure := cache.(service.CodexAdaptivePressureCache)
+	pressure, ok := cache.(service.CodexAdaptivePressureCache)
+	require.True(t, ok)
 	ctx := context.Background()
 
 	_, err := pressure.ObserveCodexAdaptiveFailure(ctx, 7, "gpt-5.6", "session", 90*time.Second)
@@ -68,7 +69,8 @@ func TestCodexAdaptivePressureExpiresOutsideWindow(t *testing.T) {
 func TestCodexAdaptivePressureIsolatedAcrossAccountsAndModels(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
-	pressure := NewConcurrencyCache(client, 15, 900).(service.CodexAdaptivePressureCache)
+	pressure, ok := NewConcurrencyCache(client, 15, 900).(service.CodexAdaptivePressureCache)
+	require.True(t, ok)
 	ctx := context.Background()
 	window := 90 * time.Second
 

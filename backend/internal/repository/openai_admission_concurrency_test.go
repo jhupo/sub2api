@@ -32,7 +32,8 @@ func newOpenAIAdmissionTestRedis(t *testing.T) *redis.Client {
 
 func TestOpenAIAdaptiveAdmissionConcurrentUsersAndAccounts(t *testing.T) {
 	client := newOpenAIAdmissionTestRedis(t)
-	cache := NewConcurrencyCache(client, 15, 900).(*concurrencyCache)
+	cache, ok := NewConcurrencyCache(client, 15, 900).(*concurrencyCache)
+	require.True(t, ok)
 	ctx := context.Background()
 	base := time.Now().UnixMicro()
 	model := "admission-test"
@@ -96,7 +97,8 @@ func TestOpenAIAdaptiveAdmissionConcurrentUsersAndAccounts(t *testing.T) {
 }
 
 func TestOpenAIAdaptiveAdmissionPressureChangesWhileQueued(t *testing.T) {
-	cache := NewConcurrencyCache(newOpenAIAdmissionTestRedis(t), 15, 900).(*concurrencyCache)
+	cache, ok := NewConcurrencyCache(newOpenAIAdmissionTestRedis(t), 15, 900).(*concurrencyCache)
+	require.True(t, ok)
 	ctx := context.Background()
 	id := time.Now().UnixMicro()
 	policy := service.AccountSlotAdmission{MaxConcurrency: 20, PressureModel: "queue-test", PressureWindow: 90 * time.Second}

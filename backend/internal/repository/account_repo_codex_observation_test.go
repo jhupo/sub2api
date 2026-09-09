@@ -62,7 +62,7 @@ func TestCodexQuotaAccountEditPreservesLockedObservations(t *testing.T) {
 			}
 			got, err := lockAndMergeAccountExtra(context.Background(), client, account, nil, nil)
 			require.NoError(t, err)
-			require.True(t, got["codex_cli_only"].(bool))
+			require.Equal(t, true, got["codex_cli_only"])
 			require.Equal(t, 0.95, got["auto_pause_5h_threshold"])
 			require.NotContains(t, got, "codex_5h_reset_at")
 			if current == "{}" {

@@ -13,7 +13,8 @@ import (
 
 func TestOpenAIStickyMigrationConcurrentSingleWinner(t *testing.T) {
 	client := newOpenAIAdmissionTestRedis(t)
-	cache := NewGatewayCache(client).(*gatewayCache)
+	cache, ok := NewGatewayCache(client).(*gatewayCache)
+	require.True(t, ok)
 	ctx := context.Background()
 	session := fmt.Sprintf("openai:migration:%d", time.Now().UnixNano())
 	require.NoError(t, cache.SetSessionAccountID(ctx, 17, session, 1, time.Minute))
@@ -64,7 +65,8 @@ func TestOpenAIStickyMigrationConcurrentSingleWinner(t *testing.T) {
 }
 
 func TestOpenAIStickyMigrationLeaseCASAndIsolation(t *testing.T) {
-	cache := NewGatewayCache(newOpenAIAdmissionTestRedis(t)).(*gatewayCache)
+	cache, ok := NewGatewayCache(newOpenAIAdmissionTestRedis(t)).(*gatewayCache)
+	require.True(t, ok)
 	ctx := context.Background()
 	session := fmt.Sprintf("openai:lease:%d", time.Now().UnixNano())
 	a := service.OpenAIStickyMigration{SourceID: 1, TargetID: 2, Version: "a"}
