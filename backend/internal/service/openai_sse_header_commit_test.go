@@ -36,7 +36,7 @@ func TestOpenAIStreamHeartbeatCommitsStateWithoutSemanticOutput(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				defer upstream.Close()
+				defer func() { _ = upstream.Close() }()
 				_, _ = io.WriteString(upstream, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-test\"}}\n\n")
 				select {
 				case <-writer.flushed:

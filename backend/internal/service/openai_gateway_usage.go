@@ -1167,7 +1167,9 @@ func mergeCodexQuotaObservations(left, right map[string]any) map[string]any {
 	if right == nil {
 		return left
 	}
-	if left["codex_usage_observed_at_us"].(int64) > right["codex_usage_observed_at_us"].(int64) {
+	leftObservedAt, _ := left["codex_usage_observed_at_us"].(int64)
+	rightObservedAt, _ := right["codex_usage_observed_at_us"].(int64)
+	if leftObservedAt > rightObservedAt {
 		left, right = right, left
 	}
 	merged := shallowCopyMap(left)

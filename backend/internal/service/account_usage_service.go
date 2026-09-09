@@ -312,7 +312,6 @@ type AccountUsageService struct {
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
-	agentIdentityTaskMu     sync.Mutex
 	agentIdentityWS         agentIdentityWSConnectionInvalidator
 }
 
@@ -883,7 +882,8 @@ func (s *AccountUsageService) shouldQueryOpenAICodexSnapshot(accountID int64, no
 		if !loaded {
 			return true
 		}
-		if now.Sub(cached.(time.Time)) < interval {
+		lastQuery, valid := cached.(time.Time)
+		if valid && now.Sub(lastQuery) < interval {
 			return false
 		}
 		if s.cache.openAIProbeCache.CompareAndSwap(accountID, cached, now) {

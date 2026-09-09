@@ -2742,7 +2742,7 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	observation, quotaSnapshot := updates["codex_usage_observed_at_us"]
 	observedAt, validObservation := observation.(int64)
 	if quotaSnapshot && (!validObservation || observedAt <= 0) {
-		return errors.New("Codex quota observation requires a positive int64 timestamp")
+		return errors.New("codex quota observation requires a positive int64 timestamp")
 	}
 
 	// 使用 JSONB 合并操作实现原子更新，避免读-改-写的并发丢失更新问题

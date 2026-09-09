@@ -40,8 +40,10 @@ func newLockTestDumper(t *testing.T, mode string) (*PgDumper, sqlmock.Sqlmock) {
 	t.Cleanup(func() { _ = db.Close() })
 	d, ok := NewPgDumper(&config.Config{}, db).(*PgDumper)
 	require.True(t, ok)
+	testExecutable, err := os.Executable()
+	require.NoError(t, err)
 	d.commandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPgDumpHelperProcess$")
+		cmd := exec.CommandContext(ctx, testExecutable, "-test.run=^TestPgDumpHelperProcess$")
 		cmd.Env = append(cmd.Environ(), "SUB2API_TEST_PG_DUMP="+mode)
 		return cmd
 	}

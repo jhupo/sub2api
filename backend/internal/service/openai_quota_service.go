@@ -163,7 +163,11 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 		if result.Err != nil {
 			return nil, result.Err
 		}
-		usage := *result.Val.(*OpenAIQuotaUsage)
+		queried, ok := result.Val.(*OpenAIQuotaUsage)
+		if !ok || queried == nil {
+			return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_QUOTA_INVALID_RESULT", "openai quota query returned an invalid result")
+		}
+		usage := *queried
 		return &usage, nil
 	}
 }

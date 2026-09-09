@@ -83,7 +83,7 @@ func TestOpenAINativeMetadataWaitsForTerminalWithoutFirstOutputDeadline(t *testi
 				MaxLineSize: defaultMaxLineSize,
 			}}}
 			reader, writer := io.Pipe()
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 			writerDone := make(chan struct{})
 			go func() {
 				defer close(writerDone)
