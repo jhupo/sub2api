@@ -14,6 +14,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -39,9 +40,19 @@ const (
 	openAIImageBackendUserAgent            = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 	openAIImageMaxDownloadBytes            = 20 << 20 // 20MB per image download
 	openAIImageMaxUploadPartSize           = 20 << 20 // 20MB per multipart upload part
-	openAIImagesResponsesMainModel         = "gpt-5.4-mini"
+	openAIImagesResponsesMainModel         = "gpt-5.6-sol"
 	openAIImagesVerbatimPromptInstructions = "When invoking the image_generation tool, use the user's image prompt verbatim. Do not rewrite, expand, summarize, embellish, translate, normalize punctuation, or add or remove visual details or constraints. Preserve the original language, wording, capitalization, quotes, and punctuation exactly."
 )
+
+// openAIImagesResponsesMainModelValue selects the Responses driver independently
+// of the image_generation tool model. An environment override lets operators
+// recover from upstream model retirement without rebuilding the gateway.
+func openAIImagesResponsesMainModelValue() string {
+	if model := strings.TrimSpace(os.Getenv("SUB2API_IMAGES_MAIN_MODEL")); model != "" {
+		return model
+	}
+	return openAIImagesResponsesMainModel
+}
 
 type OpenAIImagesCapability string
 
@@ -911,7 +922,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 	}
 	c.Data(resp.StatusCode, contentType, body)
 
-	usage, _ := extractOpenAIUsageFromJSONBytes(body)
+	usage, _ := extractOpenAIImagesUsageFromJSONBytes(body)
 	return usage, extractOpenAIImageCountFromJSONBytes(body), collectOpenAIResponseImageOutputSizesFromJSONBytes(body), nil
 }
 
@@ -1157,11 +1168,21 @@ func extractOpenAIImagesBillableCountFromJSONBytes(body []byte) int {
 	return 0
 }
 
+// Images responses without output details report image-only output_tokens.
+// Keep this normalization at the Images boundary, never on mixed Responses.
+func extractOpenAIImagesUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
+	usage, ok := extractOpenAIUsageFromJSONBytes(body)
+	if ok && !gjson.GetBytes(body, "usage.output_tokens_details").Exists() {
+		usage.ImageOutputTokens = usage.OutputTokens
+	}
+	return usage, ok
+}
+
 func mergeOpenAIUsage(dst *OpenAIUsage, body []byte) {
 	if dst == nil {
 		return
 	}
-	if parsed, ok := extractOpenAIUsageFromJSONBytes(body); ok {
+	if parsed, ok := extractOpenAIImagesUsageFromJSONBytes(body); ok {
 		if parsed.InputTokens > 0 {
 			dst.InputTokens = parsed.InputTokens
 		}

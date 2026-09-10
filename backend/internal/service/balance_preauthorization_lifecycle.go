@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -173,6 +174,8 @@ const (
 // for a count/size/duration-metered endpoint. All fields mirror CostInput so
 // the reserved hold is priced with the exact policy used at settlement.
 type PerRequestPreauthorizationEstimate struct {
+	// Tokens are protocol-specific estimates used only when pricing is token based.
+	Tokens UsageTokens
 	// RequestCount is the number of billable units (e.g. images requested).
 	RequestCount int
 	// UsageUnits is a continuous billable quantity (e.g. total video seconds).
@@ -189,21 +192,23 @@ type PerRequestPreauthorizationEstimate struct {
 // per-request estimate kind, PerRequestEstimate supplies the billing units and
 // the output window is unused.
 type BalancePreauthorizationRequest struct {
-	RequestID                 string
-	APIKeyID                  int64
-	UserID                    int64
-	AuthorizationFingerprint  string
-	BillingType               int8
-	SubscriptionID            int64
-	BillableInputBytes        int
-	EstimatedInputTokens      int
-	InitialOutputWindowTokens int
-	DisableOutputReservation  bool
-	CostInput                 CostInput
-	EstimateKind              PreauthorizationEstimateKind
-	PerRequestEstimate        PerRequestPreauthorizationEstimate
-	FixedAmount               float64
-	ExpiresAt                 time.Time
+	RequestID                  string
+	APIKeyID                   int64
+	UserID                     int64
+	AuthorizationFingerprint   string
+	BillingType                int8
+	SubscriptionID             int64
+	BillableInputBytes         int
+	EstimatedInputTokens       int
+	EstimatedImageInputTokens  int
+	EstimatedImageOutputTokens int
+	InitialOutputWindowTokens  int
+	DisableOutputReservation   bool
+	CostInput                  CostInput
+	EstimateKind               PreauthorizationEstimateKind
+	PerRequestEstimate         PerRequestPreauthorizationEstimate
+	FixedAmount                float64
+	ExpiresAt                  time.Time
 }
 
 // BalancePreauthorizationResumeRequest identifies one exact existing hold.
@@ -558,6 +563,31 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 		{CacheCreationTokens: inputTokens, CacheCreation5mTokens: inputTokens, OutputTokens: outputWindow},
 		{CacheCreationTokens: inputTokens, CacheCreation1hTokens: inputTokens, OutputTokens: outputWindow},
 	}
+	imageInput, imageOutput := request.EstimatedImageInputTokens, request.EstimatedImageOutputTokens
+	if tokens := request.PerRequestEstimate.Tokens; tokens.ImageOutputTokens > 0 {
+		inputTokens, outputWindow = tokens.InputTokens, tokens.OutputTokens
+		imageInput, imageOutput = tokens.ImageInputTokens, tokens.ImageOutputTokens
+		outputWindow -= imageOutput
+	} else if imageOutput > 0 && IsGPTImageGenerationModel(base.Model) {
+		outputWindow = 0
+	}
+	if imageInput > 0 || imageOutput > 0 {
+		if outputWindow < 0 || outputWindow > math.MaxInt-imageOutput {
+			return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
+		}
+		textInput := max(inputTokens-imageInput, 0)
+		scenarios = []UsageTokens{
+			{InputTokens: inputTokens},
+			{InputTokens: imageInput, CacheReadTokens: textInput},
+			{InputTokens: imageInput, CacheCreationTokens: textInput, CacheCreation5mTokens: textInput},
+			{InputTokens: imageInput, CacheCreationTokens: textInput, CacheCreation1hTokens: textInput},
+		}
+		for i := range scenarios {
+			scenarios[i].ImageInputTokens = imageInput
+			scenarios[i].OutputTokens = outputWindow + imageOutput
+			scenarios[i].ImageOutputTokens = imageOutput
+		}
+	}
 	maxCost := -1.0
 	maxTokens := scenarios[0]
 	for _, tokens := range scenarios {
@@ -602,7 +632,9 @@ func (s *BalancePreauthorizationService) estimateOutputUnitPrice(
 		return 0, nil
 	}
 	baseline := base
-	windowedTokens.OutputTokens = 0
+	// The image budget is already reserved in full. Only text deltas may
+	// increase streaming holds; base64 payload bytes are not image tokens.
+	windowedTokens.OutputTokens = windowedTokens.ImageOutputTokens
 	baseline.Tokens = windowedTokens
 	baselineCost, err := s.costCalculator.CalculateCostUnified(baseline)
 	if err != nil {
@@ -713,6 +745,7 @@ func validateBalancePreauthorizationRequest(request *BalancePreauthorizationRequ
 		strings.TrimSpace(request.AuthorizationFingerprint) == "" ||
 		request.APIKeyID <= 0 || request.UserID <= 0 ||
 		request.BillableInputBytes < 0 || request.EstimatedInputTokens < 0 || request.InitialOutputWindowTokens < 0 ||
+		request.EstimatedImageInputTokens < 0 || request.EstimatedImageOutputTokens < 0 ||
 		invalidNonnegativeMoney(request.FixedAmount) || (!request.ExpiresAt.IsZero() && !request.ExpiresAt.After(time.Now())) {
 		return ErrInvalidBillingPreauthorizationEstimate
 	}

@@ -146,8 +146,8 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, body)
 
-	// 预扣：图片按“张数 × 尺寸档单价”计费，在选号（上游产生费用）之前按请求参数
-	// 精确预留余额；结算走 RecordUsage → applyUsageBilling 的 guard.Finalize 退实际
+	// 预扣在选号前解析最终定价：按张数/尺寸计费时预留请求价，token 计费时预留
+	// 图文 token 预算；结算走 RecordUsage → applyUsageBilling 的 guard.Finalize 退实际
 	// 差额，兜底 defer 退款在 worker 交接后自动失效。pricingAt 与 Images 结算口径
 	// 一致地使用调用时刻。
 	balanceGuard, err := preauthorizePerRequestGatewayRequest(
@@ -155,10 +155,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		apiKey, subscription, body,
 		service.BalancePreauthorizationBillingModel(routingModel, channelMapping),
 		time.Now(),
-		service.PerRequestPreauthorizationEstimate{
-			RequestCount: parsed.N,
-			SizeTier:     parsed.SizeTier,
-		},
+		parsed.PreauthorizationEstimate(),
 		service.BalancePreauthorizationRateImage,
 	)
 	if h.handlePreauthorizationError(c, err, streamStarted) {

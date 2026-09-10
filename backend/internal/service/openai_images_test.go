@@ -887,7 +887,7 @@ func TestParseOpenAIImagesSSEUsageBytes_ToolUsagePrecedenceAndFallback(t *testin
 		{name: "fractional field", toolUsage: `{"input_tokens":46,"output_tokens":2459.5,"output_tokens_details":{"image_tokens":2459}}`, want: fallback},
 		{name: "negative field", toolUsage: `{"input_tokens":46,"output_tokens":2459,"output_tokens_details":{"image_tokens":-1}}`, want: fallback},
 		{name: "overflow field", toolUsage: `{"input_tokens":46,"output_tokens":9223372036854775808,"output_tokens_details":{"image_tokens":2459}}`, want: fallback},
-		{name: "incomplete object", toolUsage: `{"input_tokens":46,"output_tokens":2459}`, want: fallback},
+		{name: "image-only output without details", toolUsage: `{"input_tokens":46,"output_tokens":2459}`, want: OpenAIUsage{InputTokens: 46, OutputTokens: 2459, ImageOutputTokens: 2459}},
 		{name: "hostile huge exponent", toolUsage: `{"input_tokens":1e1000000000,"output_tokens":2459,"output_tokens_details":{"image_tokens":2459}}`, want: fallback},
 	}
 

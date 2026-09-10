@@ -314,6 +314,9 @@ type OpenAIForwardResult struct {
 // that may clear model-scoped transient state. The zero value remains a success
 // for existing non-WS callers.
 func (r *OpenAIForwardResult) SucceededForScheduling() bool {
+	if r != nil && r.ClientDisconnect {
+		return false
+	}
 	if r == nil || !r.OpenAIWSMode || r.UpstreamTerminalEvent == "" {
 		return true
 	}
@@ -478,6 +481,7 @@ type OpenAIGatewayService struct {
 	openaiAccountRuntimeBlockUntil      sync.Map // key: int64(accountID), value: time.Time
 	openaiAccountRuntimeBlockLocks      sync.Map // key: int64(accountID), value: *sync.Mutex
 	openaiAccountRuntimeBlockGeneration sync.Map // key: int64(accountID), value: uint64
+	openaiAccountRuntimeBlockEvidence   sync.Map // key: int64(accountID), value: openAIAccountBlockEvidence
 	openaiAccountRuntimeBlockSequence   atomic.Uint64
 	openaiOAuth429RetryStartedAt        sync.Map // key: int64(accountID), value: time.Time
 	grokCredentialMutationLocks         sync.Map // key: int64(accountID), value: *sync.Mutex

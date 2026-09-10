@@ -588,7 +588,7 @@ func patchGrokResponsesBodyBase(body []byte, upstreamModel string) ([]byte, erro
 			}
 		}
 	}
-	out, err = sanitizeGrokResponsesUnsupportedFields(out)
+	out, err = sanitizeGrokUnsupportedFields(out)
 	if err != nil {
 		return nil, err
 	}
@@ -767,11 +767,14 @@ func grokSupportsReasoningEffort(model string) bool {
 	}
 }
 
-var grokResponsesUnsupportedRecursiveFields = map[string]struct{}{
+// grokUnsupportedRecursiveFields 定义 Grok 平台（Responses 和 Chat Completions）不支持的字段
+var grokUnsupportedRecursiveFields = map[string]struct{}{
 	"external_web_access": {},
 }
 
-func sanitizeGrokResponsesUnsupportedFields(body []byte) ([]byte, error) {
+// sanitizeGrokUnsupportedFields 递归移除 Grok 平台不支持的字段
+// 适用于 Responses API 和 Chat Completions API
+func sanitizeGrokUnsupportedFields(body []byte) ([]byte, error) {
 	if !bytes.Contains(body, []byte(`"external_web_access"`)) {
 		return body, nil
 	}
@@ -780,7 +783,7 @@ func sanitizeGrokResponsesUnsupportedFields(body []byte) ([]byte, error) {
 	if err := decodeOpenAIJSONUseNumber(body, &payload); err != nil {
 		return nil, err
 	}
-	if !deleteJSONFields(payload, grokResponsesUnsupportedRecursiveFields) {
+	if !deleteJSONFields(payload, grokUnsupportedRecursiveFields) {
 		return body, nil
 	}
 	return marshalOpenAIUpstreamJSON(payload)
@@ -796,7 +799,11 @@ func deleteJSONFields(value any, fields map[string]struct{}) bool {
 				changed = true
 			}
 		}
-		for _, child := range typed {
+		for key, child := range typed {
+			switch key {
+			case "parameters", "input_schema", "schema", "arguments", "output":
+				continue
+			}
 			if deleteJSONFields(child, fields) {
 				changed = true
 			}

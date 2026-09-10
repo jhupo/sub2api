@@ -41,9 +41,8 @@ const (
 	openAIOAuth429QuotaReset
 )
 
-// classifyOpenAIOAuth429 区分账号配额耗尽信号与普通瞬时 429。明确窗口达到
-// 100% 时以该窗口为准；没有 100% 标记但包含重置头时，沿用 v179 的兼容语义，
-// 仍视为配额限流信号。
+// classifyOpenAIOAuth429 区分账号配额耗尽信号与普通瞬时 429。只有窗口达到
+// 100% 或响应体明确给出 reset 时间时，才视为配额限流信号。
 func classifyOpenAIOAuth429(headers http.Header, responseBody []byte) (openAIOAuth429Disposition, *time.Time) {
 	if snapshot := ParseCodexRateLimitHeaders(headers); snapshot != nil {
 		if normalized := snapshot.Normalize(); normalized != nil {
@@ -235,13 +234,17 @@ func (s *OpenAIGatewayService) markOpenAIOAuth429RateLimited(ctx context.Context
 		return
 	}
 
-	cooldownUntil := time.Now().Add(openAIOAuth429FallbackCooldown)
-	if resetAt != nil && resetAt.After(time.Now()) {
+	now := time.Now()
+	cooldownUntil := now.Add(openAIOAuth429FallbackCooldown)
+	if resetAt != nil && resetAt.After(now) {
 		cooldownUntil = *resetAt
 	} else if s.rateLimitService != nil {
-		if cooldown, ok := s.rateLimitService.get429FallbackCooldown(ctx, account); ok && cooldown > 0 {
-			cooldownUntil = time.Now().Add(cooldown)
+		cooldown, ok := s.rateLimitService.get429FallbackCooldown(ctx, account)
+		if !ok || cooldown <= 0 {
+			s.openaiOAuth429RetryStartedAt.Delete(account.ID)
+			return
 		}
+		cooldownUntil = now.Add(cooldown)
 	}
 	s.BlockAccountScheduling(account, cooldownUntil, "429")
 	s.openaiOAuth429RetryStartedAt.Delete(account.ID)
@@ -338,6 +341,11 @@ func (s *OpenAIGatewayService) BlockAccountScheduling(account *Account, until ti
 }
 
 func (s *OpenAIGatewayService) openAIAccountRuntimeBlockLock(accountID int64) *sync.Mutex {
+	if value, ok := s.openaiAccountRuntimeBlockLocks.Load(accountID); ok {
+		if mu, valid := value.(*sync.Mutex); valid {
+			return mu
+		}
+	}
 	actual, _ := s.openaiAccountRuntimeBlockLocks.LoadOrStore(accountID, &sync.Mutex{})
 	mu, ok := actual.(*sync.Mutex)
 	if !ok {
@@ -350,6 +358,7 @@ func (s *OpenAIGatewayService) openAIAccountRuntimeBlockLock(accountID int64) *s
 func (s *OpenAIGatewayService) blockAccountSchedulingLocked(account *Account, until time.Time, _ string) (uint64, bool) {
 	generation := s.openaiAccountRuntimeBlockSequence.Add(1)
 	s.openaiAccountRuntimeBlockGeneration.Store(account.ID, generation)
+	s.openaiAccountRuntimeBlockEvidence.Store(account.ID, openAIAccountBlockEvidence{sourceVersion: account.UpdatedAt})
 	now := time.Now()
 	blockUntil := until
 	if blockUntil.IsZero() || !blockUntil.After(now) {
@@ -390,6 +399,7 @@ func (s *OpenAIGatewayService) ClearAccountSchedulingBlock(accountID int64) {
 	mu.Lock()
 	defer mu.Unlock()
 	s.openaiAccountRuntimeBlockUntil.Delete(accountID)
+	s.openaiAccountRuntimeBlockEvidence.Delete(accountID)
 	s.openaiOAuth429RetryStartedAt.Delete(accountID)
 	s.openaiAccountRuntimeBlockGeneration.Store(accountID, s.openaiAccountRuntimeBlockSequence.Add(1))
 }
@@ -408,6 +418,7 @@ func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) b
 	cooldownUntil, ok := value.(time.Time)
 	if !ok || cooldownUntil.IsZero() {
 		s.openaiAccountRuntimeBlockUntil.Delete(account.ID)
+		s.openaiAccountRuntimeBlockEvidence.Delete(account.ID)
 		s.openaiAccountRuntimeBlockGeneration.Store(account.ID, s.openaiAccountRuntimeBlockSequence.Add(1))
 		return false
 	}
@@ -415,6 +426,7 @@ func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) b
 		return true
 	}
 	s.openaiAccountRuntimeBlockUntil.Delete(account.ID)
+	s.openaiAccountRuntimeBlockEvidence.Delete(account.ID)
 	s.openaiAccountRuntimeBlockGeneration.Store(account.ID, s.openaiAccountRuntimeBlockSequence.Add(1))
 	return false
 }
@@ -481,7 +493,58 @@ func (s *OpenAIGatewayService) isOpenAIAccountModelRuntimeBlocked(account *Accou
 }
 
 func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Account, requestedModel string) bool {
+	s.reconcileOpenAIAccountSchedulingSnapshot(account)
 	return s != nil && (s.isOpenAIAccountRuntimeBlocked(account) || s.isOpenAIAccountModelRuntimeBlocked(account, requestedModel))
+}
+
+type openAIAccountBlockEvidence struct {
+	sourceVersion    time.Time
+	persistedVersion time.Time
+}
+
+// A missing cooldown in an old snapshot cannot revoke immediate protection.
+// First observe persistence of this block, then require a newer recovery
+// snapshot. Explicit recovery operations also clear the block after DB success.
+func (s *OpenAIGatewayService) reconcileOpenAIAccountSchedulingSnapshot(account *Account) {
+	if s == nil || !isOpenAIAccount(account) || account.UpdatedAt.IsZero() {
+		return
+	}
+	mu := s.openAIAccountRuntimeBlockLock(account.ID)
+	mu.Lock()
+	defer mu.Unlock()
+	value, ok := s.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	until, valid := value.(time.Time)
+	if !ok || !valid {
+		return
+	}
+	value, ok = s.openaiAccountRuntimeBlockEvidence.Load(account.ID)
+	evidence, valid := value.(openAIAccountBlockEvidence)
+	if !ok || !valid || !account.UpdatedAt.After(evidence.sourceVersion) {
+		return
+	}
+	now := time.Now()
+	active := account.Status != StatusActive || !account.Schedulable
+	// Status toggles do not prove that an asynchronous cooldown write succeeded.
+	coversBlock := false
+	for _, deadline := range []*time.Time{account.TempUnschedulableUntil, account.RateLimitResetAt, account.OverloadUntil} {
+		if deadline != nil && deadline.After(now) {
+			active = true
+			// PostgreSQL timestamps retain microseconds, unlike Go's nanoseconds.
+			coversBlock = coversBlock || !deadline.Truncate(time.Microsecond).Before(until.Truncate(time.Microsecond))
+		}
+	}
+	if coversBlock && account.UpdatedAt.After(evidence.persistedVersion) {
+		evidence.persistedVersion = account.UpdatedAt
+		s.openaiAccountRuntimeBlockEvidence.Store(account.ID, evidence)
+		return
+	}
+	if active || evidence.persistedVersion.IsZero() || !account.UpdatedAt.After(evidence.persistedVersion) {
+		return
+	}
+	s.openaiAccountRuntimeBlockUntil.Delete(account.ID)
+	s.openaiAccountRuntimeBlockEvidence.Delete(account.ID)
+	s.openaiOAuth429RetryStartedAt.Delete(account.ID)
+	s.openaiAccountRuntimeBlockGeneration.Store(account.ID, s.openaiAccountRuntimeBlockSequence.Add(1))
 }
 
 func (s *OpenAIGatewayService) recordOpenAIOAuth429() {

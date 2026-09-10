@@ -133,3 +133,68 @@ func TestForwardOpenAIWSV2_HeartbeatCommitsHeadersWithoutTTFTOrReplay(t *testing
 	require.Equal(t, "req-ws", rec.Result().Header.Get("X-Request-Id"))
 	require.Contains(t, rec.Body.String(), ":\n\n")
 }
+
+func TestForwardOpenAIWSV2_CancellationClosesConnectionWithoutReplay(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprintf("partial_%t", partial), func(t *testing.T) {
+			c, _ := newTurnStateTestContext(t, 99, "ws-cancel")
+			ctx, cancel := context.WithCancel(c.Request.Context())
+			defer cancel()
+			c.Request = c.Request.WithContext(ctx)
+			cfg := &config.Config{}
+			cfg.Gateway.OpenAIWS.Enabled = true
+			cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+			cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+			cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+			cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 30
+			cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+			conn := &openAIWSCaptureConn{readDelays: []time.Duration{time.Hour},
+				events: [][]byte{[]byte(`{"type":"response.completed","response":{"id":"not-completed","usage":{"input_tokens":99,"output_tokens":99}}}`)}}
+			if partial {
+				conn.readDelays = append([]time.Duration{0}, conn.readDelays...)
+				conn.events = append([][]byte{[]byte(`{"type":"response.output_text.done","text":"hello","usage":{"input_tokens":12,"output_tokens":3}}`)}, conn.events...)
+			}
+			pool := newOpenAIWSConnPool(cfg)
+			pool.setClientDialerForTest(&openAIWSCaptureDialer{conn: conn})
+			upstream := &httpUpstreamRecorder{}
+			svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream, cache: &stubGatewayCache{},
+				openaiWSResolver: NewOpenAIWSProtocolResolver(cfg), toolCorrector: NewCodexToolCorrector(), openaiWSPool: pool}
+			account := &Account{ID: 5999, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Status: StatusActive, Schedulable: true, Concurrency: 1,
+				Credentials: map[string]any{"api_key": "test"}, Extra: map[string]any{"responses_websockets_v2_enabled": true}}
+			type outcome struct {
+				result *OpenAIForwardResult
+				err    error
+			}
+			done := make(chan outcome, 1)
+			go func() {
+				result, err := svc.Forward(ctx, c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":"hello"}`))
+				done <- outcome{result, err}
+			}()
+			require.Eventually(t, func() bool {
+				conn.mu.Lock()
+				defer conn.mu.Unlock()
+				return len(conn.events) == 0
+			}, 3*time.Second, time.Millisecond)
+			cancel()
+			select {
+			case got := <-done:
+				require.ErrorIs(t, got.err, context.Canceled)
+				require.NotNil(t, got.result)
+				require.True(t, got.result.ClientDisconnect)
+				require.False(t, got.result.SucceededForScheduling())
+				if partial {
+					require.Equal(t, 12, got.result.Usage.InputTokens)
+				}
+				require.Nil(t, upstream.lastReq, "cancellation must not start an HTTP retry")
+				conn.mu.Lock()
+				closed, writes := conn.closed, len(conn.writes)
+				conn.mu.Unlock()
+				require.True(t, closed, "a canceled turn cannot return its connection to the pool")
+				require.Equal(t, 1, writes)
+			case <-time.After(3 * time.Second):
+				t.Fatal("canceled upstream did not stop promptly")
+			}
+		})
+	}
+}

@@ -365,9 +365,23 @@ func TestPatchGrokResponsesBodyDropsNestedUnsupportedFields(t *testing.T) {
 	patched, err := patchGrokResponsesBody(body, "grok-4.3")
 	require.NoError(t, err)
 	require.True(t, json.Valid(patched))
-	require.False(t, strings.Contains(string(patched), "external_web_access"))
+	require.False(t, gjson.GetBytes(patched, "external_web_access").Exists())
+	require.False(t, gjson.GetBytes(patched, "tools.0.external_web_access").Exists())
+	require.True(t, gjson.GetBytes(patched, "tools.0.parameters.properties.q.external_web_access").Bool())
 	require.Equal(t, "kept_fn", gjson.GetBytes(patched, "tools.0.name").String())
 	require.False(t, gjson.GetBytes(patched, "metadata").Exists())
+}
+
+func TestSanitizeGrokUnsupportedFieldsPreservesToolData(t *testing.T) {
+	body := []byte(`{"external_web_access":true,"input":[{"type":"function_call_output","output":{"external_web_access":"user-data","id":9007199254740993}}],"tools":[{"type":"function","parameters":{"type":"object","properties":{"external_web_access":{"type":"boolean"}}}}]}`)
+	patched, err := sanitizeGrokUnsupportedFields(body)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(patched, "external_web_access").Exists())
+	require.Equal(t, "user-data", gjson.GetBytes(patched, "input.0.output.external_web_access").String())
+	require.Equal(t, "9007199254740993", gjson.GetBytes(patched, "input.0.output.id").Raw)
+	require.Equal(t, "boolean", gjson.GetBytes(patched, "tools.0.parameters.properties.external_web_access.type").String())
+	_, err = sanitizeGrokUnsupportedFields([]byte(`{"external_web_access":`))
+	require.Error(t, err)
 }
 
 func TestStripAnthropicThinkingSignaturesPreservesLargeIntegers(t *testing.T) {

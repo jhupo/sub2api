@@ -447,7 +447,7 @@ func TestForwardAsChatCompletions_OAuthKeepsMixedSystemContentInInput(t *testing
 	require.Equal(t, "https://example.com/reference.png", gjson.GetBytes(upstreamBody, "input.0.content.1.image_url").String())
 }
 
-func TestForwardAsChatCompletions_ClientDisconnectDrainsUpstreamUsage(t *testing.T) {
+func TestForwardAsChatCompletions_ClientDisconnectStopsUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -487,11 +487,10 @@ func TestForwardAsChatCompletions_ClientDisconnectDrainsUpstreamUsage(t *testing
 	}
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.1")
-	require.NoError(t, err)
+	require.ErrorIs(t, err, context.Canceled)
 	require.NotNil(t, result)
-	require.Equal(t, 11, result.Usage.InputTokens)
-	require.Equal(t, 5, result.Usage.OutputTokens)
-	require.Equal(t, 4, result.Usage.CacheReadInputTokens)
+	require.True(t, result.ClientDisconnect)
+	require.Zero(t, result.Usage.InputTokens, "a future terminal frame cannot be claimed as observed usage")
 }
 
 func TestForwardAsChatCompletions_BufferedContextWindowResponseFailedReturnsErrorWithoutFailover(t *testing.T) {
@@ -659,14 +658,16 @@ func TestForwardAsChatCompletions_StreamCyberPolicyNoFailover(t *testing.T) {
 		},
 	}
 
-	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.5")
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.5")
 	var failoverErr *UpstreamFailoverError
 	require.False(t, errors.As(err, &failoverErr), "cyber must NOT trigger failover")
+	require.Nil(t, result, "cyber failures use the standalone zero-cost usage record")
 	require.NotNil(t, GetOpsCyberPolicy(c), "cyber mark must be set")
 	respBody := rec.Body.String()
 	require.Contains(t, respBody, `"error"`)
 	require.Contains(t, respBody, `"cyber_policy"`)
 	require.Contains(t, respBody, "data: [DONE]")
+	require.Equal(t, 1, strings.Count(respBody, "data: [DONE]"))
 }
 
 func TestForwardAsChatCompletions_StreamsUsageWithoutClientStreamOptions(t *testing.T) {

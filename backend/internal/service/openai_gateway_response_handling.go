@@ -689,7 +689,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				// Reserve visible output before staging the line. The guarded
 				// event may flush immediately, so post-write top-ups are too late.
 				if startsVisibleOutput && streamEarlyErr == nil {
-					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(line)); topUpErr != nil {
+					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, openAIStreamTextReservationBytes(frame)); topUpErr != nil {
 						streamEarlyErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
 						s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI responses", topUpErr)
 						return

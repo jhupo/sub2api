@@ -44,7 +44,7 @@ jobs:
         working-directory: backend
         run: >-
           go test -race -tags=unit -parallel=1 ./internal/repository ./internal/service
-          -run '^Test(PgDumper|RedeemAttemptWindow|TrustedRedeem|PaymentRedeem|PaymentLookup|ExecuteBalanceFulfillment|AccountSlotAdmission|OpenAIAdaptiveAdmission|OpenAIStickyMigration|OpenAIRequestAttempt|CodexAdaptive|CodexSticky|CodexQuota)'
+          -run '^Test(PgDumper|RedeemAttemptWindow|TrustedRedeem|PaymentRedeem|PaymentLookup|ExecuteBalanceFulfillment|AccountSlotAdmission|OpenAIAdaptiveAdmission|OpenAIStickyMigration|OpenAIRequestAttempt|CodexAdaptive|CodexSticky|CodexQuota|OpenAIRuntimeRecovery|ChannelCache|ForwardAsChatCompletions_Cancels|ForwardOpenAIWSV2_Cancellation)'
       - name: Integration tests
         working-directory: backend
         run: make test-integration

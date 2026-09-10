@@ -345,6 +345,11 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				}
 			})
 		}
+		if result != nil && result.ClientDisconnect {
+			submitChatUsage(result)
+			reqLog.Info("openai_chat_completions.client_disconnected", zap.Int64("account_id", account.ID))
+			return
+		}
 		if err != nil {
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai_chat_completions.forward_partial_error_with_image_result",

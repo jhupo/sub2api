@@ -843,7 +843,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				wsLastFailureReason,
 				&agentTaskRecoveryTried,
 			)
-			if wsErr == nil {
+			if wsErr == nil || (wsResult != nil && wsResult.ClientDisconnect) {
 				break
 			}
 			if c != nil && c.Writer != nil && c.Writer.Written() {
@@ -938,6 +938,20 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			break
 		}
+		if wsResult != nil {
+			wsResult.UpstreamModel = upstreamModel
+			if wsResult.BillingModel == "" {
+				wsResult.BillingModel = billingModel
+			}
+			if wsResult.ImageCount > 0 {
+				wsResult.ImageSize = imageSizeTier
+				wsResult.ImageInputSize = imageInputSize
+				wsResult.BillingModel = imageBillingModel
+			}
+			if wsResult.ClientDisconnect {
+				return wsResult, wsErr
+			}
+		}
 		if wsErr == nil {
 			firstTokenMs := int64(0)
 			hasFirstTokenMs := wsResult != nil && wsResult.FirstTokenMs != nil
@@ -957,15 +971,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				firstTokenMs,
 				wsAttempts,
 			)
-			wsResult.UpstreamModel = upstreamModel
-			if wsResult.BillingModel == "" {
-				wsResult.BillingModel = billingModel
-			}
-			if wsResult.ImageCount > 0 {
-				wsResult.ImageSize = imageSizeTier
-				wsResult.ImageInputSize = imageInputSize
-				wsResult.BillingModel = imageBillingModel
-			}
 			return wsResult, nil
 		}
 		s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)

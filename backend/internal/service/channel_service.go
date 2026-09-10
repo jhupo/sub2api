@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,9 +19,10 @@ import (
 )
 
 var (
-	ErrChannelNotFound       = infraerrors.NotFound("CHANNEL_NOT_FOUND", "channel not found")
-	ErrChannelExists         = infraerrors.Conflict("CHANNEL_EXISTS", "channel name already exists")
-	ErrGroupAlreadyInChannel = infraerrors.Conflict(
+	errChannelSnapshotInvalidated = errors.New("channel snapshot invalidated during construction")
+	ErrChannelNotFound            = infraerrors.NotFound("CHANNEL_NOT_FOUND", "channel not found")
+	ErrChannelExists              = infraerrors.Conflict("CHANNEL_EXISTS", "channel name already exists")
+	ErrGroupAlreadyInChannel      = infraerrors.Conflict(
 		"GROUP_ALREADY_IN_CHANNEL",
 		"one or more groups already belong to another channel",
 	)
@@ -147,7 +150,14 @@ const (
 	channelCacheTTL       = 10 * time.Minute
 	channelErrorTTL       = 5 * time.Second // DB 错误时的短缓存
 	channelCacheDBTimeout = 10 * time.Second
+	channelCacheNotifyTTL = 3 * time.Second
 )
+
+// ChannelCachePubSub broadcasts channel cache invalidations between instances.
+type ChannelCachePubSub interface {
+	NotifyUpdate(ctx context.Context) error
+	SubscribeUpdates(ctx context.Context, handler func()) func()
+}
 
 // ChannelService 渠道管理服务
 type ChannelService struct {
@@ -155,26 +165,45 @@ type ChannelService struct {
 	groupRepo            GroupRepository
 	authCacheInvalidator APIKeyAuthCacheInvalidator
 	pricingService       *PricingService // 用于「可用渠道」展示时回落到全局定价；可为 nil（测试场景）
+	cachePubSub          ChannelCachePubSub
 
-	cache   atomic.Value // *channelCache
-	cacheSF singleflight.Group
+	cache                 atomic.Value // *channelCache
+	cacheSF               singleflight.Group
+	cacheMu               sync.Mutex
+	cacheGeneration       uint64
+	stopCacheSubscription func()
 }
 
 // NewChannelService 创建渠道服务实例。
 // pricingService 仅供 ListAvailable 在渠道未配置定价时回落到全局 LiteLLM 数据；
 // 计费热路径走独立的 ModelPricingResolver，与此参数无关。可传 nil。
-func NewChannelService(repo ChannelRepository, groupRepo GroupRepository, authCacheInvalidator APIKeyAuthCacheInvalidator, pricingService *PricingService) *ChannelService {
+func NewChannelService(repo ChannelRepository, groupRepo GroupRepository, authCacheInvalidator APIKeyAuthCacheInvalidator, pricingService *PricingService, cachePubSub ChannelCachePubSub) *ChannelService {
 	s := &ChannelService{
 		repo:                 repo,
 		groupRepo:            groupRepo,
 		authCacheInvalidator: authCacheInvalidator,
 		pricingService:       pricingService,
+		cachePubSub:          cachePubSub,
 	}
+	s.subscribeCacheUpdates(context.Background())
 	return s
 }
 
 // loadCache 加载或返回缓存的渠道数据
 func (s *ChannelService) loadCache(ctx context.Context) (*channelCache, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		cache, err := s.loadCacheSnapshot(ctx)
+		if !errors.Is(err, errChannelSnapshotInvalidated) {
+			return cache, err
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return nil, errChannelSnapshotInvalidated
+}
+
+func (s *ChannelService) loadCacheSnapshot(ctx context.Context) (*channelCache, error) {
 	if cached, ok := s.cache.Load().(*channelCache); ok && cached != nil {
 		if time.Since(cached.loadedAt) < channelCacheTTL {
 			return cached, nil
@@ -276,15 +305,27 @@ func (s *ChannelService) storeErrorCache() {
 // buildCache 从数据库构建渠道缓存。
 // 使用独立 context 避免请求取消导致空值被长期缓存。
 func (s *ChannelService) buildCache(ctx context.Context) (*channelCache, error) {
+	s.cacheMu.Lock()
+	generation := s.cacheGeneration
+	s.cacheMu.Unlock()
 	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), channelCacheDBTimeout)
 	defer cancel()
 
 	channels, groupPlatforms, err := s.fetchChannelData(dbCtx)
+	var cache *channelCache
+	if err == nil {
+		cache = populateChannelCache(channels, groupPlatforms)
+	}
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	if generation != s.cacheGeneration {
+		return nil, errChannelSnapshotInvalidated
+	}
 	if err != nil {
+		s.storeErrorCache()
 		return nil, err
 	}
 
-	cache := populateChannelCache(channels, groupPlatforms)
 	s.cache.Store(cache)
 	return cache, nil
 }
@@ -294,7 +335,6 @@ func (s *ChannelService) fetchChannelData(ctx context.Context) ([]Channel, map[i
 	channels, err := s.repo.ListAll(ctx)
 	if err != nil {
 		slog.Warn("failed to build channel cache", "error", err)
-		s.storeErrorCache()
 		return nil, nil, fmt.Errorf("list all channels: %w", err)
 	}
 
@@ -308,7 +348,6 @@ func (s *ChannelService) fetchChannelData(ctx context.Context) ([]Channel, map[i
 		groupPlatforms, err = s.repo.GetGroupPlatforms(ctx, allGroupIDs)
 		if err != nil {
 			slog.Warn("failed to load group platforms for channel cache", "error", err)
-			s.storeErrorCache()
 			return nil, nil, fmt.Errorf("get group platforms: %w", err)
 		}
 	}
@@ -383,12 +422,49 @@ func (s *ChannelService) InvalidateCache() {
 }
 
 func (s *ChannelService) invalidateCache() {
-	s.cache.Store((*channelCache)(nil))
-	s.cacheSF.Forget("channel_cache")
+	s.clearCache()
 
 	// 主动重建缓存，确保 CRUD 后立即生效
 	if _, err := s.buildCache(context.Background()); err != nil {
 		slog.Warn("failed to rebuild channel cache after invalidation", "error", err)
+	}
+
+	s.notifyCacheUpdate()
+}
+
+// clearCache clears only the in-process snapshot. Keeping this separate from
+// invalidateCache prevents notifications received from Redis from being
+// published again in a loop.
+func (s *ChannelService) clearCache() {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	s.cacheGeneration++
+	s.cache.Store((*channelCache)(nil))
+	s.cacheSF.Forget("channel_cache")
+}
+
+func (s *ChannelService) notifyCacheUpdate() {
+	if s.cachePubSub == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), channelCacheNotifyTTL)
+	defer cancel()
+	if err := s.cachePubSub.NotifyUpdate(ctx); err != nil {
+		slog.Warn("failed to publish channel cache invalidation", "error", err)
+	}
+}
+
+func (s *ChannelService) subscribeCacheUpdates(ctx context.Context) {
+	if s.cachePubSub == nil {
+		return
+	}
+	s.stopCacheSubscription = s.cachePubSub.SubscribeUpdates(ctx, s.clearCache)
+}
+
+func (s *ChannelService) Stop() {
+	if s != nil && s.stopCacheSubscription != nil {
+		s.stopCacheSubscription()
 	}
 }
 

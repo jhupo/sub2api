@@ -15,8 +15,10 @@ const (
 // request. It deliberately carries no historical usage dependency: reserve
 // sizing must not turn every gateway request into an aggregate database query.
 type BalancePreauthorizationTokenEstimate struct {
-	InputTokens  int
-	OutputTokens int
+	InputTokens       int
+	OutputTokens      int
+	ImageInputTokens  int
+	ImageOutputTokens int
 }
 
 // EstimateBalancePreauthorizationTokens follows the request-local pre-consume
@@ -42,10 +44,32 @@ func EstimateBalancePreauthorizationTokens(body []byte) BalancePreauthorizationT
 		}
 	}
 
-	return BalancePreauthorizationTokenEstimate{
+	estimate := BalancePreauthorizationTokenEstimate{
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
 	}
+	root := gjson.ParseBytes(body)
+	if IsGPTImageGenerationModel(root.Get("model").String()) {
+		count := root.Get("n").Int()
+		if count < 1 {
+			count = 1
+		}
+		perImage := imageOutputReservationTokens(root.Get("size").String())
+		if count > int64(math.MaxInt/perImage) {
+			estimate.ImageOutputTokens = math.MaxInt
+		} else {
+			estimate.ImageOutputTokens = int(count) * perImage
+		}
+		estimate.OutputTokens = estimate.ImageOutputTokens
+	} else {
+		for _, tool := range root.Get("tools").Array() {
+			if tool.Get("type").String() == "image_generation" {
+				estimate.ImageOutputTokens = imageOutputReservationTokens(tool.Get("size").String())
+				break
+			}
+		}
+	}
+	return estimate
 }
 
 func estimateBalancePreauthorizationInputTokens(body []byte) int {

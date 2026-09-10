@@ -2045,6 +2045,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			suppressCurrentEvent = codexFailureTerminal && (eventType == "error" || (sawBareError && !sawResponseFailed && eventType != "response.failed"))
 		}
 		lineStartsClientOutput := false
+		lineOutputReservationBytes := 0
 		forceFlushFailedEvent := false
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			dataBytes := []byte(data)
@@ -2089,6 +2090,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				}
 			}
 			eventType := frame.eventType
+			lineOutputReservationBytes = openAIStreamTextReservationBytes(frame)
 			if codexFailureTerminal && sawBareError && !sawResponseFailed && eventType != "response.failed" {
 				suppressCurrentEvent = true
 			}
@@ -2250,7 +2252,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			// Reserve semantic output before writing the line. Control frames
 			// remain free, and a failed top-up cannot expose this billable line.
 			if lineStartsClientOutput {
-				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(line)); topUpErr != nil {
+				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, lineOutputReservationBytes); topUpErr != nil {
 					flushPendingOutput()
 					s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI passthrough", topUpErr)
 					return resultWithUsage(), wrapStreamOutputHoldTopUpFailure(topUpErr)

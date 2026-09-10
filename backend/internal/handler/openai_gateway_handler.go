@@ -872,6 +872,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				}
 			})
 		}
+		if result != nil && result.ClientDisconnect {
+			submitResponsesUsage(result)
+			reqLog.Info("openai.client_disconnected", zap.Int64("account_id", account.ID))
+			return
+		}
 		if err != nil {
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai.forward_partial_error_with_image_result",
