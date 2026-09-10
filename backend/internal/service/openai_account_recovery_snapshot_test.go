@@ -1,6 +1,9 @@
+//go:build unit
+
 package service
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -99,14 +102,24 @@ func TestOpenAIRuntimeRecoveryConcurrentAccountIsolation(t *testing.T) {
 			svc.BlockAccountScheduling(&accounts[i], now.Add(time.Hour), "quota")
 		}
 	}
+	snapshots := NewSchedulerSnapshotService(&decodeCacheProbe{
+		hit: true, version: "v1", accounts: accountsToPointers(accounts),
+	}, nil, nil, nil, nil)
 	var wg sync.WaitGroup
 	for user := 0; user < 30; user++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for round := 0; round < 20; round++ {
-				for i := range accounts {
-					if got := svc.isOpenAIAccountRequestRuntimeBlocked(&accounts[i], "gpt-5.6-sol"); got != (i%2 == 0) {
+				// Each request owns its Account values and lazy model caches;
+				// only the gateway's runtime blocks are shared across callers.
+				requestAccounts, _, err := snapshots.ListSchedulableAccounts(context.Background(), nil, PlatformOpenAI, false)
+				if err != nil || len(requestAccounts) != len(accounts) {
+					t.Errorf("load request snapshots: count=%d err=%v", len(requestAccounts), err)
+					return
+				}
+				for i := range requestAccounts {
+					if got := svc.isOpenAIAccountRequestRuntimeBlocked(&requestAccounts[i], "gpt-5.6-sol"); got != (i%2 == 0) {
 						t.Errorf("account %d inherited another account's block: %v", i+1, got)
 						return
 					}
