@@ -202,6 +202,7 @@ type BalancePreauthorizationRequest struct {
 	EstimatedInputTokens       int
 	EstimatedImageInputTokens  int
 	EstimatedImageOutputTokens int
+	EstimatedAudioInputTokens  int
 	InitialOutputWindowTokens  int
 	DisableOutputReservation   bool
 	CostInput                  CostInput
@@ -588,6 +589,10 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 			scenarios[i].ImageOutputTokens = imageOutput
 		}
 	}
+	if request.EstimatedAudioInputTokens > 0 {
+		scenarios[0].AudioInputTokens = min(request.EstimatedAudioInputTokens, scenarios[0].InputTokens)
+		scenarios[1].AudioCacheReadTokens = min(request.EstimatedAudioInputTokens, scenarios[1].CacheReadTokens)
+	}
 	maxCost := -1.0
 	maxTokens := scenarios[0]
 	for _, tokens := range scenarios {
@@ -745,7 +750,7 @@ func validateBalancePreauthorizationRequest(request *BalancePreauthorizationRequ
 		strings.TrimSpace(request.AuthorizationFingerprint) == "" ||
 		request.APIKeyID <= 0 || request.UserID <= 0 ||
 		request.BillableInputBytes < 0 || request.EstimatedInputTokens < 0 || request.InitialOutputWindowTokens < 0 ||
-		request.EstimatedImageInputTokens < 0 || request.EstimatedImageOutputTokens < 0 ||
+		request.EstimatedImageInputTokens < 0 || request.EstimatedImageOutputTokens < 0 || request.EstimatedAudioInputTokens < 0 ||
 		invalidNonnegativeMoney(request.FixedAmount) || (!request.ExpiresAt.IsZero() && !request.ExpiresAt.After(time.Now())) {
 		return ErrInvalidBillingPreauthorizationEstimate
 	}

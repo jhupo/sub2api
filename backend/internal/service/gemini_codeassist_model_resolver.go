@@ -121,7 +121,7 @@ func (r *GeminiCodeAssistModelResolver) fetchAvailableModels(ctx context.Context
 	if err != nil {
 		return nil, fmt.Errorf("create Code Assist client: %w", err)
 	}
-	models, err := client.FetchAvailableModelsCatalog(ctx, accessToken, projectID, geminiCodeAssistCatalogBodyLimit)
+	models, _, err := client.FetchAvailableModels(ctx, accessToken, projectID, geminiCodeAssistCatalogBodyLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -356,6 +356,14 @@ func applyGeminiRuntimeEffort(requested string, effort *string) string {
 }
 
 func resolveRuntimeModel(models map[string]antigravity.ModelInfo, requested string) (string, bool) {
+	requested = normalizeGeminiRuntimeModelID(requested)
+	if _, ok := models[requested]; ok && isUsableCodeAssistRuntimeModelID(requested) {
+		return requested, true
+	}
+	// An explicit variant is a routing choice, not permission to downgrade.
+	if _, explicit := trimGeminiRuntimeVariant(requested); explicit || strings.HasSuffix(requested, "-agent") {
+		return "", false
+	}
 	for _, candidate := range runtimeModelCandidates(requested) {
 		if _, ok := models[candidate]; ok {
 			return candidate, true
@@ -418,7 +426,7 @@ func (r *GeminiCodeAssistModelResolver) List(ctx context.Context, account *Accou
 	if err != nil && len(entry.models) == 0 {
 		return nil, err
 	}
-	authorized := collapseGeminiCodeAssistModels(entry.models)
+	authorized := listGeminiCodeAssistModels(entry.models)
 	if account == nil || len(account.GetModelMapping()) == 0 {
 		if len(authorized) == 0 {
 			return nil, errors.New("code assist returned no usable models")
@@ -448,9 +456,8 @@ func (r *GeminiCodeAssistModelResolver) List(ctx context.Context, account *Accou
 		if !ok {
 			continue
 		}
-		publicTarget := codeAssistPublicModelID(runtimeID)
 		displayName := clientID
-		if model, exists := byID[publicTarget]; exists && clientID == publicTarget {
+		if model, exists := byID[runtimeID]; exists && clientID == runtimeID {
 			displayName = model.DisplayName
 		}
 		models = append(models, geminicli.Model{ID: clientID, Type: "model", DisplayName: displayName})
@@ -458,7 +465,7 @@ func (r *GeminiCodeAssistModelResolver) List(ctx context.Context, account *Accou
 	return models, err
 }
 
-// ListAuthorized returns every usable public model derived from the account's
+// ListAuthorized returns every usable upstream model ID from the account's
 // OAuth catalog, without applying model_mapping. Explicit administrator syncs
 // pass force=true; normal reads keep using the short-lived runtime cache.
 func (r *GeminiCodeAssistModelResolver) ListAuthorized(ctx context.Context, account *Account, accessToken string, force bool) ([]geminicli.Model, error) {
@@ -466,7 +473,7 @@ func (r *GeminiCodeAssistModelResolver) ListAuthorized(ctx context.Context, acco
 	if err != nil && len(entry.models) == 0 {
 		return nil, err
 	}
-	models := collapseGeminiCodeAssistModels(entry.models)
+	models := listGeminiCodeAssistModels(entry.models)
 	if len(models) == 0 {
 		return nil, errors.New("code assist returned no usable models")
 	}
@@ -502,7 +509,7 @@ func codeAssistPublicModelID(runtimeID string) string {
 	}
 }
 
-func collapseGeminiCodeAssistModels(raw map[string]antigravity.ModelInfo) []geminicli.Model {
+func listGeminiCodeAssistModels(raw map[string]antigravity.ModelInfo) []geminicli.Model {
 	public := make(map[string]geminicli.Model)
 	runtimeIDs := make([]string, 0, len(raw))
 	for runtimeID := range raw {
@@ -516,7 +523,7 @@ func collapseGeminiCodeAssistModels(raw map[string]antigravity.ModelInfo) []gemi
 		if !isUsableCodeAssistRuntimeModelID(runtimeID) {
 			continue
 		}
-		publicID := codeAssistPublicModelID(runtimeID)
+		publicID := runtimeID
 		if publicID == "" {
 			continue
 		}

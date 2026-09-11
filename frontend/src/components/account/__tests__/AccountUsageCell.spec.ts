@@ -1308,7 +1308,7 @@ describe('AccountUsageCell', () => {
 		expect(wrapper.text().trim()).toBe('-')
   })
 
-  it('shows Gemini OAuth billing even when no requests were made, plus daily and minute limits', async () => {
+  it('shows Gemini OAuth upstream quota while retaining local billing statistics', async () => {
     getUsage.mockResolvedValue({
       gemini_shared_daily: { utilization: 0, resets_at: null, limit_requests: 1500 },
       gemini_shared_minute: { utilization: 0, resets_at: null, limit_requests: 120 },
@@ -1327,26 +1327,30 @@ describe('AccountUsageCell', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('A $0.00')
     expect(wrapper.text()).toContain('U $0.00')
-    expect(wrapper.text()).toContain('0 / 1500 req')
-    expect(wrapper.text()).toContain('0 / 120 req')
-    expect(wrapper.text()).not.toContain('gemini-3-pro')
-    expect(wrapper.text()).not.toContain('gemini-2.5-flash')
-    expect(wrapper.text()).not.toContain('gemini-3-flash')
-    expect(wrapper.findAllComponents(UsageProgressBar).map(bar => bar.props('label'))).toEqual(['1d', '1m'])
-    expect(wrapper.text()).toContain('admin.accounts.gemini.localQuota')
+    expect(wrapper.text()).not.toContain('0 / 1500 req')
+    expect(wrapper.text()).not.toContain('0 / 120 req')
+    expect(wrapper.text()).toContain('gemini-3-pro')
+    expect(wrapper.text()).toContain('gemini-2.5-flash')
+    expect(wrapper.text()).toContain('gemini-3-flash')
+    expect(wrapper.findAllComponents(UsageProgressBar)).toHaveLength(3)
+    expect(wrapper.text()).not.toContain('admin.accounts.gemini.localQuota')
     expect(wrapper.text()).not.toContain('admin.accounts.gemini.upstreamQuota')
     wrapper.unmount()
   })
 
   it.each([{}, { 'claude-sonnet-4-6': { utilization: 100, reset_time: '' } }])(
-    'shows unavailable when Gemini local request limits are absent: %j', async quotas => {
+    'shows available upstream models without requiring local request limits: %j', async quotas => {
       getUsage.mockResolvedValue({ antigravity_quota: quotas })
       const wrapper = mount(AccountUsageCell, {
         props: { account: makeAccount({ platform: 'gemini', type: 'oauth', credentials: { oauth_type: 'antigravity' } }) }
       })
       await flushPromises()
-      expect(wrapper.findAllComponents(UsageProgressBar)).toHaveLength(0)
-      expect(wrapper.text()).toContain('admin.accounts.gemini.quotaUnavailable')
+      expect(wrapper.findAllComponents(UsageProgressBar)).toHaveLength(Object.keys(quotas).length)
+      if (Object.keys(quotas).length === 0) {
+        expect(wrapper.text()).toContain('admin.accounts.gemini.quotaUnavailable')
+      } else {
+        expect(wrapper.text()).toContain('claude-sonnet-4-6')
+      }
       wrapper.unmount()
     }
   )

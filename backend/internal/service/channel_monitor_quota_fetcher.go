@@ -275,6 +275,17 @@ func usageQuotaTiers(usage *UsageInfo) []domain.MonitorQuotaTier {
 		return nil
 	}
 	tiers := make([]domain.MonitorQuotaTier, 0, 8)
+	for _, group := range usage.AntigravityQuotaGroups {
+		for _, bucket := range group.Buckets {
+			if !bucket.Valid() {
+				continue
+			}
+			tiers = append(tiers, domain.MonitorQuotaTier{
+				Window: bucket.Window, Label: group.DisplayName + " / " + bucket.DisplayName,
+				UsedPercent: (1 - *bucket.RemainingFraction) * 100, ResetAt: bucket.ResetTime,
+			})
+		}
+	}
 	appendProgressTier(&tiers, "5h", "", usage.FiveHour)
 	appendProgressTier(&tiers, "7d", "", usage.SevenDay)
 	appendProgressTier(&tiers, "7d-sonnet", "", usage.SevenDaySonnet)

@@ -36,10 +36,12 @@ type StreamingProcessor struct {
 	usageMapHook      UsageMapHook
 
 	// 累计 usage
-	inputTokens       int
-	outputTokens      int
-	cacheReadTokens   int
-	imageOutputTokens int
+	inputTokens          int
+	outputTokens         int
+	cacheReadTokens      int
+	imageOutputTokens    int
+	audioInputTokens     int
+	audioCacheReadTokens int
 }
 
 // NewStreamingProcessor 创建流式响应处理器
@@ -68,6 +70,12 @@ func usageToMap(u ClaudeUsage) map[string]any {
 	}
 	if u.ImageOutputTokens > 0 {
 		m["image_output_tokens"] = u.ImageOutputTokens
+	}
+	if u.AudioInputTokens > 0 {
+		m["audio_input_tokens"] = u.AudioInputTokens
+	}
+	if u.AudioCacheReadTokens > 0 {
+		m["audio_cache_read_tokens"] = u.AudioCacheReadTokens
 	}
 	return m
 }
@@ -115,6 +123,7 @@ func (p *StreamingProcessor) ProcessLine(line string) []byte {
 		p.outputTokens = geminiResp.UsageMetadata.CandidatesTokenCount + geminiResp.UsageMetadata.ThoughtsTokenCount
 		p.cacheReadTokens = cached
 		p.imageOutputTokens = geminiResp.UsageMetadata.ImageOutputTokens()
+		p.audioInputTokens, p.audioCacheReadTokens = geminiResp.UsageMetadata.AudioTokenUsage()
 	}
 
 	// 处理 parts
@@ -156,6 +165,8 @@ func (p *StreamingProcessor) Finish() ([]byte, *ClaudeUsage) {
 		OutputTokens:         p.outputTokens,
 		CacheReadInputTokens: p.cacheReadTokens,
 		ImageOutputTokens:    p.imageOutputTokens,
+		AudioInputTokens:     p.audioInputTokens,
+		AudioCacheReadTokens: p.audioCacheReadTokens,
 	}
 
 	if !p.messageStartSent {
@@ -188,6 +199,7 @@ func (p *StreamingProcessor) emitMessageStart(v1Resp *V1InternalResponse) []byte
 		usage.OutputTokens = v1Resp.Response.UsageMetadata.CandidatesTokenCount + v1Resp.Response.UsageMetadata.ThoughtsTokenCount
 		usage.CacheReadInputTokens = cached
 		usage.ImageOutputTokens = v1Resp.Response.UsageMetadata.ImageOutputTokens()
+		usage.AudioInputTokens, usage.AudioCacheReadTokens = v1Resp.Response.UsageMetadata.AudioTokenUsage()
 	}
 
 	responseID := v1Resp.ResponseID
@@ -523,6 +535,8 @@ func (p *StreamingProcessor) emitFinish(finishReason string) []byte {
 		OutputTokens:         p.outputTokens,
 		CacheReadInputTokens: p.cacheReadTokens,
 		ImageOutputTokens:    p.imageOutputTokens,
+		AudioInputTokens:     p.audioInputTokens,
+		AudioCacheReadTokens: p.audioCacheReadTokens,
 	}
 
 	var usageValue any = usage

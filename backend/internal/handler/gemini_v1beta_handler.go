@@ -509,12 +509,19 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				service.WithForwardGeminiSession(sessionGroupID, sessionKey),
 			)
 		} else {
-			result, err = h.geminiCompatService.ForwardNative(requestCtx, c, account, modelName, action, stream, body)
+			err = h.gatewayService.ValidateGeminiOAuthPricing(requestCtx, apiKey, account, reqModel, modelName, channelMapping)
+			if err == nil {
+				result, err = h.geminiCompatService.ForwardNative(requestCtx, c, account, modelName, action, stream, body)
+			}
 		}
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
 		}
 		if err != nil {
+			if errors.Is(err, service.ErrModelPricingUnavailable) {
+				googleError(c, http.StatusServiceUnavailable, "Model pricing is not configured; contact the administrator")
+				return
+			}
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				failoverAction := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
@@ -562,6 +569,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
 		// 长上下文阶梯由目录数据驱动，统一在计费路径内生效，入口无需声明。
+		channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel)
 		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:             result,
@@ -579,7 +587,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				ForceCacheBilling:  forceCacheBilling,
 				APIKeyService:      h.apiKeyService,
 				SessionID:          sessionID,
-				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+				ChannelUsageFields: channelUsageFields,
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.gemini_v1beta.models"),
@@ -695,13 +703,20 @@ type pathParseError struct{ msg string }
 func (e *pathParseError) Error() string { return e.msg }
 
 func googleError(c *gin.Context, status int, message string) {
-	c.JSON(status, gin.H{
+	payload := gin.H{
 		"error": gin.H{
 			"code":    status,
 			"message": message,
 			"status":  googleapi.HTTPStatusToGoogleStatus(status),
 		},
-	})
+	}
+	if c.Writer.Written() && strings.HasPrefix(c.Writer.Header().Get("Content-Type"), "text/event-stream") {
+		service.MarkOpsStreamError(c, googleapi.HTTPStatusToGoogleStatus(status), message, status)
+		c.SSEvent("", payload)
+		c.Writer.Flush()
+		return
+	}
+	c.JSON(status, payload)
 }
 
 // extractGeminiCLISessionHash 从 Gemini CLI 请求中提取会话标识。

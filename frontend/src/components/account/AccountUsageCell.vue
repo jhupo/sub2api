@@ -288,6 +288,7 @@
       </div>
 
       <!-- Usage data from API -->
+      <AntigravityQuotaWindows v-else-if="usageInfo?.antigravity_quota_groups?.length" :usage="usageInfo" />
       <div v-else-if="hasAntigravityQuotaFromAPI" class="space-y-1">
         <!-- Gemini 3 Pro -->
         <UsageProgressBar
@@ -458,6 +459,7 @@
         </span>
         <!-- Help icon -->
         <span
+          v-if="!isGeminiAntigravity"
           class="group relative cursor-help"
         >
           <svg
@@ -536,7 +538,11 @@
           <div v-if="needsReauth" class="text-xs text-amber-600">{{ t('admin.accounts.needsReauth') }}</div>
           <div v-else-if="isForbidden" class="text-xs text-red-500">{{ forbiddenLabel }}</div>
           <div v-else-if="usageInfo?.error" class="text-xs text-amber-600">{{ usageErrorLabel }}</div>
-          <div v-if="geminiUsageBars.length" class="space-y-1">
+          <AntigravityQuotaWindows
+            v-if="isGeminiAntigravity && usageInfo && (usageInfo.antigravity_quota_groups?.length || hasAntigravityQuotaFromAPI)"
+            :usage="usageInfo"
+          />
+          <div v-else-if="geminiUsageBars.length" class="space-y-1">
             <div class="text-[10px] text-gray-500">{{ t('admin.accounts.gemini.localQuota') }}</div>
             <UsageProgressBar
               v-for="bar in geminiUsageBars"
@@ -647,6 +653,7 @@ import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch } from 'v
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
+import AntigravityQuotaWindows from './AntigravityQuotaWindows.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber } from '@/utils/format'

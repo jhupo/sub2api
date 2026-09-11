@@ -528,7 +528,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					service.WithForwardGeminiSession(derefGroupID(apiKey.GroupID), sessionKey),
 				)
 			} else {
-				result, err = h.geminiCompatService.Forward(requestCtx, c, account, forwardBody)
+				err = h.gatewayService.ValidateGeminiOAuthPricing(requestCtx, apiKey, account, reqModel, forwardModel, channelMapping)
+				if err == nil {
+					result, err = h.geminiCompatService.Forward(requestCtx, c, account, forwardBody)
+				}
 			}
 			if accountReleaseFunc != nil {
 				accountReleaseFunc()
@@ -588,6 +591,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				})
 			}
 			if err != nil {
+				if errors.Is(err, service.ErrModelPricingUnavailable) {
+					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "pricing_unavailable", "Model pricing is not configured; contact the administrator", streamStarted)
+					return
+				}
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					// 流式内容已写入客户端，无法撤销，禁止 failover 以防止流拼接腐化
@@ -916,7 +923,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				if h.geminiCompatService == nil {
 					err = errors.New("gemini compatibility service is not configured")
 				} else {
-					result, err = h.geminiCompatService.Forward(requestCtx, c, account, attemptBody)
+					err = h.gatewayService.ValidateGeminiOAuthPricing(requestCtx, currentAPIKey, account, reqModel, attemptParsedReq.Model, channelMapping)
+					if err == nil {
+						result, err = h.geminiCompatService.Forward(requestCtx, c, account, attemptBody)
+					}
 				}
 			} else if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
 				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, attemptBody, hasBoundSession)
@@ -970,6 +980,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				forceCacheBilling := fs.ForceCacheBilling
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), currentAPIKey)
 				sessionID := service.ExtractClientSessionID(c)
+				channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel)
 				h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 					if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 						Result:             result,
@@ -987,7 +998,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						RequestPayloadHash: requestPayloadHash,
 						ForceCacheBilling:  forceCacheBilling,
 						APIKeyService:      h.apiKeyService,
-						ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+						ChannelUsageFields: channelUsageFields,
 					}); err != nil {
 						logger.L().With(
 							zap.String("component", "handler.gateway.messages"),
@@ -1003,6 +1014,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 			if err != nil {
 				// Beta policy block: return 400 immediately, no failover
+				if errors.Is(err, service.ErrModelPricingUnavailable) {
+					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "pricing_unavailable", "Model pricing is not configured; contact the administrator", streamStarted)
+					return
+				}
 				var betaBlockedErr *service.BetaBlockedError
 				if errors.As(err, &betaBlockedErr) {
 					service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)

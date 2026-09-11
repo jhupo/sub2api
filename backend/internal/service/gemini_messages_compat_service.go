@@ -3520,6 +3520,11 @@ func extractGeminiUsage(data []byte) *ClaudeUsage {
 	cand := int(usage.Get("candidatesTokenCount").Int())
 	cached := int(usage.Get("cachedContentTokenCount").Int())
 	thoughts := int(usage.Get("thoughtsTokenCount").Int())
+	var metadata antigravity.GeminiUsageMetadata
+	if err := json.Unmarshal([]byte(usage.Raw), &metadata); err != nil {
+		return nil
+	}
+	audioInput, audioCached := metadata.AudioTokenUsage()
 
 	// 从 candidatesTokensDetails 提取 IMAGE 模态 token 数
 	imageTokens := 0
@@ -3537,10 +3542,12 @@ func extractGeminiUsage(data []byte) *ClaudeUsage {
 	// 注意：Gemini 的 promptTokenCount 包含 cachedContentTokenCount，
 	// 但 Claude 的 input_tokens 不包含 cache_read_input_tokens，需要减去
 	return &ClaudeUsage{
-		InputTokens:          prompt - cached,
+		InputTokens:          max(0, prompt-cached),
 		OutputTokens:         cand + thoughts,
 		CacheReadInputTokens: cached,
 		ImageOutputTokens:    imageTokens,
+		AudioInputTokens:     audioInput,
+		AudioCacheReadTokens: audioCached,
 	}
 }
 

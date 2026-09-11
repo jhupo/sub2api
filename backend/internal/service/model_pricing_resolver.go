@@ -163,7 +163,24 @@ func matchGroupModelPricing(group *Group, model string) *ChannelModelPricing {
 			}
 		}
 	}
-	return wildcard
+	if wildcard != nil {
+		return wildcard
+	}
+	if !strings.HasPrefix(model, "gemini-") {
+		return nil
+	}
+	base := normalizeGeminiThinkingTierAlias(model)
+	for i := range group.ModelPricing {
+		entry := &group.ModelPricing[i]
+		for _, pattern := range entry.Models {
+			pattern = normalizeChannelPricingModelName(pattern)
+			if normalizeGeminiThinkingTierAlias(pattern) == base && (pattern == base || pattern == "gemini-3.1-pro") {
+				cp := entry.Clone()
+				return &cp
+			}
+		}
+	}
+	return nil
 }
 
 // resolveBasePricing 从 LiteLLM 或 Fallback 获取基础定价
@@ -185,8 +202,8 @@ func (r *ModelPricingResolver) resolveBasePricing(model string) (*ModelPricing, 
 // 只认字面名。两者不对称导致：管理员只配基名、请求模型带 effort 后缀时，渠道定价
 // 未命中而官方兜底命中，计费候选循环首个成功即返回，渠道定价永远轮不到（issue #5256）。
 //
-// 字面名优先，保证管理员对具体变体的显式配价不被基名覆盖；非 OpenAI 模型
-// normalizeKnownOpenAICodexModel 返回空串，此处天然 no-op。
+// Literal overrides take precedence; known OpenAI and Gemini effort aliases
+// then share their base-model card. Unknown families are not inferred.
 func (r *ModelPricingResolver) lookupChannelPricingNormalized(ctx context.Context, groupID int64, model string) *ChannelModelPricing {
 	if r.channelService == nil {
 		return nil
@@ -195,10 +212,19 @@ func (r *ModelPricingResolver) lookupChannelPricingNormalized(ctx context.Contex
 		return pricing
 	}
 	normalized := normalizeKnownOpenAICodexModel(model)
-	if normalized == "" || strings.EqualFold(normalized, strings.TrimSpace(model)) {
+	if normalized == "" {
+		normalized = normalizeGeminiThinkingTierAlias(strings.ToLower(strings.TrimSpace(model)))
+	}
+	if normalized == "" || (strings.EqualFold(normalized, strings.TrimSpace(model)) && normalized != "gemini-3.1-pro-preview") {
 		return nil
 	}
-	return r.channelService.GetChannelModelPricing(ctx, groupID, normalized)
+	if pricing := r.channelService.GetChannelModelPricing(ctx, groupID, normalized); pricing != nil {
+		return pricing
+	}
+	if normalized == "gemini-3.1-pro-preview" {
+		return r.channelService.GetChannelModelPricing(ctx, groupID, "gemini-3.1-pro")
+	}
+	return nil
 }
 
 // applyChannelOverrides 应用渠道定价覆盖
@@ -329,9 +355,11 @@ func intervalToModelPricing(iv *PricingInterval, base *ModelPricing, chPricing *
 		return value * *multiplier
 	}
 	if iv.InputPrice != nil {
+		pricing.AudioInputPricePerToken = channelTierOverridePrice(pricing.InputPricePerToken, pricing.AudioInputPricePerToken, *iv.InputPrice)
 		pricing.InputPricePerTokenPriority = channelTierOverridePrice(pricing.InputPricePerToken, pricing.InputPricePerTokenPriority, *iv.InputPrice)
 		pricing.InputPricePerToken = *iv.InputPrice
 	} else if iv.InputMultiplier != nil {
+		pricing.AudioInputPricePerToken = applyMultiplier(pricing.AudioInputPricePerToken, iv.InputMultiplier)
 		pricing.InputPricePerToken = applyMultiplier(pricing.InputPricePerToken, iv.InputMultiplier)
 		pricing.InputPricePerTokenPriority = applyMultiplier(pricing.InputPricePerTokenPriority, iv.InputMultiplier)
 	}
@@ -361,9 +389,11 @@ func intervalToModelPricing(iv *PricingInterval, base *ModelPricing, chPricing *
 		pricing.SupportsCacheBreakdown = true
 	}
 	if iv.CacheReadPrice != nil {
+		pricing.AudioCacheReadPricePerToken = channelTierOverridePrice(pricing.CacheReadPricePerToken, pricing.AudioCacheReadPricePerToken, *iv.CacheReadPrice)
 		pricing.CacheReadPricePerTokenPriority = channelTierOverridePrice(pricing.CacheReadPricePerToken, pricing.CacheReadPricePerTokenPriority, *iv.CacheReadPrice)
 		pricing.CacheReadPricePerToken = *iv.CacheReadPrice
 	} else if iv.CacheReadMultiplier != nil {
+		pricing.AudioCacheReadPricePerToken = applyMultiplier(pricing.AudioCacheReadPricePerToken, iv.CacheReadMultiplier)
 		pricing.CacheReadPricePerToken = applyMultiplier(pricing.CacheReadPricePerToken, iv.CacheReadMultiplier)
 		pricing.CacheReadPricePerTokenPriority = applyMultiplier(pricing.CacheReadPricePerTokenPriority, iv.CacheReadMultiplier)
 	}

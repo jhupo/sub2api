@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
@@ -205,7 +206,8 @@ type UsageInfo struct {
 	GeminiFlashMinute   *UsageProgress                 `json:"gemini_flash_minute,omitempty"`  // Gemini Flash RPM
 
 	// Antigravity 多模型配额
-	AntigravityQuota map[string]*AntigravityModelQuota `json:"antigravity_quota,omitempty"`
+	AntigravityQuota       map[string]*AntigravityModelQuota `json:"antigravity_quota,omitempty"`
+	AntigravityQuotaGroups []antigravity.QuotaGroup          `json:"antigravity_quota_groups,omitempty"`
 
 	// Grok / xAI 被动额度快照
 	GrokRequestQuota       *xai.QuotaWindow `json:"grok_request_quota,omitempty"`
@@ -377,7 +379,7 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 	}
 
 	if account.Platform == PlatformGemini {
-		usage, err := s.getGeminiUsage(ctx, account)
+		usage, err := s.getGeminiUsage(ctx, account, forceProbe)
 		if err == nil && usage != nil && usage.Error == "" && !usage.IsForbidden && !usage.NeedsReauth {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
@@ -386,8 +388,8 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 
 	// Antigravity 平台：使用 AntigravityQuotaFetcher 获取额度
 	if account.Platform == PlatformAntigravity {
-		usage, err := s.getAntigravityUsage(ctx, account)
-		if err == nil {
+		usage, err := s.getAntigravityUsage(ctx, account, forceProbe)
+		if err == nil && usage != nil && usage.Error == "" && !usage.IsForbidden && !usage.NeedsReauth {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
 		return usage, err
@@ -960,7 +962,7 @@ func applyExtraToUsage(usage *UsageInfo, extra map[string]any, now time.Time) {
 	}
 }
 
-func (s *AccountUsageService) getGeminiUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
+func (s *AccountUsageService) getGeminiUsage(ctx context.Context, account *Account, force ...bool) (*UsageInfo, error) {
 	now := time.Now()
 	usage := &UsageInfo{
 		UpdatedAt: &now,
@@ -971,13 +973,7 @@ func (s *AccountUsageService) getGeminiUsage(ctx context.Context, account *Accou
 			return usage, nil
 		}
 		if account.IsGeminiAntigravity() {
-			upstream, err := s.getAntigravityUsage(ctx, account)
-			if err != nil {
-				return nil, err
-			}
-			// Local counters change independently of the cached upstream quota.
-			copy := *upstream
-			usage = &copy
+			return s.getAntigravityUsage(ctx, account, force...)
 		}
 	}
 
@@ -1012,22 +1008,21 @@ func (s *AccountUsageService) getGeminiUsage(ctx context.Context, account *Accou
 }
 
 // getAntigravityUsage 获取 Antigravity 账户额度
-func (s *AccountUsageService) getAntigravityUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
+func (s *AccountUsageService) getAntigravityUsage(ctx context.Context, account *Account, force ...bool) (*UsageInfo, error) {
 	if s.antigravityQuotaFetcher == nil || !s.antigravityQuotaFetcher.CanFetch(account) {
 		now := time.Now()
 		return &UsageInfo{UpdatedAt: &now}, nil
 	}
 
+	if len(force) > 0 && force[0] {
+		s.cache.antigravityCache.Delete(account.ID)
+	}
 	// 1. 检查缓存
 	if cached, ok := s.cache.antigravityCache.Load(account.ID); ok {
 		if cache, ok := cached.(*antigravityUsageCache); ok {
 			ttl := antigravityCacheTTL(cache.usageInfo)
 			if time.Since(cache.timestamp) < ttl {
-				usage := cache.usageInfo
-				if usage.FiveHour != nil && usage.FiveHour.ResetsAt != nil {
-					usage.FiveHour.RemainingSeconds = int(time.Until(*usage.FiveHour.ResetsAt).Seconds())
-				}
-				return usage, nil
+				return cloneAntigravityUsage(cache.usageInfo), nil
 			}
 		}
 	}
@@ -1040,10 +1035,7 @@ func (s *AccountUsageService) getAntigravityUsage(ctx context.Context, account *
 			if cache, ok := cached.(*antigravityUsageCache); ok {
 				ttl := antigravityCacheTTL(cache.usageInfo)
 				if time.Since(cache.timestamp) < ttl {
-					usage := cache.usageInfo
-					// 重新计算 RemainingSeconds，避免返回过时的剩余秒数
-					recalcAntigravityRemainingSeconds(usage)
-					return usage, nil
+					return cache.usageInfo, nil
 				}
 			}
 		}
@@ -1080,7 +1072,20 @@ func (s *AccountUsageService) getAntigravityUsage(ctx context.Context, account *
 		now := time.Now()
 		return &UsageInfo{UpdatedAt: &now}, nil
 	}
-	return usage, nil
+	return cloneAntigravityUsage(usage), nil
+}
+
+func cloneAntigravityUsage(info *UsageInfo) *UsageInfo {
+	if info == nil {
+		return nil
+	}
+	copy := *info
+	if info.FiveHour != nil {
+		progress := *info.FiveHour
+		copy.FiveHour = &progress
+	}
+	recalcAntigravityRemainingSeconds(&copy)
+	return &copy
 }
 
 func (s *AccountUsageService) getGrokUsage(ctx context.Context, account *Account, force bool) (*UsageInfo, error) {

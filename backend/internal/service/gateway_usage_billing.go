@@ -825,6 +825,8 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		logger.LegacyPrintf("service.gateway", "force_cache_billing: %d input_tokens → cache_read_input_tokens (account=%d)",
 			result.Usage.InputTokens, account.ID)
 		result.Usage.CacheReadInputTokens += result.Usage.InputTokens
+		result.Usage.AudioCacheReadTokens += min(max(0, result.Usage.AudioInputTokens), result.Usage.InputTokens)
+		result.Usage.AudioInputTokens = 0
 		result.Usage.InputTokens = 0
 	}
 
@@ -871,7 +873,14 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 	// 通用兜底（与 OpenAI 路径的 usageBillingModelCandidates 语义对齐）：
 	// 选定模型查不到任何价格时回退到实际转发的具体模型。已定价流量不受影响。
-	billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, result.UpstreamModel, result.Model)
+	if account.IsGeminiAntigravity() {
+		if input.BillingModelSource == BillingModelSourceUpstream && result.UpstreamModel != "" {
+			billingModel = result.UpstreamModel
+		}
+		billingModel = s.geminiOAuthBillableModel(ctx, apiKey, billingModel, result.UpstreamModel, result.Model)
+	} else {
+		billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, result.UpstreamModel, result.Model)
+	}
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
 	requestedModel := result.Model
@@ -930,11 +939,13 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			// Anthropic's input_tokens excludes cache_read and cache_creation (billed separately);
 			// OpenAI gateway uses actualInputTokens which also excludes cache_read for the same reason.
 			UsageTokens{
-				InputTokens:         result.Usage.InputTokens,
-				OutputTokens:        result.Usage.OutputTokens,
-				CacheCreationTokens: result.Usage.CacheCreationInputTokens,
-				CacheReadTokens:     result.Usage.CacheReadInputTokens,
-				ImageOutputTokens:   result.Usage.ImageOutputTokens,
+				InputTokens:          result.Usage.InputTokens,
+				OutputTokens:         result.Usage.OutputTokens,
+				CacheCreationTokens:  result.Usage.CacheCreationInputTokens,
+				CacheReadTokens:      result.Usage.CacheReadInputTokens,
+				ImageOutputTokens:    result.Usage.ImageOutputTokens,
+				AudioInputTokens:     result.Usage.AudioInputTokens,
+				AudioCacheReadTokens: result.Usage.AudioCacheReadTokens,
 			},
 			cost.TotalCost,
 		)
@@ -996,7 +1007,15 @@ func (s *GatewayService) calculateRecordUsageCost(
 ) *CostBreakdown {
 	// 图片生成：渠道定价为 token 计费时走 token 路径，否则走图片计费
 	if result.ImageCount > 0 {
-		if resolved := s.resolveChannelPricing(ctx, billingModel, apiKey); resolved != nil && resolved.Mode == BillingModeToken {
+		resolved := s.resolveChannelPricing(ctx, billingModel, apiKey)
+		if resolved != nil && resolved.Mode == BillingModeToken {
+			return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
+		}
+		// Native Gemini image models report image output tokens. Their default
+		// API price also charges prompt and thinking tokens; a per-image fallback
+		// drops those costs. Explicit operator image pricing remains authoritative.
+		if isGeminiTokenImageModel(billingModel) && resolved == nil &&
+			!apiKeyHasConfiguredImagePrice(apiKey, NormalizeImageBillingTierOrDefault(result.ImageSize)) {
 			return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
 		}
 		return s.calculateImageCost(ctx, result, apiKey, billingModel, imageMultiplier)
@@ -1191,6 +1210,8 @@ func (s *GatewayService) calculateTokenCost(
 		CacheCreation5mTokens: result.Usage.CacheCreation5mTokens,
 		CacheCreation1hTokens: result.Usage.CacheCreation1hTokens,
 		ImageOutputTokens:     result.Usage.ImageOutputTokens,
+		AudioInputTokens:      result.Usage.AudioInputTokens,
+		AudioCacheReadTokens:  result.Usage.AudioCacheReadTokens,
 	}
 
 	var resolved *ResolvedPricing

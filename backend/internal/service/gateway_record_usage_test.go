@@ -310,6 +310,46 @@ func TestGatewayServiceRecordUsage_EmptyImageSizeDefaultsBeforeBillingAndPersist
 	require.InDelta(t, 0.19, usageRepo.lastLog.ActualCost, 1e-12)
 }
 
+func TestGeminiOfficialForceCacheBillingPreservesAudioPartition(t *testing.T) {
+	billing, gateway, key := officialGeminiBilling(t)
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.billingService, svc.resolver = billing, gateway.resolver
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{RequestID: "gemini_audio_cache", Model: "gemini-2.5-flash", Usage: ClaudeUsage{
+			InputTokens: 800, AudioInputTokens: 500, CacheReadInputTokens: 200, AudioCacheReadTokens: 100,
+		}},
+		APIKey: key, User: &User{ID: 1}, Account: &Account{ID: 5, Platform: PlatformGemini, Type: AccountTypeOAuth}, ForceCacheBilling: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, billingRepo.lastCmd)
+	require.InDelta(t, (400*0.03e-6+600*0.1e-6)*2, billingRepo.lastCmd.BalanceCost, 1e-12)
+	require.Equal(t, 1000, usageRepo.lastLog.CacheReadTokens)
+	require.Zero(t, usageRepo.lastLog.InputTokens)
+}
+
+func TestGeminiOfficialMappedModelControlsSettlement(t *testing.T) {
+	for _, source := range []string{BillingModelSourceUpstream, BillingModelSourceChannelMapped} {
+		billing, gateway, key := officialGeminiBilling(t)
+		billingRepo := &openAIRecordUsageBillingRepoStub{}
+		svc := newGatewayRecordUsageServiceWithBillingRepoForTest(&openAIRecordUsageLogRepoStub{inserted: true}, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+		svc.billingService, svc.resolver = billing, gateway.resolver
+		model := "gemini-3.1-pro"
+		if source == BillingModelSourceChannelMapped {
+			model = "gemini-3.1-pro-private-alias"
+		}
+		err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+			Result: &ForwardResult{RequestID: "gemini_mapped_price", Model: model, UpstreamModel: "gemini-3.6-flash", Usage: ClaudeUsage{InputTokens: 1000}},
+			APIKey: key, User: &User{ID: 1}, Account: &Account{ID: 5, Platform: PlatformGemini, Type: AccountTypeOAuth, Credentials: map[string]any{"oauth_type": GeminiOAuthTypeAntigravity}},
+			ChannelUsageFields: ChannelUsageFields{BillingModelSource: source},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, billingRepo.lastCmd)
+		require.InDelta(t, 1000*1.5e-6*2, billingRepo.lastCmd.BalanceCost, 1e-12, source)
+	}
+}
+
 func TestGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *testing.T) {
 	groupID := int64(902)
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}

@@ -251,6 +251,8 @@ func mergeAntigravityCompatUsage(dst *ClaudeUsage, src *antigravity.ClaudeUsage)
 	dst.CacheCreationInputTokens = src.CacheCreationInputTokens
 	dst.CacheReadInputTokens = src.CacheReadInputTokens
 	dst.ImageOutputTokens = src.ImageOutputTokens
+	dst.AudioInputTokens = src.AudioInputTokens
+	dst.AudioCacheReadTokens = src.AudioCacheReadTokens
 }
 
 func (s *AntigravityGatewayService) handleAntigravityCompatStream(

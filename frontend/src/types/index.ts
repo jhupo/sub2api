@@ -1346,6 +1346,16 @@ export interface AccountUsageInfo {
   gemini_pro_minute?: UsageProgress | null
   gemini_flash_minute?: UsageProgress | null
   antigravity_quota?: Record<string, AntigravityModelQuota> | null
+  antigravity_quota_groups?: Array<{
+    displayName: string
+    buckets: Array<{
+      bucketId: string
+      displayName: string
+      window: string
+      remainingFraction: number | null
+      resetTime: string
+    }>
+  }>
   grok_request_quota?: GrokQuotaWindow | null
   grok_token_quota?: GrokQuotaWindow | null
   grok_retry_after_seconds?: number | null

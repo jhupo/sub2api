@@ -1633,11 +1633,11 @@ func TestClient_FetchAvailableModels_InvalidJSON_RealCall(t *testing.T) {
 
 func TestClient_FetchAvailableModels_URLFallback_RealCall(t *testing.T) {
 	callCount := 0
-	// 第一个 server 返回 429，第二个 server 返回成功
+	// Endpoint failure can fall back; quota exhaustion must not fan out.
 	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = w.Write([]byte(`{"error":"rate_limited"}`))
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"unavailable"}`))
 	}))
 	defer server1.Close()
 
@@ -1728,45 +1728,6 @@ func TestClient_FetchAvailableModels_EmptyModels_RealCall(t *testing.T) {
 	}
 	if rawResp == nil {
 		t.Fatal("rawResp 不应为 nil")
-	}
-}
-
-func TestClient_FetchAvailableModelsCatalog_MergesSuccessfulEndpoints(t *testing.T) {
-	daily := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"models":{"gemini-3.1-pro-low":{"displayName":"Gemini 3.1 Pro (Low)"}}}`))
-	}))
-	defer daily.Close()
-	sandbox := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":"temporary"}`))
-	}))
-	defer sandbox.Close()
-	prod := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"models":{"gemini-pro-agent":{"displayName":"Gemini 3.1 Pro (High)"}}}`))
-	}))
-	defer prod.Close()
-
-	client := mustNewClient(t, "")
-	catalog, err := client.fetchAvailableModelsCatalog(
-		context.Background(),
-		"token",
-		"project",
-		defaultFetchAvailableModelsBodyLimit,
-		[]string{daily.URL, sandbox.URL, prod.URL},
-	)
-	if err != nil {
-		t.Fatalf("FetchAvailableModelsCatalog failed: %v", err)
-	}
-	if len(catalog.Models) != 2 {
-		t.Fatalf("merged models = %#v", catalog.Models)
-	}
-	if _, ok := catalog.Models["gemini-3.1-pro-low"]; !ok {
-		t.Fatal("daily model missing from merged catalog")
-	}
-	if _, ok := catalog.Models["gemini-pro-agent"]; !ok {
-		t.Fatal("prod model missing from merged catalog")
 	}
 }
 

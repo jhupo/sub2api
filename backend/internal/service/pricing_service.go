@@ -154,6 +154,8 @@ type LiteLLMModelPricing struct {
 	OutputCostPerImage                  float64 `json:"output_cost_per_image"`       // 图片生成模型每张图片价格
 	OutputCostPerImageToken             float64 `json:"output_cost_per_image_token"` // 图片输出 token 价格
 	InputCostPerImageToken              float64 `json:"input_cost_per_image_token"`  // 图片输入 token 价格（如 gpt-image-2 图片编辑）
+	InputCostPerAudioToken              float64 `json:"input_cost_per_audio_token"`
+	CacheReadCostPerAudioToken          float64 `json:"cache_read_input_token_cost_per_audio_token"`
 
 	// TokenPricingAbsent 表示源数据中 input/output token 价格均缺失（仅有图片价）。
 	// 此类条目只可用于图片计费，token 计费必须回退到 fallback 或 fail-closed，
@@ -188,6 +190,8 @@ type LiteLLMRawEntry struct {
 	OutputCostPerImage                  *float64 `json:"output_cost_per_image"`
 	OutputCostPerImageToken             *float64 `json:"output_cost_per_image_token"`
 	InputCostPerImageToken              *float64 `json:"input_cost_per_image_token"`
+	InputCostPerAudioToken              *float64 `json:"input_cost_per_audio_token"`
+	CacheReadCostPerAudioToken          *float64 `json:"cache_read_input_token_cost_per_audio_token"`
 }
 
 // PricingService 动态价格服务
@@ -454,6 +458,7 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 	if err := json.Unmarshal(body, &rawData); err != nil {
 		return nil, fmt.Errorf("parse raw JSON: %w", err)
 	}
+	applyGeminiStandardCatalogPricing(rawData)
 	rawData = s.applyPricingOverrides(rawData)
 
 	result := make(map[string]*LiteLLMModelPricing)
@@ -530,6 +535,12 @@ func (s *PricingService) parsePricingData(body []byte) (map[string]*LiteLLMModel
 		}
 		if entry.InputCostPerImageToken != nil {
 			pricing.InputCostPerImageToken = *entry.InputCostPerImageToken
+		}
+		if entry.InputCostPerAudioToken != nil {
+			pricing.InputCostPerAudioToken = *entry.InputCostPerAudioToken
+		}
+		if entry.CacheReadCostPerAudioToken != nil {
+			pricing.CacheReadCostPerAudioToken = *entry.CacheReadCostPerAudioToken
 		}
 
 		hasExplicitLongContext := entry.LongContextInputTokenThreshold != nil ||
@@ -1079,15 +1090,11 @@ func (s *PricingService) buildModelLookupCandidates(modelLower string) []string 
 	}
 	normalized := normalizeModelNameForPricing(modelLower)
 
-	// A tier-specific entry should take precedence when the pricing catalog gains
-	// one later. Today Antigravity's Gemini 3.6 Flash tiers share the base rate,
-	// so the normalized base remains the fallback after the exact aliases.
-	candidates := rawCandidates
+	// Reasoning effort changes usage, not the public model's token rates.
+	// Explicit group/channel prices are resolved separately before this catalog.
+	candidates := append([]string{normalized}, rawCandidates...)
 	if normalizeGeminiThinkingTierAlias(lastSegment(modelLower)) != lastSegment(modelLower) {
-		candidates = append(candidates, normalized)
-	} else {
-		// Prefer canonical model names for all other aliases (including models/xxx).
-		candidates = append([]string{normalized}, candidates...)
+		candidates = []string{normalized}
 	}
 
 	seen := make(map[string]struct{}, len(candidates))
@@ -1139,18 +1146,26 @@ func normalizeModelNameForPricing(model string) string {
 		}
 		return canonical
 	}
+	switch model {
+	case "claude-opus-4-6-thinking":
+		return "claude-opus-4-6"
+	case "claude-sonnet-4-6-thinking":
+		return "claude-sonnet-4-6"
+	}
 	return normalizeGeminiThinkingTierAlias(model)
 }
 
-// normalizeGeminiThinkingTierAlias maps Antigravity's Gemini 3.6 Flash
-// thinking-tier model IDs to the public base model. The tier controls reasoning
-// behavior, not the published token rate, so this keeps -high/-low/-medium and
-// -tiered requests on the same price card as gemini-3.6-flash.
+// normalizeGeminiThinkingTierAlias only strips known effort suffixes from
+// known public families. Agent aliases must have an explicit model mapping.
 func normalizeGeminiThinkingTierAlias(model string) string {
-	const baseModel = "gemini-3.6-flash"
-	for _, tier := range []string{"-high", "-low", "-medium", "-tiered"} {
-		if model == baseModel+tier {
-			return baseModel
+	for _, base := range []string{"gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-pro", "gemini-3.1-pro-preview", "gemini-3.5-flash", "gemini-3.6-flash"} {
+		for _, tier := range []string{"", "-extra-high", "-extra-low", "-minimal", "-high", "-low", "-medium", "-tiered"} {
+			if model == base+tier {
+				if base == "gemini-3.1-pro" {
+					return "gemini-3.1-pro-preview"
+				}
+				return base
+			}
 		}
 	}
 	return model

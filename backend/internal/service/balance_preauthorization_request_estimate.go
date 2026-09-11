@@ -2,6 +2,7 @@ package service
 
 import (
 	"math"
+	"strings"
 
 	"github.com/tidwall/gjson"
 )
@@ -19,6 +20,7 @@ type BalancePreauthorizationTokenEstimate struct {
 	OutputTokens      int
 	ImageInputTokens  int
 	ImageOutputTokens int
+	AudioInputTokens  int
 }
 
 // EstimateBalancePreauthorizationTokens follows the request-local pre-consume
@@ -49,6 +51,14 @@ func EstimateBalancePreauthorizationTokens(body []byte) BalancePreauthorizationT
 		OutputTokens: outputTokens,
 	}
 	root := gjson.ParseBytes(body)
+	for _, path := range []string{"contents", "messages", "input"} {
+		if requestContainsAudio(root.Get(path)) {
+			// Reserve input media, not MIME examples in tool definitions. The
+			// reported modality partition replaces this conservative estimate.
+			estimate.AudioInputTokens = inputTokens
+			break
+		}
+	}
 	if IsGPTImageGenerationModel(root.Get("model").String()) {
 		count := root.Get("n").Int()
 		if count < 1 {
@@ -70,6 +80,55 @@ func EstimateBalancePreauthorizationTokens(body []byte) BalancePreauthorizationT
 		}
 	}
 	return estimate
+}
+
+func requestContainsAudio(value gjson.Result) bool {
+	if !value.IsObject() && !value.IsArray() {
+		return false
+	}
+	found := false
+	value.ForEach(func(key, child gjson.Result) bool {
+		if (key.Str == "mimeType" || key.Str == "mime_type" || key.Str == "media_type") && strings.HasPrefix(child.Str, "audio/") ||
+			key.Str == "type" && (child.Str == "input_audio" || child.Str == "audio_url") {
+			found = true
+			return false
+		}
+		found = requestContainsAudio(child)
+		return !found
+	})
+	return found
+}
+
+// GeminiImageReservationTokens uses official output token counts, not rounded
+// dollar-per-image examples. Unknown sizes reserve the largest supported size.
+func GeminiImageReservationTokens(model string, body []byte) int {
+	if !isGeminiTokenImageModel(model) {
+		return 0
+	}
+	size := gjson.GetBytes(body, "generationConfig.imageConfig.imageSize").String()
+	if size == "" {
+		size = gjson.GetBytes(body, "image_config.image_size").String()
+	}
+	switch normalizeModelNameForPricing(model) {
+	case "gemini-3.1-flash-image", "gemini-3.1-flash-image-preview":
+		switch strings.ToUpper(size) {
+		case "0.5K":
+			return 747
+		case "1K":
+			return 1120
+		case "2K":
+			return 1680
+		default:
+			return 2520
+		}
+	case "gemini-2.5-flash-image":
+		return 1290
+	default:
+		if size == "1K" || size == "2K" {
+			return 1120
+		}
+		return 2000
+	}
 }
 
 func estimateBalancePreauthorizationInputTokens(body []byte) int {

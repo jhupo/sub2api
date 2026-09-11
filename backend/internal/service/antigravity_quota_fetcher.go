@@ -28,13 +28,15 @@ const (
 
 // AntigravityQuotaFetcher 从 Antigravity API 获取额度
 type AntigravityQuotaFetcher struct {
-	proxyRepo ProxyRepository
-	cfg       *config.Config
+	proxyRepo         ProxyRepository
+	cfg               *config.Config
+	geminiTokens      *GeminiTokenProvider
+	antigravityTokens *AntigravityTokenProvider
 }
 
 // NewAntigravityQuotaFetcher 创建 AntigravityQuotaFetcher
-func NewAntigravityQuotaFetcher(proxyRepo ProxyRepository, cfg *config.Config) *AntigravityQuotaFetcher {
-	return &AntigravityQuotaFetcher{proxyRepo: proxyRepo, cfg: cfg}
+func NewAntigravityQuotaFetcher(proxyRepo ProxyRepository, cfg *config.Config, geminiTokens *GeminiTokenProvider, antigravityTokens *AntigravityTokenProvider) *AntigravityQuotaFetcher {
+	return &AntigravityQuotaFetcher{proxyRepo: proxyRepo, cfg: cfg, geminiTokens: geminiTokens, antigravityTokens: antigravityTokens}
 }
 
 // CanFetch 检查是否可以获取此账户的额度
@@ -46,13 +48,25 @@ func (f *AntigravityQuotaFetcher) CanFetch(account *Account) bool {
 		return false
 	}
 	accessToken := account.GetCredential("access_token")
-	return accessToken != ""
+	return accessToken != "" || account.GetCredential("refresh_token") != ""
 }
 
 // FetchQuota 获取 Antigravity 账户额度信息
 func (f *AntigravityQuotaFetcher) FetchQuota(ctx context.Context, account *Account, proxyURL string) (*QuotaResult, error) {
 	accessToken := account.GetCredential("access_token")
-	projectID := account.GetCredential("project_id")
+	var tokenErr error
+	if account.IsGeminiAntigravity() && f.geminiTokens != nil {
+		accessToken, tokenErr = f.geminiTokens.GetAccessToken(ctx, account)
+	} else if account.Platform == PlatformAntigravity && f.antigravityTokens != nil {
+		accessToken, tokenErr = f.antigravityTokens.GetAccessToken(ctx, account)
+	}
+	if tokenErr != nil {
+		return nil, fmt.Errorf("get quota access token: %w", tokenErr)
+	}
+	projectID, err := resolveAntigravityProjectID(account)
+	if err != nil {
+		return nil, err
+	}
 
 	client, err := antigravity.NewClient(proxyURL)
 	if err != nil {
@@ -60,7 +74,13 @@ func (f *AntigravityQuotaFetcher) FetchQuota(ctx context.Context, account *Accou
 	}
 
 	// 调用 API 获取配额
-	modelsResp, modelsRaw, err := client.FetchAvailableModels(ctx, accessToken, projectID, resolveModelsListReadLimit(f.cfg))
+	summary, err := client.RetrieveUserQuotaSummary(ctx, accessToken, projectID, resolveModelsListReadLimit(f.cfg))
+	modelsResp := &antigravity.FetchAvailableModelsResponse{}
+	var modelsRaw map[string]any
+	// Only an unsupported endpoint permits model-quota fallback.
+	if errors.Is(err, antigravity.ErrQuotaSummaryUnsupported) {
+		modelsResp, modelsRaw, err = client.FetchAvailableModels(ctx, accessToken, projectID, resolveModelsListReadLimit(f.cfg))
+	}
 	if err != nil {
 		// 403 Forbidden: 不报错，返回 is_forbidden 标记
 		var forbiddenErr *antigravity.ForbiddenError
@@ -88,6 +108,10 @@ func (f *AntigravityQuotaFetcher) FetchQuota(ctx context.Context, account *Accou
 
 	// 转换为 UsageInfo
 	usageInfo := f.buildUsageInfo(modelsResp, tierRaw, tierNormalized, loadResp)
+	usageInfo.Source = "active"
+	if summary != nil {
+		usageInfo.AntigravityQuotaGroups = summary.Groups
+	}
 
 	return &QuotaResult{
 		UsageInfo: usageInfo,
@@ -143,7 +167,7 @@ func (f *AntigravityQuotaFetcher) buildUsageInfo(modelsResp *antigravity.FetchAv
 
 	// 遍历所有模型，填充 AntigravityQuota 和 AntigravityQuotaDetails
 	for modelName, modelInfo := range modelsResp.Models {
-		if modelInfo.QuotaInfo == nil {
+		if !modelInfo.QuotaInfo.HasRemainingFraction() {
 			continue
 		}
 
@@ -174,25 +198,6 @@ func (f *AntigravityQuotaFetcher) buildUsageInfo(modelsResp *antigravity.FetchAv
 		info.ModelForwardingRules = make(map[string]string, len(modelsResp.DeprecatedModelIDs))
 		for oldID, deprecated := range modelsResp.DeprecatedModelIDs {
 			info.ModelForwardingRules[oldID] = deprecated.NewModelID
-		}
-	}
-
-	// 同时设置 FiveHour 用于兼容展示（取主要模型）
-	priorityModels := []string{"claude-sonnet-4-20250514", "claude-sonnet-4", "gemini-2.5-pro"}
-	for _, modelName := range priorityModels {
-		if modelInfo, ok := modelsResp.Models[modelName]; ok && modelInfo.QuotaInfo != nil {
-			utilization := (1.0 - modelInfo.QuotaInfo.RemainingFraction) * 100
-			progress := &UsageProgress{
-				Utilization: utilization,
-			}
-			if modelInfo.QuotaInfo.ResetTime != "" {
-				if resetTime, err := time.Parse(time.RFC3339, modelInfo.QuotaInfo.ResetTime); err == nil {
-					progress.ResetsAt = &resetTime
-					progress.RemainingSeconds = int(time.Until(resetTime).Seconds())
-				}
-			}
-			info.FiveHour = progress
-			break
 		}
 	}
 

@@ -81,7 +81,7 @@ func TestResolveRuntimeModelGeminiProAliases(t *testing.T) {
 		want      string
 	}{
 		{name: "preview defaults to low", requested: "gemini-3.1-pro-preview", want: "gemini-3.1-pro-low"},
-		{name: "explicit high uses agent alias", requested: "gemini-3.1-pro-high", want: "gemini-pro-agent"},
+		{name: "explicit high preserves exact ID", requested: "gemini-3.1-pro-high", want: "gemini-3.1-pro-high"},
 		{name: "models prefix is normalized", requested: "models/gemini-3.1-pro", want: "gemini-3.1-pro-low"},
 	}
 	for _, tt := range tests {
@@ -153,8 +153,6 @@ func TestResolveRuntimeModelFlashDefaultsAndVariants(t *testing.T) {
 		{requested: "gemini-3.8-flash", want: "gemini-3.8-flash-low"},
 		{requested: "gemini-3.8-flash-high", want: "gemini-3.8-flash-high"},
 		{requested: "gemini-3.5-flash", want: "gemini-3.5-flash-extra-low"},
-		{requested: "gemini-3.5-flash-medium", want: "gemini-3.5-flash-low"},
-		{requested: "gemini-3.5-flash-high", want: "gemini-3-flash-agent"},
 	} {
 		got, ok := resolveRuntimeModel(models, tt.requested)
 		if !ok || got != tt.want {
@@ -232,8 +230,8 @@ func TestBuildGeminiCodeAssistRequestBody(t *testing.T) {
 	}
 }
 
-func TestCollapseGeminiCodeAssistModels(t *testing.T) {
-	models := collapseGeminiCodeAssistModels(map[string]antigravity.ModelInfo{
+func TestGeminiCodeAssistModelsPreserveRuntimeIDs(t *testing.T) {
+	models := listGeminiCodeAssistModels(map[string]antigravity.ModelInfo{
 		"gemini-pro-agent":        {DisplayName: "Gemini 3.1 Pro (High)"},
 		"gemini-3.1-pro-low":      {DisplayName: "Gemini 3.1 Pro (Low)"},
 		"gemini-3.5-flash-medium": {DisplayName: "Gemini 3.5 Flash (Medium)"},
@@ -242,10 +240,10 @@ func TestCollapseGeminiCodeAssistModels(t *testing.T) {
 		"claude-sonnet-4-6":       {DisplayName: "Claude Sonnet"},
 		"MODEL_PLACEHOLDER_M16":   {DisplayName: "placeholder"},
 	})
-	if len(models) != 4 {
-		t.Fatalf("collapsed model count = %d, want 4", len(models))
+	if len(models) != 6 {
+		t.Fatalf("authorized model count = %d, want 6", len(models))
 	}
-	if models[0].ID != "claude-sonnet-4-6" || models[1].ID != "gemini-3.1-flash-image" || models[2].ID != "gemini-3.1-pro" || models[3].ID != "gemini-3.5-flash" {
+	if models[0].ID != "claude-sonnet-4-6" || models[1].ID != "gemini-3.1-flash-image" || models[2].ID != "gemini-3.1-pro-low" || models[3].ID != "gemini-3.5-flash-medium" {
 		t.Fatalf("collapsed models = %#v", models)
 	}
 }
@@ -286,7 +284,7 @@ func TestGeminiCodeAssistCatalogAppliesWhitelistAndAliases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAuthorized() error = %v", err)
 	}
-	if len(authorized) != 3 || authorized[0].ID != "claude-opus-4-6" || authorized[1].ID != "gemini-3.1-pro" || authorized[2].ID != "gpt-oss-120b" {
+	if len(authorized) != 3 || authorized[0].ID != "claude-opus-4-6-thinking" || authorized[1].ID != "gemini-3.1-pro-low" || authorized[2].ID != "gpt-oss-120b-medium" {
 		t.Fatalf("ListAuthorized() = %#v", authorized)
 	}
 
@@ -435,14 +433,14 @@ func TestGeminiCodeAssistCatalogUsesLastKnownGoodOnRefreshFailure(t *testing.T) 
 	}
 
 	models, err := resolver.List(context.Background(), account, "token")
-	if err != nil || len(models) != 1 || models[0].ID != "gemini-3.1-pro" {
+	if err != nil || len(models) != 1 || models[0].ID != "gemini-pro-agent" {
 		t.Fatalf("initial List() = %#v, %v", models, err)
 	}
 
 	now = now.Add(geminiCodeAssistCatalogTTL + time.Second)
 	fetchErr = true
 	models, err = resolver.List(context.Background(), account, "token")
-	if err == nil || len(models) != 1 || models[0].ID != "gemini-3.1-pro" {
+	if err == nil || len(models) != 1 || models[0].ID != "gemini-pro-agent" {
 		t.Fatalf("stale List() = %#v, %v", models, err)
 	}
 

@@ -1189,7 +1189,7 @@ func (s *AccountTestService) fetchGeminiCodeAssistOAuthUpstreamModels(ctx contex
 		return nil, newUpstreamModelSyncUpstreamError("Failed to get Gemini access token", err)
 	}
 	models, err := s.codeAssistModelResolver.ListAuthorized(ctx, account, accessToken, true)
-	if err != nil && len(models) == 0 {
+	if err != nil {
 		return nil, newUpstreamModelSyncUpstreamError("Failed to fetch Gemini OAuth model catalog", err)
 	}
 	ids := make([]string, 0, len(models))

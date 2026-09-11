@@ -17,8 +17,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCollapseGeminiCodeAssistModelsKeepsEveryAuthorizedPublicModel(t *testing.T) {
-	models := collapseGeminiCodeAssistModels(map[string]antigravity.ModelInfo{
+func TestGeminiCodeAssistModelsKeepAuthorizedImageAndVideo(t *testing.T) {
+	models := listGeminiCodeAssistModels(map[string]antigravity.ModelInfo{
 		"gemini-3.1-flash-image": {DisplayName: "Gemini 3.1 Flash Image"},
 		"veo-3.1-generate":       {DisplayName: "Veo 3.1"},
 	})

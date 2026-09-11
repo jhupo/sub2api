@@ -169,6 +169,25 @@ type GeminiUsageMetadata struct {
 	ThoughtsTokenCount      int                 `json:"thoughtsTokenCount,omitempty"` // thinking tokens（按输出价格计费）
 	CandidatesTokensDetails []GeminiTokenDetail `json:"candidatesTokensDetails,omitempty"`
 	PromptTokensDetails     []GeminiTokenDetail `json:"promptTokensDetails,omitempty"`
+	CacheTokensDetails      []GeminiTokenDetail `json:"cacheTokensDetails,omitempty"`
+}
+
+// AudioTokenUsage separates uncached and cached audio from the inclusive
+// Gemini prompt counters. Both remain subsets of their respective totals.
+func (m *GeminiUsageMetadata) AudioTokenUsage() (input, cached int) {
+	for _, detail := range m.PromptTokensDetails {
+		if detail.Modality == "AUDIO" {
+			input += max(0, detail.TokenCount)
+		}
+	}
+	for _, detail := range m.CacheTokensDetails {
+		if detail.Modality == "AUDIO" {
+			cached += max(0, detail.TokenCount)
+		}
+	}
+	cached = min(cached, max(0, m.CachedContentTokenCount), input)
+	input = min(max(0, input-cached), max(0, m.PromptTokenCount-m.CachedContentTokenCount))
+	return input, cached
 }
 
 // ImageOutputTokens 从 CandidatesTokensDetails 中提取 IMAGE 模态的 token 数

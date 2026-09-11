@@ -589,7 +589,7 @@ func TestPricingService_Gemini36FlashThinkingTiersUseBasePricing(t *testing.T) {
 	}
 }
 
-func TestPricingService_Gemini36FlashTierSpecificPricingTakesPrecedence(t *testing.T) {
+func TestPricingService_Gemini36FlashCatalogTierUsesBasePrice(t *testing.T) {
 	basePricing := &LiteLLMModelPricing{InputCostPerToken: 1.5e-6}
 	tierPricing := &LiteLLMModelPricing{InputCostPerToken: 2e-6}
 	svc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
@@ -597,7 +597,7 @@ func TestPricingService_Gemini36FlashTierSpecificPricingTakesPrecedence(t *testi
 		"gemini-3.6-flash-low": tierPricing,
 	}}
 
-	require.Same(t, tierPricing, svc.GetModelPricing("models/gemini-3.6-flash-low"))
+	require.Same(t, basePricing, svc.GetModelPricing("models/gemini-3.6-flash-low"))
 }
 
 func TestBillingService_Gemini36FlashThinkingTierFallbacksAreBillable(t *testing.T) {

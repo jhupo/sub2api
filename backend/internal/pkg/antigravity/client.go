@@ -618,8 +618,28 @@ func extractProjectIDFromOnboardResponse(resp map[string]any) string {
 
 // ModelQuotaInfo 模型配额信息
 type ModelQuotaInfo struct {
-	RemainingFraction float64 `json:"remainingFraction"`
-	ResetTime         string  `json:"resetTime,omitempty"`
+	RemainingFraction        float64 `json:"remainingFraction"`
+	ResetTime                string  `json:"resetTime,omitempty"`
+	remainingFractionMissing bool
+}
+
+func (q *ModelQuotaInfo) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		RemainingFraction *float64 `json:"remainingFraction"`
+		ResetTime         string   `json:"resetTime"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*q = ModelQuotaInfo{ResetTime: raw.ResetTime, remainingFractionMissing: raw.RemainingFraction == nil}
+	if raw.RemainingFraction != nil {
+		q.RemainingFraction = *raw.RemainingFraction
+	}
+	return nil
+}
+
+func (q *ModelQuotaInfo) HasRemainingFraction() bool {
+	return q != nil && !q.remainingFractionMissing && q.RemainingFraction >= 0 && q.RemainingFraction <= 1
 }
 
 // ModelInfo 模型信息
@@ -706,7 +726,7 @@ func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectI
 		}
 
 		// 检查是否需要 URL 降级
-		if shouldFallbackToNextURL(nil, resp.StatusCode) && urlIdx < len(availableURLs)-1 {
+		if resp.StatusCode != http.StatusTooManyRequests && shouldFallbackToNextURL(nil, resp.StatusCode) && urlIdx < len(availableURLs)-1 {
 			log.Printf("[antigravity] fetchAvailableModels URL fallback (HTTP %d): %s -> %s", resp.StatusCode, baseURL, availableURLs[urlIdx+1])
 			continue
 		}
@@ -737,120 +757,6 @@ func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectI
 	}
 
 	return nil, nil, lastErr
-}
-
-// FetchAvailableModelsCatalog merges model catalogs across the current Code
-// Assist endpoint set. One endpoint failure does not discard successful
-// catalogs from the others.
-func (c *Client) FetchAvailableModelsCatalog(ctx context.Context, accessToken, projectID string, bodyLimit int64) (*FetchAvailableModelsResponse, error) {
-	return c.fetchAvailableModelsCatalog(ctx, accessToken, projectID, bodyLimit, CodeAssistBaseURLs())
-}
-
-func (c *Client) fetchAvailableModelsCatalog(ctx context.Context, accessToken, projectID string, bodyLimit int64, baseURLs []string) (*FetchAvailableModelsResponse, error) {
-	if c == nil || c.httpClient == nil {
-		return nil, errors.New("antigravity client is not configured")
-	}
-	if bodyLimit <= 0 {
-		return nil, errors.New("fetchAvailableModels body limit must be positive")
-	}
-	reqBody, err := json.Marshal(FetchAvailableModelsRequest{Project: projectID})
-	if err != nil {
-		return nil, fmt.Errorf("序列化请求失败: %w", err)
-	}
-
-	type endpointResult struct {
-		index  int
-		models *FetchAvailableModelsResponse
-		err    error
-	}
-	if len(baseURLs) == 0 {
-		return nil, errors.New("fetchAvailableModels failed: no endpoint available")
-	}
-	results := make(chan endpointResult, len(baseURLs))
-	for index, baseURL := range baseURLs {
-		index, baseURL := index, baseURL
-		go func() {
-			models, _, err := c.fetchAvailableModelsAt(ctx, accessToken, baseURL, reqBody, bodyLimit)
-			results <- endpointResult{index: index, models: models, err: err}
-		}()
-	}
-
-	ordered := make([]endpointResult, len(baseURLs))
-	for range baseURLs {
-		result := <-results
-		ordered[result.index] = result
-	}
-	merged := &FetchAvailableModelsResponse{
-		Models:             make(map[string]ModelInfo),
-		DeprecatedModelIDs: make(map[string]DeprecatedModelInfo),
-	}
-	var lastErr error
-	succeeded := false
-	for index, result := range ordered {
-		if result.err != nil {
-			lastErr = result.err
-			continue
-		}
-		if result.models == nil {
-			continue
-		}
-		succeeded = true
-		DefaultURLAvailability.MarkSuccess(baseURLs[index])
-		for id, info := range result.models.Models {
-			merged.Models[id] = info
-		}
-		for id, info := range result.models.DeprecatedModelIDs {
-			merged.DeprecatedModelIDs[id] = info
-		}
-	}
-	if !succeeded {
-		if lastErr == nil {
-			lastErr = errors.New("fetchAvailableModels failed: no endpoint available")
-		}
-		return nil, lastErr
-	}
-	return merged, nil
-}
-
-func (c *Client) fetchAvailableModelsAt(
-	ctx context.Context,
-	accessToken string,
-	baseURL string,
-	reqBody []byte,
-	bodyLimit int64,
-) (*FetchAvailableModelsResponse, map[string]any, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/v1internal:fetchAvailableModels", bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, nil, fmt.Errorf("创建请求失败: %w", err)
-	}
-	ApplyCodeAssistRequestHeaders(req, ctx, accessToken, "application/json")
-
-	resp, err := servertiming.Do(c.fetchAvailableModelsHTTPClient(), req)
-	if err != nil {
-		return nil, nil, fmt.Errorf("fetchAvailableModels 请求失败: %w", err)
-	}
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit+1))
-	_ = resp.Body.Close()
-	if err != nil {
-		return nil, nil, fmt.Errorf("读取响应失败: %w", err)
-	}
-	if int64(len(respBody)) > bodyLimit {
-		return nil, nil, fmt.Errorf("响应超过 %d 字节", bodyLimit)
-	}
-	if resp.StatusCode == http.StatusForbidden {
-		return nil, nil, &ForbiddenError{StatusCode: resp.StatusCode, Body: string(respBody)}
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("fetchAvailableModels 失败 (HTTP %d): %s", resp.StatusCode, string(respBody))
-	}
-
-	var models FetchAvailableModelsResponse
-	if err := json.Unmarshal(respBody, &models); err != nil {
-		return nil, nil, fmt.Errorf("响应解析失败: %w", err)
-	}
-	var raw map[string]any
-	_ = json.Unmarshal(respBody, &raw)
-	return &models, raw, nil
 }
 
 func (c *Client) fetchAvailableModelsHTTPClient() *http.Client {

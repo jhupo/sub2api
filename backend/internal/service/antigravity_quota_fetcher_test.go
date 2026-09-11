@@ -229,11 +229,7 @@ func TestBuildUsageInfo_FiveHourPriorityOrder(t *testing.T) {
 
 	info := fetcher.buildUsageInfo(modelsResp, "", "", nil)
 
-	require.NotNil(t, info.FiveHour, "FiveHour should be set when a priority model exists")
-	// claude-sonnet-4-20250514 is first in priority list, so it should be used
-	expectedUtilization := (1.0 - 0.80) * 100 // 20
-	require.InDelta(t, expectedUtilization, info.FiveHour.Utilization, 0.01)
-	require.NotNil(t, info.FiveHour.ResetsAt, "ResetsAt should be parsed from ResetTime")
+	require.Nil(t, info.FiveHour, "model quota does not identify a five-hour window")
 }
 
 func TestBuildUsageInfo_FiveHourFallbackToClaude4(t *testing.T) {
@@ -258,9 +254,7 @@ func TestBuildUsageInfo_FiveHourFallbackToClaude4(t *testing.T) {
 
 	info := fetcher.buildUsageInfo(modelsResp, "", "", nil)
 
-	require.NotNil(t, info.FiveHour)
-	expectedUtilization := (1.0 - 0.60) * 100 // 40
-	require.InDelta(t, expectedUtilization, info.FiveHour.Utilization, 0.01)
+	require.Nil(t, info.FiveHour)
 }
 
 func TestBuildUsageInfo_FiveHourFallbackToGemini(t *testing.T) {
@@ -284,9 +278,7 @@ func TestBuildUsageInfo_FiveHourFallbackToGemini(t *testing.T) {
 
 	info := fetcher.buildUsageInfo(modelsResp, "", "", nil)
 
-	require.NotNil(t, info.FiveHour)
-	expectedUtilization := (1.0 - 0.30) * 100 // 70
-	require.InDelta(t, expectedUtilization, info.FiveHour.Utilization, 0.01)
+	require.Nil(t, info.FiveHour)
 }
 
 func TestBuildUsageInfo_FiveHourNoPriorityModel(t *testing.T) {
@@ -324,9 +316,7 @@ func TestBuildUsageInfo_FiveHourWithEmptyResetTime(t *testing.T) {
 
 	info := fetcher.buildUsageInfo(modelsResp, "", "", nil)
 
-	require.NotNil(t, info.FiveHour)
-	require.Nil(t, info.FiveHour.ResetsAt, "ResetsAt should be nil when ResetTime is empty")
-	require.Equal(t, 0, info.FiveHour.RemainingSeconds)
+	require.Nil(t, info.FiveHour)
 }
 
 func TestBuildUsageInfo_FullUtilization(t *testing.T) {
@@ -413,7 +403,7 @@ func TestFetchQuotaUsesConfiguredModelsListBodyLimit(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Gateway.ModelsListReadMaxBytes = 8
-	fetcher := NewAntigravityQuotaFetcher(nil, cfg)
+	fetcher := NewAntigravityQuotaFetcher(nil, cfg, nil, nil)
 	_, err := fetcher.FetchQuota(context.Background(), &Account{
 		Platform: PlatformAntigravity,
 		Type:     AccountTypeOAuth,
@@ -422,7 +412,7 @@ func TestFetchQuotaUsesConfiguredModelsListBodyLimit(t *testing.T) {
 			"project_id":   "project",
 		},
 	}, "")
-	require.ErrorContains(t, err, "响应超过 8 字节")
+	require.ErrorContains(t, err, "exceeds 8 bytes")
 }
 
 func TestFetchQuota_ForbiddenReturnsIsForbidden(t *testing.T) {

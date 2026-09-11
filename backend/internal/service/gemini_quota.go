@@ -157,6 +157,10 @@ func (s *GeminiQuotaService) QuotaForAccount(ctx context.Context, account *Accou
 	if account == nil || account.Platform != PlatformGemini {
 		return GeminiQuota{}, false
 	}
+	// Antigravity entitlements are upstream windows, not Code Assist RPD/RPM.
+	if account.IsGeminiAntigravity() {
+		return GeminiQuota{}, false
+	}
 
 	// Map (oauth_type + tier_id) to a canonical policy tier key.
 	// This keeps the policy table stable even if upstream tier_id strings vary.

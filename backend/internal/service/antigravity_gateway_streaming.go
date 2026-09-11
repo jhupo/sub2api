@@ -965,6 +965,8 @@ returnResponse:
 		CacheCreationInputTokens: agUsage.CacheCreationInputTokens,
 		CacheReadInputTokens:     agUsage.CacheReadInputTokens,
 		ImageOutputTokens:        agUsage.ImageOutputTokens,
+		AudioInputTokens:         agUsage.AudioInputTokens,
+		AudioCacheReadTokens:     agUsage.AudioCacheReadTokens,
 	}
 
 	return claudeResp, &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, nil

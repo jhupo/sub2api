@@ -115,6 +115,8 @@ type ModelPricing struct {
 	LongContextOutputMultiplier        float64  // 长上下文整次会话输出倍率
 	ImageOutputPricePerToken           float64  // 图片输出 token 价格 (USD)
 	ImageOutputPriceExplicit           bool     // 是否由渠道定价显式设定（为 true 时即使 == 0 也不回退）
+	AudioInputPricePerToken            float64
+	AudioCacheReadPricePerToken        float64
 }
 
 func normalizeBillingServiceTier(serviceTier string) string {
@@ -185,6 +187,8 @@ type UsageTokens struct {
 	CacheCreation5mTokens int
 	CacheCreation1hTokens int
 	ImageOutputTokens     int
+	AudioInputTokens      int
+	AudioCacheReadTokens  int
 }
 
 // CostBreakdown 费用明细
@@ -349,6 +353,7 @@ func (s *BillingService) initFallbackPricing() {
 		CacheReadPricePerToken:     0.2e-6, // $0.20 per MTok
 		SupportsCacheBreakdown:     false,
 	}
+	s.fallbackPrices["gemini-3.1-pro-preview"] = s.fallbackPrices["gemini-3.1-pro"]
 
 	// Gemini 3.6 Flash (Google AI pricing: $1.50 input / $7.50 output /
 	// $0.15 cached input per MTok). Antigravity's -high/-low/-medium/-tiered
@@ -1050,6 +1055,9 @@ func (s *BillingService) HasIdentifiedTokenPricing(model string) bool {
 		}
 	}
 	pricing, ok := s.fallbackPrices[model]
+	if !ok {
+		pricing, ok = s.fallbackPrices[normalizeGeminiThinkingTierAlias(model)]
+	}
 	return ok && pricing != nil
 }
 
@@ -1095,6 +1103,8 @@ func (s *BillingService) GetModelPricing(model string) (*ModelPricing, error) {
 				LongContextOutputMultiplier:   litellmPricing.LongContextOutputCostMultiplier,
 				ImageInputPricePerToken:       litellmPricing.InputCostPerImageToken,
 				ImageOutputPricePerToken:      litellmPricing.OutputCostPerImageToken,
+				AudioInputPricePerToken:       litellmPricing.InputCostPerAudioToken,
+				AudioCacheReadPricePerToken:   litellmPricing.CacheReadCostPerAudioToken,
 			}), nil
 		}
 	}
@@ -1154,6 +1164,7 @@ func applyChannelTokenPriceOverrides(pricing *ModelPricing, channelPricing *Chan
 		return
 	}
 	if channelPricing.InputPrice != nil {
+		pricing.AudioInputPricePerToken = channelTierOverridePrice(pricing.InputPricePerToken, pricing.AudioInputPricePerToken, *channelPricing.InputPrice)
 		priority := channelTierOverridePrice(pricing.InputPricePerToken, pricing.InputPricePerTokenPriority, *channelPricing.InputPrice)
 		pricing.InputPricePerToken = *channelPricing.InputPrice
 		pricing.InputPricePerTokenPriority = priority
@@ -1180,6 +1191,7 @@ func applyChannelTokenPriceOverrides(pricing *ModelPricing, channelPricing *Chan
 		pricing.SupportsCacheBreakdown = true
 	}
 	if channelPricing.CacheReadPrice != nil {
+		pricing.AudioCacheReadPricePerToken = channelTierOverridePrice(pricing.CacheReadPricePerToken, pricing.AudioCacheReadPricePerToken, *channelPricing.CacheReadPrice)
 		priority := channelTierOverridePrice(pricing.CacheReadPricePerToken, pricing.CacheReadPricePerTokenPriority, *channelPricing.CacheReadPrice)
 		pricing.CacheReadPricePerToken = *channelPricing.CacheReadPrice
 		pricing.CacheReadPricePerTokenPriority = priority
@@ -1384,6 +1396,16 @@ func (s *BillingService) computeTokenBreakdown(
 	bd.CacheCreationCost = s.computeCacheCreationCost(pricing, tokens, cacheCreationPrice, cacheCreationMultiplier)
 
 	bd.CacheReadCost = float64(tokens.CacheReadTokens) * cacheReadPrice
+	// Audio counts are subsets of input/cache totals, not additional tokens.
+	// Preserve tier, interval and long-context adjustments already in the base.
+	if pricing.AudioInputPricePerToken > 0 && pricing.InputPricePerToken > 0 {
+		audio := min(max(0, tokens.AudioInputTokens), max(0, tokens.InputTokens-tokens.ImageInputTokens))
+		bd.InputCost += float64(audio) * inputPrice * (pricing.AudioInputPricePerToken/pricing.InputPricePerToken - 1)
+	}
+	if pricing.AudioCacheReadPricePerToken > 0 && pricing.CacheReadPricePerToken > 0 {
+		audio := min(max(0, tokens.AudioCacheReadTokens), max(0, tokens.CacheReadTokens))
+		bd.CacheReadCost += float64(audio) * cacheReadPrice * (pricing.AudioCacheReadPricePerToken/pricing.CacheReadPricePerToken - 1)
+	}
 
 	if tierMultiplier != 1.0 {
 		bd.InputCost *= tierMultiplier

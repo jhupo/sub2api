@@ -98,6 +98,9 @@ func preauthorizeTokenGatewayRequest(
 	}
 	payloadHash := service.HashUsageRequestPayload(body)
 	tokenEstimate := service.EstimateBalancePreauthorizationTokens(body)
+	if imageTokens := service.GeminiImageReservationTokens(billingModel, body); imageTokens > 0 {
+		tokenEstimate.ImageOutputTokens = imageTokens
+	}
 	if disableOutputReservation {
 		tokenEstimate.OutputTokens = 0
 	}
@@ -112,6 +115,7 @@ func preauthorizeTokenGatewayRequest(
 		EstimatedInputTokens:       tokenEstimate.InputTokens,
 		EstimatedImageInputTokens:  tokenEstimate.ImageInputTokens,
 		EstimatedImageOutputTokens: tokenEstimate.ImageOutputTokens,
+		EstimatedAudioInputTokens:  tokenEstimate.AudioInputTokens,
 		InitialOutputWindowTokens:  tokenEstimate.OutputTokens,
 		DisableOutputReservation:   disableOutputReservation,
 		PerRequestEstimate:         service.PerRequestPreauthorizationEstimate{RequestCount: 1},
@@ -165,6 +169,7 @@ func preauthorizePerRequestGatewayRequest(
 		EstimatedInputTokens:       tokenEstimate.InputTokens,
 		EstimatedImageInputTokens:  tokenEstimate.ImageInputTokens,
 		EstimatedImageOutputTokens: tokenEstimate.ImageOutputTokens,
+		EstimatedAudioInputTokens:  tokenEstimate.AudioInputTokens,
 		InitialOutputWindowTokens:  tokenEstimate.OutputTokens,
 		EstimateKind:               service.PreauthorizationEstimatePerRequest,
 		PerRequestEstimate:         estimate,
