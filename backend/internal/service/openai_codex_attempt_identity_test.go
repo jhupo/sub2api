@@ -120,7 +120,9 @@ func TestCodexAttemptIdentityShadowUsesCredentialSeedAndSelectedPolicy(t *testin
 	parent.Extra["openai_device_id"] = "next-attempt-device"
 	body := map[string]any{}
 	require.True(t, identity.applyInstallationFallback(body))
-	require.Equal(t, "credential-device", body["client_metadata"].(map[string]any)["x-codex-installation-id"])
+	metadata, ok := body["client_metadata"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "credential-device", metadata["x-codex-installation-id"])
 }
 
 func TestCodexAttemptIdentityAccountFailoverRebuildsFromOriginalInput(t *testing.T) {

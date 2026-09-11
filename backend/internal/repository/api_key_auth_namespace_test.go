@@ -14,7 +14,7 @@ import (
 func TestAPIKeyAuthCacheNamespaceDoesNotReuseOrDeleteUpstreamData(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	defer client.Close()
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
 	ctx := context.Background()
 	cache := NewAPIKeyCache(client)
 	require.NoError(t, client.Set(ctx, "apikey:auth:hash", `{"snapshot":{"version":23}}`, time.Hour).Err())

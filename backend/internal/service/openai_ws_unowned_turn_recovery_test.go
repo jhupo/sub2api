@@ -55,7 +55,7 @@ func TestOpenAIWSUnownedTurnRecoveryPreservesRequestAndSafetyGates(t *testing.T)
 					serverErrs <- err
 					return
 				}
-				defer conn.CloseNow()
+				defer func() { _ = conn.CloseNow() }()
 				ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 				defer cancel()
 				_, first, err := conn.Read(ctx)
@@ -72,7 +72,7 @@ func TestOpenAIWSUnownedTurnRecoveryPreservesRequestAndSafetyGates(t *testing.T)
 			defer cancel()
 			client, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
 			require.NoError(t, err)
-			defer client.CloseNow()
+			defer func() { _ = client.CloseNow() }()
 			firstInput := `,"input":[{"type":"input_text","text":"hello"}]`
 			secondInput := `,"input":[{"type":"input_text","text":"world"}]`
 			if tc.noReplay {

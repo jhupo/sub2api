@@ -61,7 +61,7 @@ func TestOpenAIWSFundingTransportAuthorizesEveryTurnBeforeSending(t *testing.T) 
 					serverErr <- err
 					return
 				}
-				defer conn.CloseNow()
+				defer func() { _ = conn.CloseNow() }()
 				_, first, err := conn.Read(r.Context())
 				if err != nil {
 					serverErr <- err
@@ -73,7 +73,7 @@ func TestOpenAIWSFundingTransportAuthorizesEveryTurnBeforeSending(t *testing.T) 
 			}))
 			defer server.Close()
 			client := dialPassthroughLifecycleClient(t, server)
-			defer client.CloseNow()
+			defer func() { _ = client.CloseNow() }()
 			requirePassthroughUpstreamWrite(t, upstream, 3*time.Second)
 			require.EqualValues(t, 1, authorizations.Load())
 			upstream.Send(`{"type":"response.created","response":{"id":"resp_funding_1"}}`)

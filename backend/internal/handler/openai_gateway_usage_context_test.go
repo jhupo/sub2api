@@ -33,7 +33,9 @@ func TestUsageWorkerCallbacksDoNotCaptureGinContext(t *testing.T) {
 			if !ok || fn.Body == nil {
 				continue
 			}
-			ginParams := make(map[*ast.Object]bool)
+			// Conservatively forbid these names inside worker callbacks, even
+			// when shadowed: worker-local contexts must have distinct names.
+			ginParams := make(map[string]bool)
 			for _, param := range fn.Type.Params.List {
 				ptr, ok := param.Type.(*ast.StarExpr)
 				if !ok {
@@ -48,7 +50,7 @@ func TestUsageWorkerCallbacksDoNotCaptureGinContext(t *testing.T) {
 					continue
 				}
 				for _, name := range param.Names {
-					ginParams[name.Obj] = true
+					ginParams[name.Name] = true
 				}
 			}
 			ast.Inspect(fn.Body, func(node ast.Node) bool {
@@ -67,7 +69,7 @@ func TestUsageWorkerCallbacksDoNotCaptureGinContext(t *testing.T) {
 					}
 					checked++
 					ast.Inspect(callback.Body, func(node ast.Node) bool {
-						if id, ok := node.(*ast.Ident); ok && id.Obj != nil && ginParams[id.Obj] {
+						if id, ok := node.(*ast.Ident); ok && ginParams[id.Name] {
 							t.Errorf("%s: usage worker captures pooled Gin context %q", fset.Position(id.Pos()), id.Name)
 						}
 						return true

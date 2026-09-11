@@ -256,7 +256,7 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(c
 	}
 	identity := s.codexAttemptIdentity(c, account)
 	if identity == nil {
-		return nil, fmt.Errorf("Codex identity required for hosted alpha search")
+		return nil, fmt.Errorf("codex identity required for hosted alpha search")
 	}
 	if sessionID := strings.TrimSpace(gjson.GetBytes(alphaBody, "id").String()); sessionID != "" {
 		isolated := identity.scope.sessionID(sessionID)

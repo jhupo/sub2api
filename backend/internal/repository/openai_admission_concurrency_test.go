@@ -31,7 +31,8 @@ func newOpenAIAdmissionTestRedis(t *testing.T) *redis.Client {
 }
 
 func TestOpenAIAdaptiveSoftAdmissionAtomicAfterPressure(t *testing.T) {
-	cache := NewConcurrencyCache(newOpenAIAdmissionTestRedis(t), 15, 900).(*concurrencyCache)
+	cache, ok := NewConcurrencyCache(newOpenAIAdmissionTestRedis(t), 15, 900).(*concurrencyCache)
+	require.True(t, ok)
 	ctx := context.Background()
 	accountID := time.Now().UnixMicro()
 	policy := service.AccountSlotAdmission{MaxConcurrency: 20, PressureModel: "soft-admission-test", PressureWindow: 90 * time.Second, SoftLimitPercent: 70}
