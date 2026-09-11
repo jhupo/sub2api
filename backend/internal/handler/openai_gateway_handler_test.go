@@ -2788,6 +2788,8 @@ func TestOpenAIResponsesWebSocket_ActiveTurnReadTimeoutDoesNotFailover(t *testin
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.IngressInterTurnIdleTimeoutSeconds = 3
 	cfg.Gateway.MaxAccountSwitches = 3
+	// Keep the gateway deadline strictly before the mock upstream's close.
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 1
 
 	accountRepo := &openAIWSFailoverHandlerAccountRepoStub{accounts: accounts}
 	rateLimitSvc := service.NewRateLimitService(accountRepo, nil, cfg, nil, nil)
