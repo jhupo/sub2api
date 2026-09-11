@@ -97,7 +97,7 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		account := candidate.Account
 		var streamStarted bool
 		var slotStatus openAISlotAcquireResult
-		release, slotStatus = h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", candidate, false, &streamStarted, reqLog)
+		account, release, slotStatus = h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", candidate, false, &streamStarted, reqLog)
 		if slotStatus != openAISlotAcquireOK {
 			if slotStatus == openAISlotAcquireFailed {
 				return
@@ -300,7 +300,7 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 		}
 		account := selection.Account
 		var started bool
-		release, status := h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", selection, false, &started, reqLog)
+		account, release, status := h.acquireResponsesAccountSlot(c, apiKey.GroupID, "", selection, false, &started, reqLog)
 		if status == openAISlotAcquireProfitVetoed {
 			failed[account.ID] = struct{}{}
 			continue
@@ -479,6 +479,7 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 	inboundEndpoint := GetInboundEndpoint(c)
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
+	channelUsageFields := clientRequestedUsageFields(c, service.ChannelMappingResult{}, model, result.UpstreamModel)
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 			Result:             result,
@@ -495,7 +496,7 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 			QuotaPlatform:      quotaPlatform,
 			SessionID:          sessionID,
 			PricingAt:          pricingAt,
-			ChannelUsageFields: clientRequestedUsageFields(c, service.ChannelMappingResult{}, model, result.UpstreamModel),
+			ChannelUsageFields: channelUsageFields,
 		}); err != nil {
 			logger.L().With(
 				zap.String("component", "handler.openai_gateway.grok_voice"),

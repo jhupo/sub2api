@@ -964,7 +964,7 @@ func TestObserveUpstreamMessage_ResponseIDFallbackPolicy(t *testing.T) {
 	require.False(t, observed.terminal)
 	require.Equal(t, "", observed.responseID)
 
-	// terminal：允许兜底用顶层 id（用于兼容少数字段变体）。
+	// Terminal events without an established response cannot adopt an event ID.
 	observed = observeUpstreamMessage(
 		state,
 		[]byte(`{"type":"response.completed","id":"resp_fallback","response":{"usage":{"input_tokens":1,"output_tokens":1}}}`),
@@ -974,7 +974,7 @@ func TestObserveUpstreamMessage_ResponseIDFallbackPolicy(t *testing.T) {
 		nil,
 	)
 	require.True(t, observed.terminal)
-	require.Equal(t, "resp_fallback", observed.responseID)
+	require.Empty(t, observed.responseID)
 }
 
 func TestObserveUpstreamMessage_ResponseServiceTierOnlyFromTerminalEvents(t *testing.T) {

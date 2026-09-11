@@ -3514,7 +3514,7 @@ func TestTryAcquireOpenAIFillSelectionOrderContinuesPastProbeBatch(t *testing.T)
 		}),
 	}
 	scheduler := &defaultOpenAIAccountScheduler{service: svc}
-	selection, _, err := scheduler.tryAcquireOpenAIFillSelectionOrder(context.Background(), OpenAIAccountScheduleRequest{
+	selection, _, err := scheduler.tryAcquireOpenAISelectionOrderInBatches(context.Background(), OpenAIAccountScheduleRequest{
 		Platform:          PlatformOpenAI,
 		RequiredTransport: OpenAIUpstreamTransportAny,
 		FillScheduling:    true,

@@ -678,6 +678,10 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				return
 			}
 
+			// Keep this frame's upstream usage even when reserving its output
+			// discovers cancellation before the frame can be delivered.
+			s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
+
 			// 写入客户端（客户端断开后继续 drain 上游）
 			if !clientDisconnected && !failureDelivered && !suppressCurrentEvent {
 				shouldFlush := queueDrained && (clientOutputStarted || startsClientOutput)
@@ -689,9 +693,9 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				// Reserve visible output before staging the line. The guarded
 				// event may flush immediately, so post-write top-ups are too late.
 				if startsVisibleOutput && streamEarlyErr == nil {
-					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, openAIStreamTextReservationBytes(frame)); topUpErr != nil {
-						streamEarlyErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
-						s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI responses", topUpErr)
+					if canceled, err := s.reserveOpenAIStreamingOutput(ctx, c, account, "OpenAI responses", streamBalanceGuard, openAIStreamTextReservationBytes(frame)); err != nil {
+						clientDisconnected = canceled
+						streamEarlyErr = err
 						return
 					}
 				}
@@ -709,7 +713,6 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				ms := int(time.Since(requestStartTime).Milliseconds())
 				firstTokenMs = &ms
 			}
-			s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
 			return
 		}
 

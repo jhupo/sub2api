@@ -35,6 +35,42 @@ type openAIResponsesNonStreamingSSEFailoverUpstream struct {
 	accountIDs []int64
 }
 
+type openAIResponsesStreamCancelUpstream struct {
+	service.HTTPUpstream
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (u *openAIResponsesStreamCancelUpstream) Do(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	u.calls++
+	u.cancel()
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"type\":\"response.output_text.delta\",\"response_id\":\"resp_cancel\",\"delta\":\"hello\"}\n\n",
+		)),
+	}, nil
+}
+
+func TestOpenAIGatewayHandlerResponses_CanceledStreamDoesNotWriteFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	upstream := &openAIResponsesStreamCancelUpstream{cancel: cancel}
+	handler := newOpenAIResponsesFailoverTestHandler(t, upstream)
+	c, rec := newOpenAIResponsesFailoverTestContext(t, ctx)
+	c.Request.Body = io.NopCloser(strings.NewReader(`{"model":"gpt-5.1","stream":true,"input":"hello"}`))
+
+	handler.Responses(c)
+
+	require.Equal(t, 1, upstream.calls, "cancellation must not retry or switch accounts")
+	require.Equal(t, statusClientClosedRequest, c.Writer.Status())
+	require.Empty(t, rec.Body.String(), "do not append response.failed for a canceled request")
+	_, hasUpstreamError := c.Get(service.OpsUpstreamStatusCodeKey)
+	require.False(t, hasUpstreamError)
+}
+
 func (u *openAIResponsesNonStreamingSSEFailoverUpstream) Do(_ *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
 	u.mu.Lock()
 	u.accountIDs = append(u.accountIDs, accountID)

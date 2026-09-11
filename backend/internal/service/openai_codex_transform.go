@@ -1436,11 +1436,8 @@ func ensureCodexReasoningInclude(reqBody map[string]any) bool {
 //
 // 加法式、幂等：仅在账号存在 device_id 且该键缺失时注入，绝不覆盖既有 client_metadata
 // （如 turn metadata），也不伪造——无 device_id 时不写入。
-func applyCodexClientMetadata(reqBody map[string]any, account *Account) bool {
-	if account == nil {
-		return false
-	}
-	deviceID := strings.TrimSpace(account.GetOpenAIDeviceID())
+func applyCodexClientMetadata(reqBody map[string]any, deviceID string) bool {
+	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
 		return false
 	}

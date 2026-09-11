@@ -60,13 +60,9 @@ func startPassthroughHookRecordingServer(
 	return server, serverErr
 }
 
-// TestPassthroughIngressFirstTurnUsesPreAdmissionWithoutBeforeTurn 钉死
-// ws_v2 透传 ingress 与 handler 侧首轮定价的耦合：首轮已在建连前完成准入，
-// relay 不重复触发 BeforeTurn，但会在 AfterTurn 前报告同一 turn 的开始时刻。
-//
-// handler 的 recordTurnStart 保存该时刻，AfterTurn 再用 currentOr(turnStart)
-// 作为首轮计费 PricingAt；后续 response.create 仍须执行 BeforeTurn 复核。
-func TestPassthroughIngressFirstTurnUsesPreAdmissionWithoutBeforeTurn(t *testing.T) {
+// The first send must freeze pricing and authorize funding, while preserving
+// its original start time for latency attribution and reusing acquired slots.
+func TestPassthroughIngressFirstTurnRunsAdmissionAndPreservesStart(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	controlCtx, cancelControl := context.WithCancelCause(context.Background())
 	defer cancelControl(context.Canceled)
@@ -131,7 +127,7 @@ func TestPassthroughIngressFirstTurnUsesPreAdmissionWithoutBeforeTurn(t *testing
 	gotEvents := append([]hookEvent(nil), hookEvents...)
 	hooksMu.Unlock()
 
-	require.Zero(t, gotBefore, "首轮已完成建连准入，不应重复调用 BeforeTurn")
+	require.Equal(t, 1, gotBefore, "first send must run per-turn admission exactly once")
 	require.GreaterOrEqual(t, len(gotEvents), 2, "透传 ingress 应报告 TurnStarted 和 AfterTurn")
 	require.Equal(t, "TurnStarted", gotEvents[0].name)
 	require.Equal(t, expectedTurnStartedAt, gotEvents[0].startedAt, "TurnStarted 必须携带入口冻结的首轮开始时刻")

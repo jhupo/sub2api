@@ -45,6 +45,14 @@ jobs:
         run: >-
           go test -race -tags=unit -parallel=1 ./internal/repository ./internal/service
           -run '^Test(PgDumper|RedeemAttemptWindow|TrustedRedeem|PaymentRedeem|PaymentLookup|ExecuteBalanceFulfillment|AccountSlotAdmission|OpenAIAdaptiveAdmission|OpenAIStickyMigration|OpenAIRequestAttempt|CodexAdaptive|CodexSticky|CodexQuota|OpenAIRuntimeRecovery|SchedulerSnapshotDecoded|SchedulerSnapshotFallback|ChannelCache|ForwardAsChatCompletions_Cancels|ForwardOpenAIWSV2_Cancellation)'
+      - name: WS funding and scheduler concurrency regressions
+        working-directory: backend
+        env:
+          GOMAXPROCS: '2'
+          GOMEMLIMIT: 4GiB
+        run: >-
+          go test -race -tags=unit -p=1 -parallel=1 ./internal/handler ./internal/service ./internal/service/openai_ws_v2
+          -run '^Test(OpenAISchedulerSimulation40|OpenAIWSFunding|OpenAIWSReprice|OpenAIResponsesWebSocket_ModelSwitch|PassthroughIngress.*Turn|RelayFunding|OpenAIWSDedicated|OpenAIWSResponseBoundary)'
       - name: Integration tests
         working-directory: backend
         run: make test-integration

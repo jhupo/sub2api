@@ -141,6 +141,11 @@ docs/*
 !docs/BATCH_IMAGE_MVP.md
 !docs/COMPOSITE_GROUPS.md
 !docs/CODEX_OVERLOAD_SCHEDULING.md
+!docs/OPENAI_SESSION_ADMISSION.md
+!docs/WS_IDENTITY_REUSE_REVIEW.md
+!docs/CODEX_OUTBOUND_IDENTITY.md
+!docs/GATEWAY_REQUEST_LIFECYCLE_REVIEW.md
+!docs/UPGRADE_FROM_UPSTREAM_V0_2_1.md
 !docs/PLUGIN_DEVELOPMENT.md
 !docs/channel-monitor-v2-safe-defaults.md
 !docs/legal/

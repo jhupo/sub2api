@@ -770,7 +770,7 @@ func TestRecoverBalancePreauthorizationCleansTerminalAttemptAfterPGCompletion(t 
 	require.Equal(t, "prepared-crash:7", cleaner.cleanupAttemptID)
 }
 
-func TestRecoverAuthorizedAfterSuccessfulResponseBeforeUsageTaskSettlesHold(t *testing.T) {
+func TestRecoverAuthorizedWithoutDurableUsageReleasesHold(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	fixture.wallet.finalize = []LiveBalanceResult{{
 		Outcome: LiveBalanceOutcomeApplied,
@@ -787,16 +787,16 @@ func TestRecoverAuthorizedAfterSuccessfulResponseBeforeUsageTaskSettlesHold(t *t
 	err := fixture.service.RecoverBalancePreauthorization(context.Background(), record)
 
 	require.NoError(t, err)
-	require.Equal(t, []string{"repo_begin_finalize", "wallet_finalize", "repo_complete_settlement"}, fixture.recorder.snapshot())
-	require.InDelta(t, record.HoldAmount, fixture.repo.finalizedAmount, 1e-12)
-	require.NotEmpty(t, fixture.repo.finalizedFingerprint)
-	require.InDelta(t, record.HoldAmount, fixture.wallet.lastActual, 1e-12)
-	require.Zero(t, fixture.wallet.refundCalls)
+	require.Equal(t, []string{"repo_begin_refund", "wallet_refund", "repo_complete_refund"}, fixture.recorder.snapshot())
+	require.Zero(t, fixture.repo.finalizedAmount)
+	require.Empty(t, fixture.repo.finalizedFingerprint)
+	require.Zero(t, fixture.wallet.finalizeCalls)
+	require.Equal(t, 1, fixture.wallet.refundCalls)
 }
 
-func TestRecoverAuthorizedMissingWalletStaysRecoverable(t *testing.T) {
+func TestRecoverAuthorizedMissingWalletReleasesWithoutCharge(t *testing.T) {
 	fixture := newPreauthorizationFixture()
-	fixture.wallet.finalize = []LiveBalanceResult{{Outcome: LiveBalanceOutcomeNotFound, State: LiveBalanceAttemptNone}}
+	fixture.wallet.refund = []LiveBalanceResult{{Outcome: LiveBalanceOutcomeNotFound, State: LiveBalanceAttemptNone}}
 	err := fixture.service.RecoverBalancePreauthorization(context.Background(), BalancePreauthorizationRecord{
 		RequestID:                "authorized-wallet-missing",
 		APIKeyID:                 7,
@@ -806,10 +806,10 @@ func TestRecoverAuthorizedMissingWalletStaysRecoverable(t *testing.T) {
 		Status:                   BalanceSettlementAuthorized,
 	})
 
-	require.ErrorIs(t, err, ErrBillingServiceUnavailable)
-	require.Equal(t, []string{"repo_begin_finalize", "wallet_finalize"}, fixture.recorder.snapshot())
+	require.NoError(t, err)
+	require.Equal(t, []string{"repo_begin_refund", "wallet_refund", "repo_complete_refund"}, fixture.recorder.snapshot())
 	require.Zero(t, fixture.repo.completeSettlementCalls)
-	require.Zero(t, fixture.wallet.refundCalls)
+	require.Equal(t, 1, fixture.wallet.refundCalls)
 }
 
 func TestRecoverExpiredBoundGrokVideoHoldRefundsInsteadOfSettling(t *testing.T) {
@@ -829,7 +829,7 @@ func TestRecoverExpiredBoundGrokVideoHoldRefundsInsteadOfSettling(t *testing.T) 
 	require.Zero(t, fixture.wallet.finalizeCalls)
 }
 
-func TestRecoverExpiredUnboundGrokVideoHoldSettlesHold(t *testing.T) {
+func TestRecoverExpiredUnboundGrokVideoHoldReleasesWithoutCharge(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	fixture.wallet.finalize = []LiveBalanceResult{{
 		Outcome: LiveBalanceOutcomeApplied,
@@ -845,8 +845,8 @@ func TestRecoverExpiredUnboundGrokVideoHoldSettlesHold(t *testing.T) {
 		ExpiresAt:                time.Now().Add(-time.Minute),
 	}
 	require.NoError(t, fixture.service.RecoverBalancePreauthorization(context.Background(), record))
-	require.Equal(t, []string{"repo_begin_finalize", "wallet_finalize", "repo_complete_settlement"}, fixture.recorder.snapshot())
-	require.InDelta(t, record.HoldAmount, fixture.wallet.lastActual, 1e-12)
+	require.Equal(t, []string{"repo_begin_refund", "wallet_refund", "repo_complete_refund"}, fixture.recorder.snapshot())
+	require.Zero(t, fixture.wallet.finalizeCalls)
 }
 
 func TestResumeRejectsOriginalExpiredGrokVideoHoldAfterRecoveryLease(t *testing.T) {

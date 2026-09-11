@@ -1463,6 +1463,9 @@ type TLSProfileConfig struct {
 
 // GatewaySchedulingConfig accounts scheduling configuration.
 type GatewaySchedulingConfig struct {
+	// New sessions first try this percentage of effective account concurrency.
+	// Existing sessions and the capacity fallback retain the hard limit. Zero disables it.
+	NewSessionSoftLimitPercent int `mapstructure:"new_session_soft_limit_percent"`
 	// 粘性会话排队配置
 	StickySessionMaxWaiting  int           `mapstructure:"sticky_session_max_waiting"`
 	StickySessionWaitTimeout time.Duration `mapstructure:"sticky_session_wait_timeout"`
@@ -2514,6 +2517,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.scheduling.fallback_selection_mode", "last_used")
 	viper.SetDefault("gateway.scheduling.prefer_soonest_reset", false)
 	viper.SetDefault("gateway.scheduling.load_batch_enabled", true)
+	viper.SetDefault("gateway.scheduling.new_session_soft_limit_percent", 70)
 	viper.SetDefault("gateway.scheduling.load_batch_cache_ttl_ms", 200)
 	viper.SetDefault("gateway.scheduling.snapshot_mget_chunk_size", 128)
 	viper.SetDefault("gateway.scheduling.snapshot_write_chunk_size", 256)
@@ -3643,6 +3647,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.Scheduling.StickySessionWaitTimeout <= 0 {
 		return fmt.Errorf("gateway.scheduling.sticky_session_wait_timeout must be positive")
+	}
+	if c.Gateway.Scheduling.NewSessionSoftLimitPercent < 0 || c.Gateway.Scheduling.NewSessionSoftLimitPercent > 100 {
+		return fmt.Errorf("gateway.scheduling.new_session_soft_limit_percent must be between 0 and 100")
 	}
 	if c.Gateway.Scheduling.FallbackWaitTimeout <= 0 {
 		return fmt.Errorf("gateway.scheduling.fallback_wait_timeout must be positive")

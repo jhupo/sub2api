@@ -33,6 +33,9 @@ type Usage struct {
 }
 
 type RelayResult struct {
+	// IncompleteTurn contains only the final unfinished turn, never the sum of
+	// earlier completed turns which OnTurnComplete has already settled.
+	IncompleteTurn        *RelayTurnResult
 	RequestModel          string
 	ResponseModel         string
 	ResponseModelConflict bool
@@ -390,6 +393,15 @@ func Relay(
 	<-upstreamDone
 
 	emitTurnComplete(options.OnTurnComplete, state, finalizePendingBareError(state, nowFn()))
+	if state.activeTurn != nil {
+		result.IncompleteTurn = &RelayTurnResult{
+			RequestModel: state.currentRequestModel(), RequestID: openAIWSRelayActiveTurnID(state),
+			Usage: state.turnUsage, ResponseModel: relayTurnResponseModel(state.activeTurn),
+			ResponseModelConflict: state.activeTurn.responseModelConflict,
+			StartedAt:             state.activeTurn.startAt, Duration: nowFn().Sub(state.activeTurn.startAt),
+			FirstTokenMs: state.activeTurn.firstTokenMs,
+		}
+	}
 	enrichResult(&result, state, nowFn().Sub(startAt))
 	result.ClientToUpstreamFrames = clientToUpstreamFrames.Load()
 	result.UpstreamToClientFrames = upstreamToClientFrames.Load()
@@ -614,6 +626,20 @@ func runUpstreamToClient(
 		turnWroteDownstream := state.turnWroteDownstream.Load()
 		if beforeWriteClient != nil {
 			if err := beforeWriteClient(msgType, payload, turnWroteDownstream); err != nil {
+				// Output admission can fail on the terminal frame itself. Retain
+				// its measured usage without emitting a completion callback: the
+				// adapter still decides whether this attempt is replayable.
+				if msgType == coderws.MessageText {
+					eventType := gjson.GetBytes(payload, "type").String()
+					parseUsageAndAccumulate(state, payload, eventType, onUsageParseFailure)
+					responseID := gjson.GetBytes(payload, "response.id").String()
+					if responseID == "" {
+						responseID = gjson.GetBytes(payload, "response_id").String()
+					}
+					if responseID != "" {
+						openAIWSRelayGetOrInitTurnTiming(state, responseID, nowFn())
+					}
+				}
 				emitRelayTrace(onTrace, RelayTraceEvent{
 					Stage:           "upstream_message_rejected",
 					Direction:       "upstream_to_client",
@@ -796,7 +822,7 @@ func observeUpstreamMessage(
 	if state == nil || len(message) == 0 {
 		return observedUpstreamEvent{}
 	}
-	values := gjson.GetManyBytes(message, "type", "response.id", "response_id", "id")
+	values := gjson.GetManyBytes(message, "type", "response.id", "response_id")
 	eventType := strings.TrimSpace(values[0].String())
 	if eventType == "" {
 		return observedUpstreamEvent{}
@@ -805,9 +831,10 @@ func observeUpstreamMessage(
 	if responseID == "" {
 		responseID = strings.TrimSpace(values[2].String())
 	}
-	// 仅 terminal 事件兜底读取顶层 id，避免把 event_id 当成 response_id 关联到 turn。
+	// Top-level id identifies the event, never the response. An ID-less
+	// terminal can only complete the already established response turn.
 	if responseID == "" && isTerminalEvent(eventType) {
-		responseID = strings.TrimSpace(values[3].String())
+		responseID = openAIWSRelayActiveTurnID(state)
 	}
 	now := nowFn()
 	visibleOutput := isTokenEvent(eventType)

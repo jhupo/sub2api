@@ -1392,13 +1392,30 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	}
 
 	tryAcquireFromLoadMap := func(loadMap map[int64]*AccountLoadInfo) (*AccountSelectionResult, bool, error) {
+		softScheduler := &defaultOpenAIAccountScheduler{service: s}
+		softReq := OpenAIAccountScheduleRequest{
+			GroupID: groupID, Platform: platform, SessionHash: sessionHash,
+			StickyAccountID: stickyAccountID, RequestedModel: requestedModel,
+			RequiredCapability: requiredCapability, RequireCompact: requireCompact,
+			ExcludedIDs: excludedIDs, FillScheduling: true, UseUpstreamTokenCost: useUpstreamTokenCost,
+		}
+		if result, softErr := softScheduler.tryAcquireOpenAINewSession(ctx, softReq, candidates, loadMap); softErr != nil {
+			return nil, true, softErr
+		} else if result != nil {
+			return result, true, nil
+		}
 		var available []accountWithLoad
 		for _, acc := range candidates {
 			loadInfo := loadMap[acc.ID]
 			if loadInfo == nil {
 				loadInfo = &AccountLoadInfo{AccountID: acc.ID}
 			}
-			if loadInfo.LoadRate < 100 {
+			hasCapacity := loadInfo.LoadRate < 100
+			if platform == PlatformOpenAI {
+				limit := s.codexAdaptiveEffectiveConcurrency(ctx, acc, canonicalOpenAIAccountSchedulingModel(acc, requestedModel), acc.Concurrency)
+				hasCapacity = limit <= 0 || loadInfo.CurrentConcurrency < limit
+			}
+			if hasCapacity {
 				available = append(available, accountWithLoad{
 					account:  acc,
 					loadInfo: loadInfo,

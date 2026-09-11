@@ -30,6 +30,50 @@ func newOpenAIAdmissionTestRedis(t *testing.T) *redis.Client {
 	return client
 }
 
+func TestOpenAIAdaptiveSoftAdmissionAtomicAfterPressure(t *testing.T) {
+	cache := NewConcurrencyCache(newOpenAIAdmissionTestRedis(t), 15, 900).(*concurrencyCache)
+	ctx := context.Background()
+	accountID := time.Now().UnixMicro()
+	policy := service.AccountSlotAdmission{MaxConcurrency: 20, PressureModel: "soft-admission-test", PressureWindow: 90 * time.Second, SoftLimitPercent: 70}
+	for _, session := range []string{"a", "b", "c"} {
+		_, err := cache.ObserveCodexAdaptiveFailure(ctx, accountID, policy.PressureModel, session, policy.PressureWindow)
+		require.NoError(t, err)
+	}
+	// Effective hard cap = ceil(20/3) = 7; soft cap = ceil(7*.7) = 5.
+	var admitted atomic.Int64
+	var wg sync.WaitGroup
+	errs := make(chan error, 30)
+	start := make(chan struct{})
+	for i := 0; i < 30; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			ok, err := cache.AcquireAdaptiveAccountSlot(ctx, accountID, policy, fmt.Sprint(i))
+			if err != nil {
+				errs <- err
+				return
+			}
+			if ok {
+				admitted.Add(1)
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.Equal(t, int64(5), admitted.Load())
+	policy.SoftLimitPercent = 0
+	for i := 0; i < 3; i++ {
+		ok, err := cache.AcquireAdaptiveAccountSlot(ctx, accountID, policy, fmt.Sprintf("hard-%d", i))
+		require.NoError(t, err)
+		require.Equal(t, i < 2, ok, "hard fallback must use precisely the remaining two slots")
+	}
+}
+
 func TestOpenAIAdaptiveAdmissionConcurrentUsersAndAccounts(t *testing.T) {
 	client := newOpenAIAdmissionTestRedis(t)
 	cache, ok := NewConcurrencyCache(client, 15, 900).(*concurrencyCache)

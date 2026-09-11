@@ -522,6 +522,9 @@ gateway:
   # Scheduling configuration
   # 调度配置
   scheduling:
+    # New OpenAI sessions first try 70% of effective concurrency, then hard capacity.
+    # Existing sessions keep affinity. 0 disables soft admission and periodic pool checks.
+    new_session_soft_limit_percent: 70
     # Sticky session max waiting queue size
     # 粘性会话最大排队长度
     sticky_session_max_waiting: 3

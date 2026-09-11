@@ -730,7 +730,7 @@ func (c *stubGatewayCache) GetSessionAccountID(ctx context.Context, groupID int6
 	if id, ok := c.sessionBindings[sessionHash]; ok {
 		return id, nil
 	}
-	return 0, errors.New("not found")
+	return 0, ErrStickySessionNotFound
 }
 
 func (c *stubGatewayCache) SetSessionAccountID(ctx context.Context, groupID int64, sessionHash string, accountID int64, ttl time.Duration) error {
@@ -1409,8 +1409,9 @@ func TestOpenAISelectAccountWithLoadAwareness_AllFullWaitPlan(t *testing.T) {
 	}
 	cache := &stubGatewayCache{}
 	concurrencyCache := stubConcurrencyCache{
+		acquireResults: map[int64]bool{1: false},
 		loadMap: map[int64]*AccountLoadInfo{
-			1: {AccountID: 1, LoadRate: 100},
+			1: {AccountID: 1, CurrentConcurrency: 1, LoadRate: 100},
 		},
 	}
 
@@ -1427,6 +1428,8 @@ func TestOpenAISelectAccountWithLoadAwareness_AllFullWaitPlan(t *testing.T) {
 	if selection == nil || selection.WaitPlan == nil {
 		t.Fatalf("expected wait plan")
 	}
+	require.False(t, selection.Acquired)
+	require.Equal(t, int64(1), selection.WaitPlan.AccountID)
 }
 
 func TestOpenAISelectAccountWithLoadAwareness_LoadBatchErrorNoAcquire(t *testing.T) {
@@ -3087,7 +3090,7 @@ func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesCompactPath(t *test
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
 
 	svc := &OpenAIGatewayService{}
-	account := &Account{Type: AccountTypeOAuth}
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 
 	req, err := svc.buildUpstreamRequestOpenAIPassthrough(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token")
 	require.NoError(t, err)
@@ -3126,6 +3129,7 @@ func TestOpenAIBuildUpstreamRequestCompactForcesJSONAcceptForOAuth(t *testing.T)
 
 	svc := &OpenAIGatewayService{}
 	account := &Account{
+		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
 	}
@@ -3151,6 +3155,7 @@ func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing
 
 	svc := &OpenAIGatewayService{}
 	account := &Account{
+		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
 	}
@@ -3250,6 +3255,7 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 
 			svc := &OpenAIGatewayService{}
 			account := &Account{
+				Platform:    PlatformOpenAI,
 				Type:        AccountTypeOAuth,
 				Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
 			}

@@ -10,52 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
-
-// codexFingerprintIDsContextKey 是暂存在 gin context 的收敛 ID 集合键。
-// 由 Forward（非透传）或 forwardOpenAIPassthrough（透传）解析后写入，请求
-// 构造器读取用于出站头改写——请求体与出站头必须共享同一份 IDs，保证
-// turn_id 等随机字段一致。
-const codexFingerprintIDsContextKey = "codex_fingerprint_ids"
-
-// stageCodexFingerprintIDs 将本 attempt 解析出的收敛 ID 暂存到 gin context。
-// 必须无条件覆写（含 nil）：failover 从收敛账号切到 off 账号时，上一账号的
-// IDs 不得残留并被误应用到新账号的出站头（typed-nil 由应用侧 nil 守卫吸收）。
-func stageCodexFingerprintIDs(c *gin.Context, ids *codexFingerprintIDs) {
-	if c != nil {
-		c.Set(codexFingerprintIDsContextKey, ids)
-	}
-}
-
-func stagedCodexFingerprintIDs(c *gin.Context, account *Account) *codexFingerprintIDs {
-	if c == nil || account == nil || !account.UsesOpenAICodexProtocol() {
-		return nil
-	}
-	value, ok := c.Get(codexFingerprintIDsContextKey)
-	if !ok {
-		return nil
-	}
-	ids, ok := value.(*codexFingerprintIDs)
-	if !ok || ids == nil || ids.accountID != account.ID {
-		return nil
-	}
-	return ids
-}
-
-// applyStagedCodexFingerprintHeaders 读取 context 暂存的收敛 ID 并改写出站头。
-// 非透传与透传两个请求构造器共用本函数，防止应用语义漂移。仅解析该
-// snapshot 的 OAuth 账号可读取，避免 stale context 跨账号 failover 泄漏。
-func applyStagedCodexFingerprintHeaders(c *gin.Context, account *Account, h http.Header) {
-	applyCodexFingerprintHeaders(h, stagedCodexFingerprintIDs(c, account))
-}
-
-func applyStagedCodexFingerprintClientMetadata(c *gin.Context, account *Account, reqBody map[string]any) bool {
-	return applyCodexFingerprintClientMetadata(reqBody, stagedCodexFingerprintIDs(c, account))
-}
 
 // codexFingerprintMode 控制 OAuth 账号出站请求的设备指纹收敛强度。
 // 多人共享同一 OAuth 账号时，每个用户的 Codex 客户端会携带各自不同的
@@ -338,65 +296,23 @@ func extractClientSessionID(h http.Header) string {
 // 结合账号配置一次性解析收敛 ID 集合。调用方应将返回的 ids 同时传给
 // applyCodexFingerprintHeaders 和 applyCodexFingerprintClientMetadata。
 func resolveCodexFingerprintIDsFromRequest(account *Account, clientHeaders http.Header) *codexFingerprintIDs {
-	return resolveCodexFingerprintIDsFromRequestAndBody(account, clientHeaders, nil)
+	return resolveCodexFingerprintIDsForInput(account, extractCodexIdentityInput(clientHeaders, nil), 0, account.GetCodexFingerprintMode())
 }
 
-// resolveCodexFingerprintIDsFromRequestAndBodyForAPIKey keeps session-mode
-// thread derivation isolated when multiple downstream API keys share one OAuth
-// account. The raw client session remains stable within one API key, while an
-// absent session receives a deterministic API-key-specific fallback.
-func resolveCodexFingerprintIDsFromRequestAndBodyForAPIKey(account *Account, clientHeaders http.Header, body []byte, apiKeyID int64) *codexFingerprintIDs {
-	if apiKeyID <= 0 {
-		return resolveCodexFingerprintIDsFromRequestAndBody(account, clientHeaders, body)
-	}
-	clientSessionID := ""
-	if clientHeaders != nil {
-		clientSessionID = extractClientSessionID(clientHeaders)
-	}
-	if clientSessionID == "" && len(body) > 0 && gjson.ValidBytes(body) {
-		bodySession := gjson.GetBytes(body, "client_metadata.session_id")
-		if bodySession.Type == gjson.String {
-			clientSessionID = strings.TrimSpace(bodySession.String())
-		}
-	}
-	if clientSessionID == "" {
-		clientSessionID = fmt.Sprintf("api-key:%d:anonymous", apiKeyID)
-	} else {
-		clientSessionID = isolateOpenAISessionID(apiKeyID, clientSessionID)
-	}
-	if account == nil {
-		return nil
-	}
-	return resolveCodexFingerprintIDs(account, clientSessionID, account.GetCodexFingerprintMode())
-}
-
-// resolveCodexFingerprintIDsFromRequestAndBody extends the HTTP/header resolver
-// for Responses WebSocket ingress. Some clients put the session identifier only
-// in the first response.create client_metadata object, so the WS connection must
-// use that value before projecting the first frame and all subsequent turns.
-func resolveCodexFingerprintIDsFromRequestAndBody(account *Account, clientHeaders http.Header, body []byte) *codexFingerprintIDs {
-	if account == nil {
-		return nil
-	}
-	mode := account.GetCodexFingerprintMode()
-	if mode == codexFingerprintOff {
-		return nil
-	}
-	clientSessionID := ""
-	if clientHeaders != nil {
-		clientSessionID = extractClientSessionID(clientHeaders)
-	}
-	if clientSessionID == "" && len(body) > 0 && gjson.ValidBytes(body) {
-		bodySession := gjson.GetBytes(body, "client_metadata.session_id")
-		if bodySession.Type == gjson.String {
-			clientSessionID = strings.TrimSpace(bodySession.String())
+func resolveCodexFingerprintIDsForInput(account *Account, input codexIdentityInput, apiKeyID int64, mode codexFingerprintMode) *codexFingerprintIDs {
+	clientSessionID := input.clientSession
+	if apiKeyID > 0 {
+		if clientSessionID == "" {
+			clientSessionID = fmt.Sprintf("api-key:%d:anonymous", apiKeyID)
+		} else {
+			clientSessionID = isolateOpenAISessionID(apiKeyID, clientSessionID)
 		}
 	}
 	return resolveCodexFingerprintIDs(account, clientSessionID, mode)
 }
 
 // applyCodexFingerprintHeaders 按预计算的收敛 ID 改写出站 HTTP 头中的设备指纹。
-// 在 buildUpstreamRequest 的白名单透传之后、enforceCodexIdentityHeaders 之前调用。
+// 在白名单透传和账号命名空间投影之后应用。
 func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 	if h == nil || ids == nil {
 		return
@@ -404,6 +320,11 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 
 	// 所有非 off 模式都收敛 installation_id
 	h.Set("x-codex-installation-id", ids.installationID)
+	for _, field := range codexAccountIdentityFields {
+		if value := ids.valueForKind(field.kind); value != "" && h.Get(field.name) != "" {
+			h.Set(field.name, value)
+		}
+	}
 
 	if ids.mode == codexFingerprintDevice {
 		rewriteCodexTurnMetadataFields(h, map[string]any{
@@ -445,6 +366,7 @@ func rewriteCodexTurnMetadataFields(h http.Header, fields map[string]any) {
 	for k, v := range fields {
 		metadata[k] = v
 	}
+	alignCodexMetadataAliases(metadata, fields)
 	rebuilt, err := json.Marshal(metadata)
 	if err != nil {
 		return
@@ -485,6 +407,14 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 	}
 
 	modified := false
+	for _, field := range codexAccountIdentityFields {
+		if value := ids.valueForKind(field.kind); value != "" {
+			if _, exists := existing[field.name]; exists {
+				existing[field.name] = value
+				modified = true
+			}
+		}
+	}
 
 	if ids.installationID != "" {
 		existing["x-codex-installation-id"] = ids.installationID
@@ -638,7 +568,35 @@ func rewriteClientMetadataEmbeddedTurnMetadata(clientMetadata map[string]any, fi
 	for k, v := range fields {
 		metadata[k] = v
 	}
+	alignCodexMetadataAliases(metadata, fields)
 	if rebuilt, err := json.Marshal(metadata); err == nil {
 		clientMetadata["x-codex-turn-metadata"] = string(rebuilt)
+	}
+}
+
+func (ids *codexFingerprintIDs) valueForKind(kind string) string {
+	switch kind {
+	case "installation":
+		return ids.installationID
+	case "session":
+		return ids.sessionID
+	case "thread", "request":
+		return ids.threadID
+	case "turn":
+		return ids.turnID
+	case "window":
+		return ids.windowID
+	}
+	return ""
+}
+
+func alignCodexMetadataAliases(metadata, fields map[string]any) {
+	for _, field := range codexAccountIdentityFields {
+		if _, exists := metadata[field.name]; !exists {
+			continue
+		}
+		if value, exists := fields[field.kind+"_id"]; exists {
+			metadata[field.name] = value
+		}
 	}
 }

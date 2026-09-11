@@ -415,6 +415,9 @@ func TestLoadDefaultSchedulingConfig(t *testing.T) {
 	if cfg.Gateway.Scheduling.StickySessionMaxWaiting != 3 {
 		t.Fatalf("StickySessionMaxWaiting = %d, want 3", cfg.Gateway.Scheduling.StickySessionMaxWaiting)
 	}
+	if cfg.Gateway.Scheduling.NewSessionSoftLimitPercent != 70 {
+		t.Fatalf("NewSessionSoftLimitPercent = %d, want 70", cfg.Gateway.Scheduling.NewSessionSoftLimitPercent)
+	}
 	if cfg.Gateway.Scheduling.StickySessionWaitTimeout != 120*time.Second {
 		t.Fatalf("StickySessionWaitTimeout = %v, want 120s", cfg.Gateway.Scheduling.StickySessionWaitTimeout)
 	}
@@ -727,6 +730,7 @@ func TestLoadIdempotencyConfigFromEnv(t *testing.T) {
 func TestLoadSchedulingConfigFromEnv(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	t.Setenv("GATEWAY_SCHEDULING_STICKY_SESSION_MAX_WAITING", "5")
+	t.Setenv("GATEWAY_SCHEDULING_NEW_SESSION_SOFT_LIMIT_PERCENT", "0")
 
 	cfg, err := Load()
 	if err != nil {
@@ -735,6 +739,9 @@ func TestLoadSchedulingConfigFromEnv(t *testing.T) {
 
 	if cfg.Gateway.Scheduling.StickySessionMaxWaiting != 5 {
 		t.Fatalf("StickySessionMaxWaiting = %d, want 5", cfg.Gateway.Scheduling.StickySessionMaxWaiting)
+	}
+	if cfg.Gateway.Scheduling.NewSessionSoftLimitPercent != 0 {
+		t.Fatalf("NewSessionSoftLimitPercent = %d, want 0", cfg.Gateway.Scheduling.NewSessionSoftLimitPercent)
 	}
 }
 

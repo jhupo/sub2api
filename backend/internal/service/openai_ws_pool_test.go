@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -290,6 +291,7 @@ func TestOpenAIWSConnPool_AcquireQueueWaitMetrics(t *testing.T) {
 	accountID := int64(99)
 	account := &Account{ID: accountID, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	conn := newOpenAIWSConn("busy", accountID, &openAIWSFakeConn{}, nil)
+	conn.handshakeCompatibility.wsURL = "wss://example.com/v1/responses"
 	require.True(t, conn.tryAcquire()) // 占用连接，触发后续排队
 
 	ap := pool.ensureAccountPoolLocked(accountID)
@@ -973,6 +975,7 @@ func TestOpenAIWSConnPool_AcquireForcePreferredConnQueuesOnPreferredOnly(t *test
 	account := &Account{ID: 125, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	ap := pool.getOrCreateAccountPool(account.ID)
 	preferredConn := newOpenAIWSConn("preferred_conn", account.ID, &openAIWSFakeConn{}, nil)
+	preferredConn.handshakeCompatibility.wsURL = "wss://example.com/v1/responses"
 	otherConn := newOpenAIWSConn("other_conn_idle", account.ID, &openAIWSFakeConn{}, nil)
 	require.True(t, preferredConn.tryAcquire(), "先占用 preferred 连接，触发排队获取")
 	ap.mu.Lock()
@@ -1014,6 +1017,7 @@ func TestOpenAIWSConnPool_AcquireForcePreferredConnDirectAndQueueFull(t *testing
 	account := &Account{ID: 127, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	ap := pool.getOrCreateAccountPool(account.ID)
 	preferredConn := newOpenAIWSConn("preferred_conn_direct", account.ID, &openAIWSFakeConn{}, nil)
+	preferredConn.handshakeCompatibility.wsURL = "wss://example.com/v1/responses"
 	otherConn := newOpenAIWSConn("other_conn_direct", account.ID, &openAIWSFakeConn{}, nil)
 	ap.mu.Lock()
 	ap.conns[preferredConn.id] = preferredConn
@@ -1198,6 +1202,7 @@ func TestOpenAIWSConnPool_AcquireRejectsWhenEffectiveMaxConnsIsZero(t *testing.T
 func TestOpenAIWSConnLease_ReadMessageWithContextTimeout_PerRead(t *testing.T) {
 	conn := newOpenAIWSConn("timeout", 1, &openAIWSBlockingConn{readDelay: 80 * time.Millisecond}, nil)
 	lease := &openAIWSConnLease{conn: conn}
+	require.NoError(t, lease.WriteJSONContext(context.Background(), map[string]any{"type": "response.create"}))
 
 	_, err := lease.ReadMessageWithContextTimeout(context.Background(), 20*time.Millisecond)
 	require.Error(t, err)
@@ -1245,6 +1250,7 @@ func TestOpenAIWSConnLease_PingWithTimeout(t *testing.T) {
 
 func TestOpenAIWSConn_ReadAndWriteCanProceedConcurrently(t *testing.T) {
 	conn := newOpenAIWSConn("full_duplex", 1, &openAIWSBlockingConn{readDelay: 120 * time.Millisecond}, nil)
+	require.NoError(t, conn.writeJSON(map[string]any{"type": "response.create"}, context.Background()))
 
 	readDone := make(chan error, 1)
 	go func() {
@@ -1506,10 +1512,12 @@ func TestOpenAIWSConnLease_ReadWriteHelpersAndConnStats(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(payload), "response.completed")
 
+	require.NoError(t, lease.WriteJSONContext(context.Background(), map[string]any{"type": "response.create"}))
 	payload, err = lease.ReadMessageContext(context.Background())
 	require.NoError(t, err)
 	require.Contains(t, string(payload), "response.completed")
 
+	require.NoError(t, lease.WriteJSONContext(context.Background(), map[string]any{"type": "response.create"}))
 	payload, err = conn.readMessageWithTimeout(100 * time.Millisecond)
 	require.NoError(t, err)
 	require.Contains(t, string(payload), "response.completed")
@@ -1522,6 +1530,7 @@ func TestOpenAIWSConnLease_ReadWriteHelpersAndConnStats(t *testing.T) {
 	require.False(t, conn.isLeased())
 
 	// 覆盖空上下文路径
+	require.NoError(t, lease.WriteJSONContext(context.Background(), map[string]any{"type": "response.create"}))
 	_, err = conn.readMessage(context.Background())
 	require.NoError(t, err)
 
@@ -1894,7 +1903,7 @@ func TestOpenAIWSConn_AdditionalGuardBranches(t *testing.T) {
 	require.Equal(t, "", connNoWS.handshakeHeader("x-test"))
 
 	connOK := newOpenAIWSConn("ok", 1, &openAIWSFakeConn{}, nil)
-	require.NoError(t, connOK.writeJSON(map[string]any{"k": "v"}, nil))
+	require.NoError(t, connOK.writeJSON(map[string]any{"type": "response.create"}, nil))
 	_, err = connOK.readMessageWithContextTimeout(context.Background(), 0)
 	require.NoError(t, err)
 	require.NoError(t, connOK.pingWithTimeout(0))
@@ -2035,6 +2044,7 @@ func TestOpenAIWSConnPool_Acquire_ErrorBranches(t *testing.T) {
 	account2 := &Account{ID: 2002, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	ap2 := fullPool.getOrCreateAccountPool(account2.ID)
 	conn := newOpenAIWSConn("queue_full", account2.ID, &openAIWSFakeConn{}, nil)
+	conn.handshakeCompatibility.wsURL = "wss://example.com/v1/responses"
 	require.True(t, conn.tryAcquire())
 	conn.waiters.Store(1)
 	ap2.mu.Lock()
@@ -2235,7 +2245,7 @@ func (c *openAIWSFakeConn) ReadMessage(ctx context.Context) ([]byte, error) {
 	if c.closed {
 		return nil, errors.New("closed")
 	}
-	return []byte(`{"type":"response.completed","response":{"id":"resp_fake"}}`), nil
+	return []byte(fmt.Sprintf(`{"type":"response.completed","response":{"id":"resp_fake_%d"}}`, len(c.payload))), nil
 }
 
 func (c *openAIWSFakeConn) Ping(ctx context.Context) error {

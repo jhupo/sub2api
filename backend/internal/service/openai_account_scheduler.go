@@ -916,6 +916,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		candidates:                candidates,
 		staleSnapshotCompactRetry: staleSnapshotCompactRetry,
 		candidateCount:            len(candidates),
+		includeOverflowFallback:   s.service.newSessionSoftLimitPercent(ctx, req) > 0,
 	}
 	if len(candidates) == 0 {
 		plan.selectionOrder = s.buildOpenAISelectionOrder(req, plan)
@@ -1254,18 +1255,17 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrder(
 	selectionOrder []openAIAccountCandidateScore,
 ) (*AccountSelectionResult, bool, error) {
 	if req.FillScheduling {
-		return s.tryAcquireOpenAIFillSelectionOrder(ctx, req, selectionOrder)
+		return s.tryAcquireOpenAISelectionOrderInBatches(ctx, req, selectionOrder)
 	}
 	budget := newOpenAISelectionProbeBudget()
 	budget.enableLimit()
 	return s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, selectionOrder, budget)
 }
 
-// tryAcquireOpenAIFillSelectionOrder walks the complete failover order in
-// bounded probe batches. The regular scheduler caps a single probe at 64
-// accounts; a fill pass must continue past that boundary, while resetting the
-// budget per batch keeps Redis/DB work bounded for very large pools.
-func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAIFillSelectionOrder(
+// tryAcquireOpenAISelectionOrderInBatches walks an exhaustive admission pass
+// without letting a fresh-account recheck consume the next candidate's budget.
+// Both soft admission and failover must reach candidates beyond the first batch.
+func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderInBatches(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
 	selectionOrder []openAIAccountCandidateScore,
@@ -1317,8 +1317,10 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			continue
 		}
 		candidateMaxConcurrency := s.effectiveConcurrency(ctx, candidate.account, req.RequestedModel)
-		if candidate.loadKnown && candidateMaxConcurrency > 0 &&
-			candidate.loadInfo.CurrentConcurrency >= candidateMaxConcurrency {
+		softPercent, _ := ctx.Value(accountSoftAdmissionKey{}).(int)
+		admissionLimit := AccountSoftConcurrencyLimit(candidateMaxConcurrency, softPercent)
+		if candidate.loadKnown && admissionLimit > 0 &&
+			candidate.loadInfo.CurrentConcurrency >= admissionLimit {
 			continue
 		}
 
@@ -1626,6 +1628,12 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		}
 	}
 
+	if result, softErr := s.tryAcquireOpenAINewSession(ctx, req, filtered, loadMap); softErr != nil {
+		return nil, len(filtered), 0, 0, softErr
+	} else if result != nil {
+		return result, len(filtered), 0, 0, nil
+	}
+
 	if req.SubscriptionPriority {
 		subscriptionAccounts, regularAccounts := partitionOpenAIChatGPTSubscriptionAccounts(filtered)
 		if len(subscriptionAccounts) > 0 {
@@ -1724,8 +1732,8 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 	var result *AccountSelectionResult
 	var compactBlocked bool
 	var acquireErr error
-	if req.FillScheduling {
-		result, compactBlocked, acquireErr = s.tryAcquireOpenAIFillSelectionOrder(ctx, req, attempt.selectionOrder)
+	if req.FillScheduling || s.service.newSessionSoftLimitPercent(ctx, req) > 0 {
+		result, compactBlocked, acquireErr = s.tryAcquireOpenAISelectionOrderInBatches(ctx, req, attempt.selectionOrder)
 	} else {
 		result, compactBlocked, acquireErr = s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, attempt.selectionOrder, budget)
 	}
@@ -1750,8 +1758,8 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 				var freshResult *AccountSelectionResult
 				var freshCompactBlocked bool
 				var freshAcquireErr error
-				if req.FillScheduling {
-					freshResult, freshCompactBlocked, freshAcquireErr = s.tryAcquireOpenAIFillSelectionOrder(ctx, req, freshPlan.selectionOrder)
+				if req.FillScheduling || s.service.newSessionSoftLimitPercent(ctx, req) > 0 {
+					freshResult, freshCompactBlocked, freshAcquireErr = s.tryAcquireOpenAISelectionOrderInBatches(ctx, req, freshPlan.selectionOrder)
 				} else {
 					freshResult, freshCompactBlocked, freshAcquireErr = s.tryAcquireOpenAISelectionOrderWithBudget(ctx, req, freshPlan.selectionOrder, budget)
 				}
@@ -2454,8 +2462,24 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		ctx = s.withOpenAIProfitControlGate(ctx, groupID)
 	}
 	platform = NormalizeOpenAICompatiblePlatform(platform)
+	if previousResponseID != "" {
+		ctx = context.WithValue(ctx, openAIContinuationSelectionKey{}, true)
+	}
+	var queueDeadline time.Time
+	completedCapacityWait := false
 	defer func() {
 		if err != nil {
+			return
+		}
+		if immediate, _ := ctx.Value(openAIImmediateSelectionKey{}).(bool); immediate {
+			if ctx.Err() != nil {
+				if selection != nil && selection.ReleaseFunc != nil {
+					selection.ReleaseFunc()
+				}
+				selection, err = nil, ctx.Err()
+			}
+			// The outer selection coordinates the winning migration under the
+			// request lifetime, not this short capacity probe's deadline.
 			return
 		}
 		if selection != nil && selection.Account != nil && selection.WaitPlan != nil &&
@@ -2463,21 +2487,37 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 			selection.WaitPlan.Timeout = boundCodexAdaptiveQueueTimeout(selection.WaitPlan.Timeout)
 			// Briefly wait for the cache-affine account, then try spare capacity.
 			// A migration lease and response-ID ownership take priority over spillover.
-			if previousResponseID == "" && len(excludedIDs) == 0 && !codexAdaptiveStickyMigrationPending(ctx) {
-				waitCtx, cancel := context.WithTimeout(ctx, min(750*time.Millisecond, selection.WaitPlan.Timeout))
-				release, acquired, waitErr := s.waitForCodexAffinitySlot(waitCtx, selection)
-				cancel()
-				if waitErr != nil {
-					err = waitErr
-					return
-				}
-				if acquired {
-					selection.Acquired, selection.ReleaseFunc, selection.WaitPlan = true, release, nil
-				} else if ctx.Err() == nil {
-					spilloverExcluded := map[int64]struct{}{selection.Account.ID: {}}
-					spare, spareDecision, spareErr := s.selectAccountWithSchedulerOnce(ctx, groupID, "", sessionHash, requestedModel, spilloverExcluded, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
-					if spareErr == nil && spare != nil && spare.Acquired {
-						selection, decision = spare, spareDecision
+			if previousResponseID == "" && len(excludedIDs) == 0 && !codexAdaptiveStickyMigrationPending(ctx) && !preserveOpenAIGuardianParentBinding(ctx, sessionHash) {
+				completedCapacityWait = true
+				if s.cfg != nil && s.cfg.Gateway.Scheduling.NewSessionSoftLimitPercent > 0 && s.concurrencyService != nil {
+					queueDeadline = time.Now().Add(selection.WaitPlan.Timeout)
+					waitingID := selection.Account.ID
+					selection, err = s.waitForOpenAIPoolCapacity(ctx, selection, func(probeCtx context.Context) (*AccountSelectionResult, error) {
+						spare, spareDecision, spareErr := s.selectAccountWithSchedulerOnce(probeCtx, groupID, "", sessionHash, requestedModel, map[int64]struct{}{waitingID: {}}, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
+						if spare != nil && spare.Acquired {
+							decision = spareDecision
+						}
+						return spare, spareErr
+					})
+					if err != nil {
+						return
+					}
+				} else {
+					waitCtx, cancel := context.WithTimeout(ctx, min(750*time.Millisecond, selection.WaitPlan.Timeout))
+					release, acquired, waitErr := s.waitForCodexAffinitySlot(waitCtx, selection)
+					cancel()
+					if waitErr != nil {
+						err = waitErr
+						return
+					}
+					if acquired {
+						selection.Acquired, selection.ReleaseFunc, selection.WaitPlan = true, release, nil
+					} else if ctx.Err() == nil {
+						spilloverExcluded := map[int64]struct{}{selection.Account.ID: {}}
+						spare, spareDecision, spareErr := s.selectAccountWithSchedulerOnce(ctx, groupID, "", sessionHash, requestedModel, spilloverExcluded, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
+						if spareErr == nil && spare != nil && spare.Acquired {
+							selection, decision = spare, spareDecision
+						}
 					}
 				}
 			}
@@ -2496,7 +2536,21 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 			RequiredImageCapability: requiredImageCapability, RequireCompact: requireCompact,
 			RequirePrivacySet: s.openAIGroupRequiresPrivacySet(ctx, groupID), UseUpstreamTokenCost: useUpstreamTokenCost,
 		}, selection)
+		if selection != nil && selection.WaitPlan != nil && !queueDeadline.IsZero() {
+			selection.WaitPlan.Timeout = min(selection.WaitPlan.Timeout, time.Until(queueDeadline))
+			if selection.WaitPlan.Timeout <= 0 {
+				selection.WaitPlan.Timeout = time.Nanosecond
+			}
+		}
 		if selection != nil && selection.Account != nil {
+			// A wait plan was not admitted by the inner scheduler, so its eager
+			// binding never ran. Publish only after the wait and migration gate;
+			// profit-controlled and migrating sessions keep their existing rules.
+			if err == nil && completedCapacityWait && selection.Acquired {
+				if bindErr := s.bindOpenAIStickySessionDuringSelection(ctx, groupID, sessionHash, selection.Account.ID); bindErr != nil {
+					slog.Warn("openai_sticky_binding_after_wait_failed", "account_id", selection.Account.ID, "error", bindErr)
+				}
+			}
 			decision.SelectedAccountID = selection.Account.ID
 			decision.SelectedAccountType = selection.Account.Type
 		}

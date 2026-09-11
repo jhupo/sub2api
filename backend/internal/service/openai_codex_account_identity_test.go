@@ -123,7 +123,8 @@ func TestCodexAccountIdentitySourceResolvesShadowAndOverwritesFailoverContext(t 
 	resolved, err = service.prepareCodexAccountIdentitySource(context.Background(), c, next)
 	require.NoError(t, err)
 	require.Same(t, next, resolved)
-	require.Same(t, next, codexAccountIdentitySource(c, shadow))
+	require.Same(t, next, codexAccountIdentitySource(c, next))
+	require.Same(t, shadow, codexAccountIdentitySource(c, shadow), "a different selected row cannot inherit the staged credential principal")
 }
 
 func TestBuildOpenAIWSHeadersNamespacesCodexIdentityByOAuthAccount(t *testing.T) {

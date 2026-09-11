@@ -9,17 +9,55 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
+
+type profitAdmissionSnapshot struct {
+	service.SchedulerCache
+	account *service.Account
+}
+
+func (s profitAdmissionSnapshot) GetAccount(context.Context, int64) (*service.Account, error) {
+	return s.account, nil
+}
+
+func TestAcquireResponsesSlotReturnsLatestAccountSnapshot(t *testing.T) {
+	for _, alreadyAcquired := range []bool{false, true} {
+		t.Run(fmt.Sprint(alreadyAcquired), func(t *testing.T) {
+			old, latest := profitSlotTestAccount(1, 0.2), profitSlotTestAccount(1, 0.3)
+			old.Name, latest.Name = "old-account-config", "latest-account-config"
+			latest.UpdatedAt = time.Now()
+			cfg := &config.Config{}
+			snapshot := service.NewSchedulerSnapshotService(profitAdmissionSnapshot{account: latest}, nil, nil, nil, cfg)
+			gw := service.NewOpenAIGatewayService(nil, nil, nil, nil, nil, nil, nil, cfg, snapshot, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			cache := &profitCountingConcurrencyCache{}
+			h := &OpenAIGatewayHandler{gatewayService: gw, concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, 0)}
+			groupID := int64(50)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/v1/responses", nil).WithContext(profitSlotTestContext(t, gw, groupID, false))
+			selection := &service.AccountSelectionResult{Account: old, Acquired: alreadyAcquired, ReleaseFunc: func() {},
+				WaitPlan: &service.AccountWaitPlan{AccountID: 1, MaxConcurrency: 2, Timeout: time.Second, MaxWaiting: 2}}
+			streamStarted := false
+			account, release, result := h.acquireResponsesAccountSlot(c, &groupID, "", selection, false, &streamStarted, zap.NewNop())
+			require.Equal(t, openAISlotAcquireOK, result)
+			require.Same(t, latest, account)
+			require.Same(t, latest, selection.Account)
+			require.Equal(t, "old-account-config", old.Name)
+			release()
+		})
+	}
+}
 
 type profitCountingConcurrencyCache struct {
 	fakeConcurrencyCache
@@ -103,7 +141,7 @@ func TestAcquireResponsesAccountSlotProfitRecheck(t *testing.T) {
 		c.Request = httptest.NewRequest("POST", "/v1/responses", nil).WithContext(profitSlotTestContext(t, gw, groupID, false))
 		streamStarted := false
 
-		release, result := h.acquireResponsesAccountSlot(c, &groupID, "", newSelection(profitSlotTestAccount(1, 0.8)), false, &streamStarted, zap.NewNop())
+		_, release, result := h.acquireResponsesAccountSlot(c, &groupID, "", newSelection(profitSlotTestAccount(1, 0.8)), false, &streamStarted, zap.NewNop())
 		require.Equal(t, openAISlotAcquireProfitVetoed, result)
 		require.Nil(t, release)
 		require.Zero(t, w.Body.Len(), "利润终检否决不得写出任何响应")
@@ -118,7 +156,8 @@ func TestAcquireResponsesAccountSlotProfitRecheck(t *testing.T) {
 		c.Request = httptest.NewRequest("POST", "/v1/responses", nil).WithContext(profitSlotTestContext(t, gw, groupID, false))
 		streamStarted := false
 
-		release, result := h.acquireResponsesAccountSlot(c, &groupID, "", newSelection(profitSlotTestAccount(2, 0.3)), false, &streamStarted, zap.NewNop())
+		account, release, result := h.acquireResponsesAccountSlot(c, &groupID, "", newSelection(profitSlotTestAccount(2, 0.3)), false, &streamStarted, zap.NewNop())
+		require.Equal(t, int64(2), account.ID)
 		require.Equal(t, openAISlotAcquireOK, result)
 		require.NotNil(t, release)
 		release()
@@ -132,7 +171,7 @@ func TestAcquireResponsesAccountSlotProfitRecheck(t *testing.T) {
 		c.Request = httptest.NewRequest("POST", "/v1/responses", nil).WithContext(profitSlotTestContext(t, gw, groupID, true))
 		streamStarted := false
 
-		release, result := h.acquireResponsesAccountSlot(c, &groupID, "", newSelection(profitSlotTestAccount(3, 0.8)), false, &streamStarted, zap.NewNop())
+		_, release, result := h.acquireResponsesAccountSlot(c, &groupID, "", newSelection(profitSlotTestAccount(3, 0.8)), false, &streamStarted, zap.NewNop())
 		require.Equal(t, openAISlotAcquireOK, result, "生图意图跳门：过贵账号照常获取（图片边界不装门）")
 		require.NotNil(t, release)
 		release()

@@ -404,6 +404,7 @@ func buildOpenAIWSHTTPBridgeFailedEvent(responseID, model string, source []byte,
 
 func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	ctx context.Context,
+	authorizeRequest func([]byte) error,
 	c *gin.Context,
 	account *Account,
 	token string,
@@ -486,6 +487,11 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	}
 
 	buildUpstreamRequest := func(requestBody []byte) (*http.Request, error) {
+		if authorizeRequest != nil {
+			if err := authorizeRequest(requestBody); err != nil {
+				return nil, err
+			}
+		}
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		defer releaseUpstreamCtx()
 		var upstreamReq *http.Request

@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 23 // v23: API key funding source and subscription ID
+const apiKeyAuthSnapshotVersion = 24 // v24: fork-isolated cache and validated payment identity
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -326,6 +326,13 @@ func (s *APIKeyService) applyAuthCacheEntry(key string, entry *APIKeyAuthCacheEn
 		return nil, false, nil
 	}
 	if entry.Snapshot.Version != apiKeyAuthSnapshotVersion {
+		return nil, false, nil
+	}
+	// A version number alone cannot identify snapshots produced by another fork.
+	if entry.Snapshot.FundingSource != FundingSourceWallet && entry.Snapshot.FundingSource != FundingSourceSubscription {
+		return nil, false, nil
+	}
+	if err := validateFundingSource(entry.Snapshot.FundingSource, entry.Snapshot.SubscriptionID); err != nil {
 		return nil, false, nil
 	}
 	return s.snapshotToAPIKey(key, entry.Snapshot), true, nil

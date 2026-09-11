@@ -179,7 +179,7 @@ func parseOpenAIWSEventEnvelope(message []byte) (eventType string, responseID st
 	if len(message) == 0 {
 		return "", "", gjson.Result{}
 	}
-	values := gjson.GetManyBytes(message, "type", "response.id", "id", "response")
+	values := gjson.GetManyBytes(message, "type", "response.id", "response_id", "response")
 	eventType = strings.TrimSpace(values[0].String())
 	if id := strings.TrimSpace(values[1].String()); id != "" {
 		responseID = id

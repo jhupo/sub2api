@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -127,6 +128,8 @@ func (s *OpenAIGatewayService) openAIStickyLegacyTTL(ttl time.Duration) time.Dur
 	return legacyTTL
 }
 
+// getStickySessionAccountID returns (0, nil) when no binding exists. Store and
+// migration failures remain errors so an unknown owner cannot become a new route.
 func (s *OpenAIGatewayService) getStickySessionAccountID(ctx context.Context, groupID *int64, sessionHash string) (int64, error) {
 	if snapshot, ok := ctx.Value(codexStickySelectionSnapshotKey{}).(codexStickySelectionSnapshot); ok &&
 		snapshot.groupID == derefGroupID(groupID) && snapshot.session == sessionHash {
@@ -163,6 +166,9 @@ func (s *OpenAIGatewayService) getStickySessionAccountID(ctx context.Context, gr
 		}
 	}
 	accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), primaryKey)
+	if err != nil && !errors.Is(err, ErrStickySessionNotFound) {
+		return 0, err
+	}
 	if err == nil && accountID > 0 {
 		if state := codexAdaptiveRequestFromContext(ctx); state != nil {
 			state.mu.Lock()
@@ -174,21 +180,24 @@ func (s *OpenAIGatewayService) getStickySessionAccountID(ctx context.Context, gr
 		return accountID, nil
 	}
 	if !s.openAISessionHashReadOldFallbackEnabled() {
-		return accountID, err
+		return 0, nil
 	}
 
 	legacyKey := s.openAILegacySessionCacheKey(ctx, sessionHash)
 	if legacyKey == "" {
-		return accountID, err
+		return 0, nil
 	}
 
 	openAIStickyLegacyReadFallbackTotal.Add(1)
 	legacyAccountID, legacyErr := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), legacyKey)
+	if legacyErr != nil && !errors.Is(legacyErr, ErrStickySessionNotFound) {
+		return 0, legacyErr
+	}
 	if legacyErr == nil && legacyAccountID > 0 {
 		openAIStickyLegacyReadFallbackHit.Add(1)
 		return legacyAccountID, nil
 	}
-	return accountID, err
+	return 0, nil
 }
 
 func (s *OpenAIGatewayService) setStickySessionAccountID(ctx context.Context, groupID *int64, sessionHash string, accountID int64, ttl time.Duration) error {

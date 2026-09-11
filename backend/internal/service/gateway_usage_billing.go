@@ -206,6 +206,9 @@ func resolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string)
 			return requestID
 		}
 	}
+	if id := openAIWSTurnBillingID(ctx); id != "" {
+		return id
+	}
 	if ctx != nil {
 		if clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
 			return "client:" + strings.TrimSpace(clientRequestID)

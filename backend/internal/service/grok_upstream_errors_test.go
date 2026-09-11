@@ -277,7 +277,7 @@ func TestGrokContentPolicySSEErrorDoesNotMutateOrFailover(t *testing.T) {
 	var writes [][]byte
 
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "access-token", payload, len(payload),
+		context.Background(), nil, c, account, "access-token", payload, len(payload),
 		"grok-4.5", "", "", "", "cache-id", 1,
 		func(message []byte) error {
 			writes = append(writes, append([]byte(nil), message...))

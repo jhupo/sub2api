@@ -277,6 +277,25 @@ func TestEnforceCodexIdentityHeaders_EnforcementDisabledThirdPartyFallback(t *te
 	require.Equal(t, codexCLIVersion, h.Get("version"))
 }
 
+func TestPairCodexIdentityHeadersVersionConsistency(t *testing.T) {
+	for _, tc := range []struct{ uaVersion, headerVersion, want string }{
+		{"0.125.0", "0.125.0", codexCLIVersion},
+		{"0.200.1", "0.125.0", "0.200.1"},
+		{"0.200.1", "", "0.200.1"},
+		{"0.200.1", "invalid", "0.200.1"},
+		{"invalid", "0.200.1", codexCLIVersion},
+	} {
+		h := make(http.Header)
+		h.Set("user-agent", "codex-tui/"+tc.uaVersion+" (Mac OS X 15.0; arm64) iTerm (codex-tui; "+tc.uaVersion+")")
+		h.Set("version", tc.headerVersion)
+		pairCodexIdentityHeaders(h)
+		require.Equal(t, tc.want, h.Get("version"))
+		require.Equal(t, tc.want, openai.CodexUserAgentVersion(h.Get("user-agent")))
+		require.Contains(t, h.Get("user-agent"), "(codex-tui; "+tc.want+")")
+		require.Contains(t, h.Get("user-agent"), "(Mac OS X 15.0; arm64) iTerm")
+	}
+}
+
 // 收口必须幂等：透传等路径可能先后多次经过收口。
 func TestEnforceCodexIdentityHeadersIsIdempotent(t *testing.T) {
 	h := make(http.Header)

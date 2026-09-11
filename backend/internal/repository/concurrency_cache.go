@@ -92,6 +92,10 @@ var (
 			if pressure >= 2 then
 				maxConcurrency = math.max(1, math.ceil(maxConcurrency / pressure))
 			end
+			local softPercent = tonumber(ARGV[5])
+			if softPercent > 0 and softPercent < 100 then
+				maxConcurrency = math.ceil(maxConcurrency * softPercent / 100)
+			end
 		end
 
 		-- 清理过期槽位
@@ -683,7 +687,7 @@ func (c *concurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int
 func (c *concurrencyCache) AcquireAdaptiveAccountSlot(ctx context.Context, accountID int64, policy service.AccountSlotAdmission, requestID string) (bool, error) {
 	keys := []string{accountSlotKey(accountID), liveAccountSlotKey(accountID), codexAdaptivePressureKey(accountID, policy.PressureModel)}
 	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, keys,
-		policy.MaxConcurrency, c.slotTTLSeconds, requestID, codexAdaptiveWindowSeconds(policy.PressureWindow))
+		policy.MaxConcurrency, c.slotTTLSeconds, requestID, codexAdaptiveWindowSeconds(policy.PressureWindow), policy.SoftLimitPercent)
 	if err != nil {
 		return false, err
 	}

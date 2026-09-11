@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
@@ -64,9 +66,10 @@ func (e *openAIWSDialError) Unwrap() error {
 }
 
 type openAIWSAcquireRequest struct {
-	Account *Account
-	WSURL   string
-	Headers http.Header
+	Account  *Account
+	identity *codexAttemptIdentity
+	WSURL    string
+	Headers  http.Header
 	// HeadersFactory is evaluated inside dialConn. It exists so credentials
 	// whose authorization is per-dial (Agent Identity) are never cached in
 	// lastAcquire or delayed prewarm state.
@@ -80,6 +83,11 @@ type openAIWSAcquireRequest struct {
 }
 
 type openAIWSHandshakeCompatibilityKey struct {
+	identity            openAIWSHandshakeIdentity
+	credentialPrincipal string
+	acceptLanguage      string
+	wsURL               string
+	proxyURL            string
 	betaFeatures        string
 	codexInstallationID string
 	sessionIDHyphen     string
@@ -87,6 +95,14 @@ type openAIWSHandshakeCompatibilityKey struct {
 	threadID            string
 	clientRequestID     string
 	codexWindowID       string
+}
+
+// Identity is fixed for the lifetime of a WebSocket handshake. It is not
+// affected by per-turn metadata or refreshed authorization credentials.
+type openAIWSHandshakeIdentity struct {
+	userAgent  string
+	originator string
+	version    string
 }
 
 type openAIWSConnLease struct {
@@ -243,6 +259,9 @@ func (l *openAIWSConnLease) Release() {
 	if !l.released.CompareAndSwap(false, true) {
 		return
 	}
+	if !l.conn.responseBoundary.reusable() && l.pool != nil {
+		l.pool.evictConn(l.accountID, l.conn.id)
+	}
 	l.conn.release()
 	if l.pool != nil {
 		l.pool.notifyAccountPoolChanged(l.accountID)
@@ -261,8 +280,9 @@ type openAIWSConn struct {
 	closedCh  chan struct{}
 	closeOnce sync.Once
 
-	readMu  sync.Mutex
-	writeMu sync.Mutex
+	readMu           sync.Mutex
+	writeMu          sync.Mutex
+	responseBoundary openAIWSResponseBoundary
 
 	waiters       atomic.Int32
 	createdAtNano atomic.Int64
@@ -397,6 +417,11 @@ func (c *openAIWSConn) writeJSON(value any, writeCtx context.Context) error {
 	if writeCtx == nil {
 		writeCtx = context.Background()
 	}
+	if isOpenAIWSResponseCreate(value) {
+		if err := c.responseBoundary.begin(); err != nil {
+			return err
+		}
+	}
 	if err := c.ws.WriteJSON(writeCtx, value); err != nil {
 		return err
 	}
@@ -438,12 +463,54 @@ func (c *openAIWSConn) readMessage(readCtx context.Context) ([]byte, error) {
 	if readCtx == nil {
 		readCtx = context.Background()
 	}
-	payload, err := c.ws.ReadMessage(readCtx)
-	if err != nil {
-		return nil, err
+	for {
+		frameCtx := readCtx
+		var cancel context.CancelFunc
+		if deadline := c.responseBoundary.readDeadline(); !deadline.IsZero() {
+			frameCtx, cancel = context.WithDeadline(readCtx, deadline)
+		}
+		payload, err := c.ws.ReadMessage(frameCtx)
+		if cancel != nil {
+			cancel()
+		}
+		if err != nil {
+			// Ordinary per-read cancellation belongs to the lease owner. During
+			// error correlation, however, a failed drain always retires the socket.
+			if !c.responseBoundary.readDeadline().IsZero() {
+				c.close()
+			}
+			return nil, err
+		}
+		// Validate each document before exposing usage or account-health signals.
+		documents, split := splitOpenAIConcatenatedJSONDocuments(payload)
+		if !split {
+			documents = [][]byte{payload}
+		}
+		accepted := make([][]byte, 0, len(documents))
+		for _, document := range documents {
+			if err := c.responseBoundary.observe(document); errors.Is(err, errOpenAIWSUncorrelatedError) {
+				continue
+			} else if err != nil {
+				c.close()
+				return nil, err
+			}
+			accepted = append(accepted, document)
+			eventType, _, _ := parseOpenAIWSEventEnvelope(document)
+			if eventType == "error" || isOpenAIWSTerminalEvent(eventType) {
+				if !c.responseBoundary.reusable() || len(documents) > 1 {
+					c.close()
+				}
+				break
+			}
+		}
+		if len(accepted) > 0 {
+			c.touch()
+			if len(accepted) == 1 {
+				return accepted[0], nil
+			}
+			return bytes.Join(accepted, []byte("\n")), nil
+		}
 	}
-	c.touch()
-	return payload, nil
 }
 
 func (c *openAIWSConn) pingWithTimeout(timeout time.Duration) error {
@@ -549,6 +616,17 @@ func (c *openAIWSConn) handshakeHeader(name string) string {
 
 func (c *openAIWSConn) matchesHandshakeCompatibility(compatibility openAIWSHandshakeCompatibilityKey) bool {
 	return c != nil && c.handshakeCompatibility == compatibility
+}
+
+// An explicitly owned continuation keeps its original handshake identity.
+// Identity updates affect new work, not the lifetime of an existing response
+// chain. All capability and session compatibility checks remain mandatory.
+func (c *openAIWSConn) matchesContinuationCompatibility(compatibility openAIWSHandshakeCompatibilityKey) bool {
+	if c == nil {
+		return false
+	}
+	compatibility.identity = c.handshakeCompatibility.identity
+	return c.matchesHandshakeCompatibility(compatibility)
 }
 
 func (c *openAIWSConn) matchesRoutingAffinity(routingAffinity string) bool {
@@ -864,7 +942,7 @@ func (p *openAIWSConnPool) acquire(ctx context.Context, req openAIWSAcquireReque
 
 retryAcquire:
 	accountID := req.Account.ID
-	compatibility := normalizeOpenAIWSHandshakeCompatibility(req.Account, req.Headers)
+	compatibility := req.handshakeCompatibility(req.Headers)
 	routingAffinity := normalizeOpenAIWSRoutingAffinity(req.Headers)
 	effectiveMaxConns := p.effectiveMaxConnsByAccount(req.Account)
 	if effectiveMaxConns <= 0 {
@@ -893,7 +971,7 @@ retryAcquire:
 				return nil, errOpenAIWSPreferredConnUnavailable
 			}
 			preferredConn, ok := ap.conns[preferredConnID]
-			if !ok || !preferredConn.matchesHandshakeCompatibility(compatibility) {
+			if !ok || !preferredConn.matchesContinuationCompatibility(compatibility) {
 				p.recordConnPickDuration(time.Since(pickStartedAt))
 				ap.mu.Unlock()
 				closeOpenAIWSConns(evicted)
@@ -1821,8 +1899,8 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 	}
 	id := p.nextConnID(req.Account.ID)
 	pooledConn := newOpenAIWSConn(id, req.Account.ID, conn, handshakeHeaders)
-	pooledConn.handshakeCompatibility = normalizeOpenAIWSHandshakeCompatibility(req.Account, req.Headers)
-	pooledConn.routingAffinity = normalizeOpenAIWSRoutingAffinity(req.Headers)
+	pooledConn.handshakeCompatibility = req.handshakeCompatibility(headers)
+	pooledConn.routingAffinity = normalizeOpenAIWSRoutingAffinity(headers)
 	return pooledConn, nil
 }
 
@@ -2002,9 +2080,7 @@ func cloneOpenAIWSAcquireRequestPtr(req *openAIWSAcquireRequest) *openAIWSAcquir
 }
 
 func sameOpenAIWSPrewarmTarget(a, b openAIWSAcquireRequest) bool {
-	return stringsTrim(a.WSURL) == stringsTrim(b.WSURL) &&
-		stringsTrim(a.ProxyURL) == stringsTrim(b.ProxyURL) &&
-		normalizeOpenAIWSHandshakeCompatibility(a.Account, a.Headers) == normalizeOpenAIWSHandshakeCompatibility(b.Account, b.Headers)
+	return a.handshakeCompatibility(a.Headers) == b.handshakeCompatibility(b.Headers)
 }
 
 func normalizeOpenAIWSBetaFeatures(headers http.Header) string {
@@ -2032,11 +2108,17 @@ func normalizeOpenAIWSBetaFeatures(headers http.Header) string {
 	return strings.Join(normalized, ",")
 }
 
-func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Header) openAIWSHandshakeCompatibilityKey {
+func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Header, mode codexFingerprintMode) openAIWSHandshakeCompatibilityKey {
 	key := openAIWSHandshakeCompatibilityKey{
+		credentialPrincipal: codexAccountIdentityNamespace(account),
+		acceptLanguage:      normalizeOpenAIWSStableIdentityHeader(headers, "Accept-Language"),
+		identity: openAIWSHandshakeIdentity{
+			userAgent:  normalizeOpenAIWSStableIdentityHeader(headers, "User-Agent"),
+			originator: normalizeOpenAIWSStableIdentityHeader(headers, "originator"),
+			version:    normalizeOpenAIWSStableIdentityHeader(headers, "version"),
+		},
 		betaFeatures: normalizeOpenAIWSBetaFeatures(headers),
 	}
-	mode := activeCodexFingerprintMode(account)
 	if mode == codexFingerprintOff {
 		return key
 	}
@@ -2049,6 +2131,31 @@ func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Head
 	key.threadID = normalizeOpenAIWSStableIdentityHeader(headers, "thread-id")
 	key.clientRequestID = normalizeOpenAIWSStableIdentityHeader(headers, "x-client-request-id")
 	key.codexWindowID = normalizeOpenAIWSStableIdentityHeader(headers, "x-codex-window-id")
+	return key
+}
+
+func (r openAIWSAcquireRequest) handshakeCompatibility(headers http.Header) openAIWSHandshakeCompatibilityKey {
+	mode := activeCodexFingerprintMode(r.Account)
+	if r.identity != nil {
+		mode = codexFingerprintOff
+		if r.identity.fingerprint != nil {
+			mode = r.identity.fingerprint.mode
+		}
+	}
+	key := normalizeOpenAIWSHandshakeCompatibility(r.Account, headers, mode)
+	if r.identity != nil {
+		key.credentialPrincipal = r.identity.scope.namespace
+	}
+	// API keys have no stable OAuth principal or refresh lifecycle. A changed
+	// bearer on the same row must not inherit an old authenticated connection.
+	if key.credentialPrincipal == "" {
+		if authorization := strings.TrimSpace(headers.Get("Authorization")); authorization != "" {
+			digest := sha256.Sum256([]byte(authorization))
+			key.credentialPrincipal = fmt.Sprintf("authorization:%x", digest)
+		}
+	}
+	key.wsURL = strings.TrimSpace(r.WSURL)
+	key.proxyURL = strings.TrimSpace(r.ProxyURL)
 	return key
 }
 

@@ -4,6 +4,22 @@ import "context"
 
 type balancePreauthorizationContextKey struct{}
 
+type openAIWSTurnBillingIDKey struct{}
+
+// ContextWithOpenAIWSTurnBillingID binds authorization and settlement to one
+// server-owned business turn, independently of connection and upstream IDs.
+func ContextWithOpenAIWSTurnBillingID(ctx context.Context, id string) context.Context {
+	return context.WithValue(nonNilContext(ctx), openAIWSTurnBillingIDKey{}, id)
+}
+
+func openAIWSTurnBillingID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	id, _ := ctx.Value(openAIWSTurnBillingIDKey{}).(string)
+	return id
+}
+
 func ContextWithBalancePreauthorizationGuard(ctx context.Context, guard *BalancePreauthorizationGuard) context.Context {
 	ctx = nonNilContext(ctx)
 	if guard == nil {

@@ -15,7 +15,7 @@ import (
 const (
 	apiKeyRateLimitKeyPrefix   = "apikey:ratelimit:"
 	apiKeyRateLimitDuration    = 24 * time.Hour
-	apiKeyAuthCachePrefix      = "apikey:auth:"
+	apiKeyAuthCachePrefix      = "jhupo:apikey:auth:"
 	authCacheInvalidateChannel = "auth:cache:invalidate"
 )
 

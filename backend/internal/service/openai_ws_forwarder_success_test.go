@@ -445,7 +445,7 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersDeviceModePreservesNamespacedC
 	account := newTestOAuthAccount(1300, map[string]any{codexFingerprintModeExtraKey: "device"})
 	ids := resolveCodexFingerprintIDsFromRequest(account, c.Request.Header)
 	require.NotNil(t, ids)
-	stageCodexFingerprintIDs(c, ids)
+	stageTestCodexFingerprintIDs(c, account, ids)
 
 	svc := &OpenAIGatewayService{}
 	headers, _, err := svc.buildOpenAIWSHeaders(

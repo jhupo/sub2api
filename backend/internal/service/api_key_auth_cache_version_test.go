@@ -2,6 +2,33 @@ package service
 
 import "testing"
 
+func TestAPIKeyService_RejectsForeignAndMalformedPaymentSnapshots(t *testing.T) {
+	svc := &APIKeyService{}
+	subID := int64(7)
+	for _, snapshot := range []*APIKeyAuthSnapshot{
+		{Version: 23},
+		{Version: apiKeyAuthSnapshotVersion},
+		{Version: apiKeyAuthSnapshotVersion, FundingSource: "Subscription", SubscriptionID: &subID},
+		{Version: apiKeyAuthSnapshotVersion, FundingSource: FundingSourceSubscription},
+		{Version: apiKeyAuthSnapshotVersion, FundingSource: FundingSourceWallet, SubscriptionID: &subID},
+	} {
+		key, used, err := svc.applyAuthCacheEntry("key", &APIKeyAuthCacheEntry{Snapshot: snapshot})
+		if key != nil || used || err != nil {
+			t.Fatalf("malformed snapshot accepted: %#v, %v", snapshot, err)
+		}
+	}
+	for _, source := range []string{FundingSourceWallet, FundingSourceSubscription} {
+		snapshot := &APIKeyAuthSnapshot{Version: apiKeyAuthSnapshotVersion, FundingSource: source}
+		if source == FundingSourceSubscription {
+			snapshot.SubscriptionID = &subID
+		}
+		key, used, err := svc.applyAuthCacheEntry("key", &APIKeyAuthCacheEntry{Snapshot: snapshot})
+		if err != nil || !used || key.FundingSource != source {
+			t.Fatalf("valid snapshot rejected: %v", err)
+		}
+	}
+}
+
 func TestAPIKeyService_RejectsV10AuthSnapshotWithoutModelsListConfig(t *testing.T) {
 	groupID := int64(9)
 	svc := &APIKeyService{}

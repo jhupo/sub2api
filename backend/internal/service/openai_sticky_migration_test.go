@@ -12,10 +12,12 @@ import (
 
 type codexMigrationTestCache struct {
 	*stubGatewayCache
-	mu         sync.Mutex
-	migrations map[string]OpenAIStickyMigration
-	commitErr  error
-	readErr    error
+	mu             sync.Mutex
+	migrations     map[string]OpenAIStickyMigration
+	commitErr      error
+	readErr        error
+	sessionReadErr error
+	sessionReads   int
 }
 
 func newCodexMigrationTestCache(session string, accountID int64) *codexMigrationTestCache {
@@ -23,6 +25,16 @@ func newCodexMigrationTestCache(session string, accountID int64) *codexMigration
 		stubGatewayCache: &stubGatewayCache{sessionBindings: map[string]int64{"openai:" + session: accountID}},
 		migrations:       make(map[string]OpenAIStickyMigration),
 	}
+}
+
+func (c *codexMigrationTestCache) GetSessionAccountID(ctx context.Context, groupID int64, key string) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sessionReads++
+	if c.sessionReadErr != nil {
+		return 0, c.sessionReadErr
+	}
+	return c.stubGatewayCache.GetSessionAccountID(ctx, groupID, key)
 }
 
 func (c *codexMigrationTestCache) SetOpenAIStickySessionIfAbsent(_ context.Context, _ int64, key string, id int64, _ time.Duration) error {

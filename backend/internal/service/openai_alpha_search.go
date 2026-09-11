@@ -30,7 +30,7 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 	if s == nil || c == nil || account == nil {
 		return nil, fmt.Errorf("service, context, and account are required")
 	}
-	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
+	if err := s.prepareCodexAttemptIdentity(ctx, c, account, body); err != nil {
 		return nil, err
 	}
 	modelResult := gjson.GetBytes(body, "model")
@@ -254,35 +254,17 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(c
 	if turnMetadata := openAIAlphaSearchInboundHeader(c, "X-Codex-Turn-Metadata"); turnMetadata != "" {
 		req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
 	}
-	canonical := resolveCodexOutboundIdentity("")
-	if version := openAIAlphaSearchInboundHeader(c, "Version"); version != "" {
-		req.Header.Set("Version", version)
-	} else {
-		req.Header.Set("Version", canonical.version)
+	identity := s.codexAttemptIdentity(c, account)
+	if identity == nil {
+		return nil, fmt.Errorf("Codex identity required for hosted alpha search")
 	}
-	if originator := openAIAlphaSearchInboundHeader(c, "Originator"); originator != "" {
-		req.Header.Set("Originator", originator)
-	} else {
-		req.Header.Set("Originator", canonical.originator)
-	}
-	if customUA := account.GetOpenAIUserAgent(); customUA != "" {
-		req.Header.Set("User-Agent", customUA)
-	} else if userAgent := openAIAlphaSearchInboundHeader(c, "User-Agent"); userAgent != "" {
-		req.Header.Set("User-Agent", userAgent)
-	} else {
-		req.Header.Set("User-Agent", canonical.userAgent)
-	}
-	if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
-		req.Header.Set("User-Agent", canonical.userAgent)
-	}
-	apiKeyID := getAPIKeyIDFromContext(c)
 	if sessionID := strings.TrimSpace(gjson.GetBytes(alphaBody, "id").String()); sessionID != "" {
-		isolated := isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), sessionID)
+		isolated := identity.scope.sessionID(sessionID)
 		req.Header.Set("Session_ID", isolated)
 		req.Header.Set("Conversation_ID", isolated)
 	}
-	applyCodexAccountIdentityHeaders(req.Header, codexAccountIdentitySource(c, account), apiKeyID)
-	enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
+	identity.scope.applyHeaders(req.Header)
+	identity.applyClientHeaders(req.Header)
 	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
 }
@@ -390,7 +372,7 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(ctx context.Context
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	if account.Type == AccountTypeOAuth {
+	if identity := s.codexAttemptIdentity(c, account); identity != nil {
 		req.Host = "chatgpt.com"
 		if err := resolveAndSetOpenAIChatGPTAccountHeaders(ctx, s.accountRepo, req.Header, account); err != nil {
 			return nil, fmt.Errorf("resolve chatgpt account headers: %w", err)
@@ -399,29 +381,8 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(ctx context.Context
 		if turnMetadata := openAIAlphaSearchInboundHeader(c, "X-Codex-Turn-Metadata"); turnMetadata != "" {
 			req.Header.Set("X-Codex-Turn-Metadata", turnMetadata)
 		}
-		applyCodexAccountIdentityHeaders(req.Header, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
-		canonical := resolveCodexOutboundIdentity("")
-		if version := openAIAlphaSearchInboundHeader(c, "Version"); version != "" {
-			req.Header.Set("Version", version)
-		} else {
-			req.Header.Set("Version", canonical.version)
-		}
-		if originator := openAIAlphaSearchInboundHeader(c, "Originator"); originator != "" {
-			req.Header.Set("Originator", originator)
-		} else {
-			req.Header.Set("Originator", canonical.originator)
-		}
-		if customUA := account.GetOpenAIUserAgent(); customUA != "" {
-			req.Header.Set("User-Agent", customUA)
-		} else if userAgent := openAIAlphaSearchInboundHeader(c, "User-Agent"); userAgent != "" {
-			req.Header.Set("User-Agent", userAgent)
-		} else {
-			req.Header.Set("User-Agent", canonical.userAgent)
-		}
-		if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
-			req.Header.Set("User-Agent", canonical.userAgent)
-		}
-		enforceCodexIdentityHeadersWithUA(req.Header, s.codexIdentityOverrideUA(account))
+		identity.scope.applyHeaders(req.Header)
+		identity.applyClientHeaders(req.Header)
 	}
 
 	account.ApplyHeaderOverrides(req.Header)

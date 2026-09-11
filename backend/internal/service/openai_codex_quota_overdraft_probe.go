@@ -673,10 +673,7 @@ func (c *CodexQuotaOverdraftCoordinator) runProbeAttempt(ctx context.Context, ac
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
 	// Keep the overdraft probe aligned with the official outbound identity
 	// resolver so automatic Codex client-version updates apply to probes too.
-	canonical := resolveCodexOutboundIdentity("")
-	req.Header.Set("Originator", canonical.originator)
-	req.Header.Set("Version", canonical.version)
-	req.Header.Set("User-Agent", canonical.userAgent)
+	resolveCodexRequestClientIdentity("", account.GetOpenAIUserAgent(), false).applyHeaders(req.Header)
 
 	if account.IsOpenAIAgentIdentity() {
 		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, c.accountRepo, c.agentIdentityWS, &c.agentIdentityTaskMu, account)
@@ -706,7 +703,6 @@ func (c *CodexQuotaOverdraftCoordinator) runProbeAttempt(ctx context.Context, ac
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	setOpenAIChatGPTAccountHeaders(req.Header, account)
-	enforceCodexIdentityHeadersWithUA(req.Header, account.GetOpenAIUserAgent())
 	account.ApplyHeaderOverrides(req.Header)
 
 	proxyURL := ""

@@ -743,6 +743,23 @@ func (s *APIKeyService) VerifyOwnership(ctx context.Context, userID int64, apiKe
 	return validIDs, nil
 }
 
+// GetGatewaySubscription reloads payment identity for long-lived gateway sessions.
+func (s *APIKeyService) GetGatewaySubscription(ctx context.Context, key *APIKey) (*UserSubscription, error) {
+	if key == nil || !key.UsesSubscription() {
+		return nil, nil
+	}
+	if s.userSubRepo == nil {
+		return nil, ErrSubscriptionInvalid
+	}
+	sub, err := s.validateSubscriptionFunding(ctx, key.UserID, key.FundingSource, key.SubscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	// Window maintenance is also used by HTTP authentication. Long-lived WS
+	// connections must observe day/week/month rollover without reconnecting.
+	return NewSubscriptionService(s.userSubRepo, nil).EnsureWindowMaintenance(ctx, sub)
+}
+
 // GetByID 根据ID获取API Key
 func (s *APIKeyService) GetByID(ctx context.Context, id int64) (*APIKey, error) {
 	apiKey, err := s.apiKeyRepo.GetByID(ctx, id)

@@ -791,8 +791,7 @@ func ProvideSettingService(settingRepo SettingRepository, planReader *PaymentCon
 		logger.LegacyPrintf("service.setting", "Warning: migrate Grok default text model failed: %v", err)
 	}
 	antigravity.SetUserAgentVersionResolver(svc.GetAntigravityUserAgentVersion)
-	// enforceCodexIdentityHeaders 是所有 Codex 出站路径共用的纯函数收口点，拿不到 ctx，
-	// 故注入无参解析器；解析器内部自带 60s TTL 缓存，热路径不触库。
+	// 身份快照共用此解析器；内部自带 60s TTL 缓存，投影阶段不再读取设置。
 	SetCodexCanonicalUserAgentResolver(func() string {
 		return svc.GetOpenAICodexCanonicalUserAgent(context.Background())
 	})

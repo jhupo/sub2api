@@ -193,11 +193,12 @@ func TestAPIKeyService_GetByKey_UsesL2Cache(t *testing.T) {
 	groupID := int64(9)
 	cacheEntry := &APIKeyAuthCacheEntry{
 		Snapshot: &APIKeyAuthSnapshot{
-			Version:  apiKeyAuthSnapshotVersion,
-			APIKeyID: 1,
-			UserID:   2,
-			GroupID:  &groupID,
-			Status:   StatusActive,
+			FundingSource: FundingSourceWallet,
+			Version:       apiKeyAuthSnapshotVersion,
+			APIKeyID:      1,
+			UserID:        2,
+			GroupID:       &groupID,
+			Status:        StatusActive,
 			User: APIKeyAuthUserSnapshot{
 				ID:          2,
 				Status:      StatusActive,
@@ -325,10 +326,11 @@ func TestAPIKeyService_GetByKey_IgnoresLegacyAuthCacheSnapshotWithoutMessagesDis
 			atomic.AddInt32(&repoCalls, 1)
 			groupID := int64(9)
 			return &APIKey{
-				ID:      1,
-				UserID:  2,
-				GroupID: &groupID,
-				Status:  StatusActive,
+				FundingSource: FundingSourceWallet,
+				ID:            1,
+				UserID:        2,
+				GroupID:       &groupID,
+				Status:        StatusActive,
 				User: &User{
 					ID:          2,
 					Status:      StatusActive,
@@ -458,9 +460,10 @@ func TestAPIKeyService_GetByKey_UsesL1Cache(t *testing.T) {
 		getByKeyForAuth: func(ctx context.Context, key string) (*APIKey, error) {
 			atomic.AddInt32(&calls, 1)
 			return &APIKey{
-				ID:     21,
-				UserID: 3,
-				Status: StatusActive,
+				ID:            21,
+				FundingSource: FundingSourceWallet,
+				UserID:        3,
+				Status:        StatusActive,
 				User: &User{
 					ID:          3,
 					Status:      StatusActive,
@@ -647,9 +650,10 @@ func TestAPIKeyService_GetByKey_SingleflightCollapses(t *testing.T) {
 			atomic.AddInt32(&calls, 1)
 			time.Sleep(50 * time.Millisecond)
 			return &APIKey{
-				ID:     11,
-				UserID: 2,
-				Status: StatusActive,
+				ID:            11,
+				FundingSource: FundingSourceWallet,
+				UserID:        2,
+				Status:        StatusActive,
 				User: &User{
 					ID:          2,
 					Status:      StatusActive,

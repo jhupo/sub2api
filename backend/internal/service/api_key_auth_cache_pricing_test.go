@@ -13,7 +13,8 @@ func TestAPIKeyAuthSnapshotGroupPricingRoundtrip(t *testing.T) {
 	inputPrice := 1e-6
 	outputPrice := 2e-6
 	apiKey := &APIKey{
-		ID: 82, UserID: 40, GroupID: &groupID, Key: "sk-pricing-roundtrip", Status: StatusActive,
+		FundingSource: FundingSourceWallet,
+		ID:            82, UserID: 40, GroupID: &groupID, Key: "sk-pricing-roundtrip", Status: StatusActive,
 		User: &User{ID: 40, Status: StatusActive},
 		Group: &Group{
 			ID: groupID, Name: "pricing-roundtrip", Platform: PlatformAnthropic, Status: StatusActive,

@@ -359,6 +359,10 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 	if policy.MaxConcurrency <= 0 {
 		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
 	}
+	// Copy the resolved policy: a resolver may publish an immutable snapshot.
+	admission := *policy
+	admission.SoftLimitPercent, _ = ctx.Value(accountSoftAdmissionKey{}).(int)
+	policy = &admission
 	if s == nil || s.cache == nil {
 		return nil, errAdaptiveAdmissionUnavailable
 	}
@@ -373,7 +377,7 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 		}
 		acquired, err = cache.AcquireAdaptiveAccountSlot(ctx, accountID, *policy, requestID)
 	} else {
-		acquired, err = s.cache.AcquireAccountSlot(ctx, accountID, policy.MaxConcurrency, requestID)
+		acquired, err = s.cache.AcquireAccountSlot(ctx, accountID, AccountSoftConcurrencyLimit(policy.MaxConcurrency, policy.SoftLimitPercent), requestID)
 	}
 	if err != nil {
 		return nil, err

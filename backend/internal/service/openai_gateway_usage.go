@@ -358,7 +358,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	durationMs := int(result.Duration.Milliseconds())
 	accountRateMultiplier := account.BillingRateMultiplier()
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
-	if result.OpenAIWSMode {
+	if result.OpenAIWSMode && openAIWSTurnBillingID(ctx) == "" {
 		if upstreamRequestID := strings.TrimSpace(result.RequestID); upstreamRequestID != "" {
 			requestID = upstreamRequestID
 		}
@@ -538,6 +538,15 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		// accounting failure into an apparently free request.
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		return billingErr
+	}
+	continuationID := result.ResponseID
+	if result.OpenAIWSMode {
+		continuationID = result.RequestID
+	}
+	if continuationID != "" {
+		if err := s.RememberOpenAIContinuationInputBound(ctx, apiKey, continuationID, result.Usage.InputTokens+result.Usage.OutputTokens); err != nil {
+			logger.L().Warn("openai.continuation_budget_cache_failed", zap.Error(err))
+		}
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 

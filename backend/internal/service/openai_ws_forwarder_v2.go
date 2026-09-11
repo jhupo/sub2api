@@ -203,9 +203,10 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	defer acquireCancel()
 
 	lease, err := s.getOpenAIWSConnPool().Acquire(acquireCtx, openAIWSAcquireRequest{
-		Account: account,
-		WSURL:   wsURL,
-		Headers: wsHeaders,
+		Account:  account,
+		identity: s.codexAttemptIdentity(c, account),
+		WSURL:    wsURL,
+		Headers:  wsHeaders,
 		HeadersFactory: func(factoryCtx context.Context, headers http.Header) (http.Header, error) {
 			return s.refreshOpenAIAgentIdentityHeaders(factoryCtx, account, headers)
 		},
@@ -555,7 +556,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				}
 			}
 		}
-		if readErr == nil && !json.Valid(message) {
+		if errors.Is(readErr, errOpenAIWSInvalidEventJSON) || (readErr == nil && !json.Valid(message)) {
 			eventType, _, _ := parseOpenAIWSEventEnvelope(message)
 			if eventType == "" {
 				eventType = "unknown"

@@ -401,8 +401,8 @@ func liveCallIDFromLocation(location string) (string, error) {
 
 func applyLiveUpstreamIdentityHeaders(headers http.Header) {
 	headers.Set("OpenAI-Alpha", "quicksilver=v2")
-	ensureCodexIdentityHeaders(headers)
-	enforceCodexIdentityHeaders(headers)
+	resolveCodexRequestClientIdentity(headers.Get("User-Agent"), "", false).applyHeaders(headers)
+	headers.Set("OpenAI-Beta", "responses=experimental")
 	if strings.TrimSpace(headers.Get("session-id")) == "" {
 		headers.Set("session-id", uuid.NewString())
 	}

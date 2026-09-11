@@ -846,10 +846,10 @@ func TestStageCodexFingerprintIDs_NilOverwritesPreviousAccount(t *testing.T) {
 	accountA := newTestOAuthAccount(1001, map[string]any{codexFingerprintModeExtraKey: "session"})
 	idsA := resolveCodexFingerprintIDs(accountA, "sess-x", codexFingerprintSession)
 	require.NotNil(t, idsA)
-	stageCodexFingerprintIDs(c, idsA)
+	stageTestCodexFingerprintIDs(c, accountA, idsA)
 
 	// failover 切到 off 模式账号：无条件覆写为 nil，上一账号 IDs 不得残留
-	stageCodexFingerprintIDs(c, nil)
+	stageCodexAttemptIdentity(c, nil)
 
 	h := http.Header{}
 	h.Set("session_id", "isolated-session")
@@ -864,7 +864,7 @@ func TestApplyStagedCodexFingerprintRejectsDifferentOAuthAccount(t *testing.T) {
 	accountA := newTestOAuthAccount(1003, map[string]any{codexFingerprintModeExtraKey: "session"})
 	idsA := resolveCodexFingerprintIDs(accountA, "sess-a", codexFingerprintSession)
 	require.NotNil(t, idsA)
-	stageCodexFingerprintIDs(c, idsA)
+	stageTestCodexFingerprintIDs(c, accountA, idsA)
 
 	accountB := newTestOAuthAccount(1004, map[string]any{codexFingerprintModeExtraKey: "session"})
 	h := make(http.Header)
@@ -884,7 +884,7 @@ func TestApplyStagedCodexFingerprintHeaders_SkipsNonOAuthAccount(t *testing.T) {
 	c := newFingerprintStageTestContext(t)
 	oauthIDs := resolveCodexFingerprintIDs(newTestOAuthAccount(1003, map[string]any{codexFingerprintModeExtraKey: "session"}), "sess-y", codexFingerprintSession)
 	require.NotNil(t, oauthIDs)
-	stageCodexFingerprintIDs(c, oauthIDs)
+	stageTestCodexFingerprintIDs(c, newTestOAuthAccount(1003, map[string]any{codexFingerprintModeExtraKey: "session"}), oauthIDs)
 
 	h := http.Header{}
 	apiKeyAccount := &Account{ID: 1004, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
@@ -909,7 +909,7 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	// 复刻 forwardOpenAIPassthrough 的解析+暂存 seam（默认 session 模式）
 	ids := resolveCodexFingerprintIDsFromRequest(account, c.Request.Header)
 	require.NotNil(t, ids)
-	stageCodexFingerprintIDs(c, ids)
+	stageTestCodexFingerprintIDs(c, account, ids)
 
 	body := []byte(`{"model":"gpt-5.6-sol","input":[],"stream":true}`)
 	req, err := svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), c, account, body, "test-token")
@@ -938,7 +938,7 @@ func TestBuildUpstreamRequestOpenAIPassthrough_OffModeKeepsIsolatedSession(t *te
 
 	ids := resolveCodexFingerprintIDsFromRequest(account, c.Request.Header)
 	require.Nil(t, ids)
-	stageCodexFingerprintIDs(c, ids)
+	stageTestCodexFingerprintIDs(c, account, ids)
 
 	body := []byte(`{"model":"gpt-5.6-sol","input":[],"stream":true}`)
 	req, err := svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), c, account, body, "test-token")
@@ -968,7 +968,7 @@ func TestStagedCodexFingerprintMetadataMatchesHeadersAndRejectsStaleAccount(t *t
 	require.NotNil(t, ids)
 
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	stageCodexFingerprintIDs(c, ids)
+	stageTestCodexFingerprintIDs(c, account, ids)
 
 	body := []byte(`{"type":"response.create","prompt_cache_key":"client-session","client_metadata":{"session_id":"client-session","thread_id":"client-thread","trace":"keep"}}`)
 	updated, changed, err := applyCodexFingerprintClientMetadataRaw(body, stagedCodexFingerprintIDs(c, account))

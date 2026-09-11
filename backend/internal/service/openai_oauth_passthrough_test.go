@@ -803,7 +803,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreami
 	require.Contains(t, rec.Body.String(), `"id":"cmp_123"`)
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCancel(t *testing.T) {
+func TestOpenAIGatewayService_OAuthPassthrough_DetachedRequestStillReportsClientCancel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -843,8 +843,10 @@ func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCance
 	}
 
 	result, err := svc.Forward(reqCtx, c, account, originalBody)
-	require.NoError(t, err)
+	require.ErrorIs(t, err, context.Canceled)
 	require.NotNil(t, result)
+	require.True(t, result.ClientDisconnect)
+	require.Empty(t, rec.Body.String())
 	require.NotNil(t, upstream.lastReq)
 	require.NoError(t, upstream.lastReq.Context().Err())
 }
@@ -2199,7 +2201,7 @@ func TestOpenAIGatewayService_CodexFingerprintCompactDoesNotRewriteBodyCacheKeyO
 	account.Credentials = map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"}
 	staleIDs := resolveCodexFingerprintIDs(account, "stale-session", codexFingerprintSession)
 	require.NotNil(t, staleIDs)
-	stageCodexFingerprintIDs(c, staleIDs)
+	stageTestCodexFingerprintIDs(c, account, staleIDs)
 
 	_, err := svc.Forward(context.Background(), c, account, body)
 	require.NoError(t, err)

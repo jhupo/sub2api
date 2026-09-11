@@ -87,6 +87,7 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	routingModel string,
 	routingServiceTier string,
 ) (http.Header, openAIWSSessionHeaderResolution, error) {
+	identity := s.codexAttemptIdentity(c, account)
 	headers := make(http.Header)
 	if account == nil || !account.IsOpenAIAgentIdentity() {
 		headers.Set("authorization", "Bearer "+token)
@@ -121,13 +122,12 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	// 实际请求因头差异落进不同的连接池兼容分桶。
 	applyOpenAICodexBetaFeatures(c, account, headers)
 	// OAuth 账号：将 apiKeyID 混入 session 标识符，防止跨用户会话碰撞。
-	if account != nil && account.UsesOpenAICodexProtocol() {
-		apiKeyID := getAPIKeyIDFromContext(c)
+	if identity != nil {
 		if sessionResolution.SessionID != "" {
-			headers.Set("session_id", isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), sessionResolution.SessionID))
+			headers.Set("session_id", identity.scope.sessionID(sessionResolution.SessionID))
 		}
 		if sessionResolution.ConversationID != "" {
-			headers.Set("conversation_id", isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), sessionResolution.ConversationID))
+			headers.Set("conversation_id", identity.scope.sessionID(sessionResolution.ConversationID))
 		}
 	} else {
 		if sessionResolution.SessionID != "" {
@@ -143,8 +143,6 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	if metadata := strings.TrimSpace(turnMetadata); metadata != "" {
 		headers.Set(openAIWSTurnMetadataHeader, metadata)
 	}
-	applyCodexAccountIdentityHeaders(headers, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
-	applyStagedCodexFingerprintHeaders(c, account, headers)
 
 	if account != nil && account.UsesOpenAICodexProtocol() {
 		if err := resolveAndSetOpenAIChatGPTAccountHeaders(ctx, s.accountRepo, headers, account); err != nil {
@@ -170,14 +168,12 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 			headers.Set("user-agent", ua)
 		}
 	}
-	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
+	if identity == nil && s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
 		headers.Set("user-agent", CodexCanonicalUserAgent())
 	}
 	// 终态收口：WS 握手与 HTTP 出站共用同一套身份语义，账号级自定义 UA 同样作为
 	// 管理员显式配置传入（上面写进 headers 的值只在强制统一被关闭时才参与配对）。
-	if account != nil && account.UsesOpenAICodexProtocol() {
-		enforceCodexIdentityHeadersWithUA(headers, s.codexIdentityOverrideUA(account))
-	}
+	identity.applyHeaders(headers)
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）。
 	// 覆盖所有 WS 模式（ctx_pool/dedicated/passthrough）的握手头。
@@ -324,8 +320,9 @@ func (s *OpenAIGatewayService) prepareOpenAIWSForwardPayloadRaw(
 	if err != nil {
 		return nil, strategy, removedKeys, err
 	}
-	if fpIDs := stagedCodexFingerprintIDs(c, account); fpIDs != nil {
-		updated, changed, fingerprintErr := applyCodexFingerprintClientMetadataRaw(payload, fpIDs)
+	if identity := s.codexAttemptIdentity(c, account); identity != nil && identity.fingerprint != nil {
+		fpIDs := *identity.fingerprint
+		updated, changed, fingerprintErr := applyCodexFingerprintClientMetadataRaw(payload, &fpIDs)
 		if fingerprintErr != nil {
 			return nil, strategy, removedKeys, fingerprintErr
 		}

@@ -189,6 +189,9 @@ func openAIWSIngressTurnRetryReason(err error) string {
 	if !errors.As(err, &turnErr) || turnErr == nil {
 		return "unknown"
 	}
+	if errors.Is(turnErr.cause, errOpenAIWSUnownedTurnStart) {
+		return "unowned_turn_start"
+	}
 	if turnErr.stage == "" {
 		return "unknown"
 	}
@@ -287,7 +290,12 @@ type OpenAIWSIngressHooks struct {
 	// MapRequestModel resolves the current turn's client model to the model
 	// that must be written into the upstream response.create frame.
 	MapRequestModel func(turn int, originalModel string) (string, error)
-	AfterTurn       func(turn int, result *OpenAIForwardResult, turnErr error)
+	// AuthorizeTurn runs after payload reconstruction/policy, before each
+	// upstream send. Transport retries retain the same business-turn owner.
+	AuthorizeTurn       func(turn int, payload []byte) error
+	ValidateClientFrame func(payload []byte) error
+	BeforeOutput        func(payload []byte) error
+	AfterTurn           func(turn int, result *OpenAIForwardResult, turnErr error)
 }
 
 func (s *OpenAIGatewayService) getOpenAIWSConnPool() *openAIWSConnPool {

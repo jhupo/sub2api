@@ -32,7 +32,10 @@ func preserveOpenAIStreamingResultOnError(result *OpenAIForwardResult, err error
 	if errors.As(err, &failoverErr) {
 		return nil, err
 	}
-	if result != nil && errors.Is(err, ErrBalanceWithholdingFailed) {
+	// Keep canceled attempts even without a final usage frame: the handler must
+	// take its client-disconnect branch and release the hold through settlement,
+	// not classify the cancellation as an upstream/account failure.
+	if result != nil && (result.ClientDisconnect || errors.Is(err, ErrBalanceWithholdingFailed)) {
 		return result, err
 	}
 	if !openAIForwardResultHasObservedBillingUnits(result) {

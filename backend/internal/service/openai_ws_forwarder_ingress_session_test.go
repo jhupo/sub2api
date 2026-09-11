@@ -1175,6 +1175,9 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughBridg
 			upstreamConn := &openAIWSCaptureConn{events: [][]byte{
 				[]byte(`{"type":"response.completed","response":{"id":"resp_duplicate_keys","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
 			}}
+			if tt.name == "other event type" {
+				upstreamConn.events = [][]byte{[]byte(`{"type":"session.updated","session":{"model":"gpt-5.1"}}`)}
+			}
 			dialer := &openAIWSCaptureDialer{conn: upstreamConn}
 			httpUpstream := &httpUpstreamRecorder{}
 			svc := &OpenAIGatewayService{
@@ -1227,7 +1230,11 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PassthroughBridg
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
-				require.Equal(t, "resp_duplicate_keys", gjson.GetBytes(event, "response.id").String())
+				if tt.name == "other event type" {
+					require.Equal(t, "session.updated", gjson.GetBytes(event, "type").String())
+				} else {
+					require.Equal(t, "resp_duplicate_keys", gjson.GetBytes(event, "response.id").String())
+				}
 				_ = clientConn.Close(coderws.StatusNormalClosure, "done")
 			}
 
@@ -2484,10 +2491,14 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_StoreDisabledFun
 	captureConn := &openAIWSCaptureConn{
 		events: [][]byte{
 			[]byte(`{"type":"response.completed","response":{"model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
+		},
+	}
+	secondConn := &openAIWSCaptureConn{
+		events: [][]byte{
 			[]byte(`{"type":"response.completed","response":{"id":"resp_auto_prev_skip_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
 		},
 	}
-	captureDialer := &openAIWSCaptureDialer{conn: captureConn}
+	captureDialer := &openAIWSQueueDialer{conns: []openAIWSClientConn{captureConn, secondConn}}
 	pool := newOpenAIWSConnPool(cfg)
 	pool.setClientDialerForTest(captureDialer)
 
@@ -2591,9 +2602,10 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_StoreDisabledFun
 		t.Fatal("等待 ingress websocket 结束超时")
 	}
 
-	require.Equal(t, 1, captureDialer.DialCount())
-	require.Len(t, captureConn.writes, 2)
-	require.False(t, gjson.Get(requestToJSONString(captureConn.writes[1]), "previous_response_id").Exists(), "上一轮缺失 response.id 时不应自动补齐 previous_response_id")
+	require.Equal(t, 2, captureDialer.DialCount(), "a terminal without a response ID cannot leave a reusable socket")
+	require.Len(t, captureConn.writes, 1)
+	require.Len(t, secondConn.writes, 1)
+	require.False(t, gjson.Get(requestToJSONString(secondConn.writes[0]), "previous_response_id").Exists(), "上一轮缺失 response.id 时不应自动补齐 previous_response_id")
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_StoreDisabledFunctionCallOutputSkipsAutoAttachWhenToolCallContextPresent(t *testing.T) {
@@ -3798,8 +3810,11 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PreviousResponse
 			[]byte(`{"type":"response.completed","response":{"id":"resp_turn_prev_recover_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
 		},
 	}
+	confirmationConn := &openAIWSCaptureConn{events: [][]byte{
+		[]byte(`{"type":"error","error":{"type":"invalid_request_error","code":"previous_response_not_found","message":"missing on fresh connection"}}`),
+	}}
 	dialer := &openAIWSQueueDialer{
-		conns: []openAIWSClientConn{firstConn, secondConn},
+		conns: []openAIWSClientConn{firstConn, confirmationConn, secondConn},
 	}
 	pool := newOpenAIWSConnPool(cfg)
 	pool.setClientDialerForTest(dialer)
@@ -3904,13 +3919,14 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PreviousResponse
 		t.Fatal("等待 ingress websocket 结束超时")
 	}
 
-	require.Equal(t, 2, dialer.DialCount(), "previous_response_not_found 恢复应触发换连重试")
+	require.Equal(t, 3, dialer.DialCount(), "unowned errors require fresh-socket confirmation before anchor recovery")
 
 	firstConn.mu.Lock()
 	firstWrites := append([]map[string]any(nil), firstConn.writes...)
 	firstConn.mu.Unlock()
 	require.Len(t, firstWrites, 2, "首个连接应处理首轮与失败的第二轮请求")
 	require.True(t, gjson.Get(requestToJSONString(firstWrites[1]), "previous_response_id").Exists(), "失败轮次首发请求应包含 previous_response_id")
+	require.Equal(t, []map[string]any{firstWrites[1]}, confirmationConn.writes, "confirmation must preserve the original request, including its anchor")
 
 	secondConn.mu.Lock()
 	secondWrites := append([]map[string]any(nil), secondConn.writes...)
@@ -3949,8 +3965,11 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_StoreDisabledStr
 			[]byte(`{"type":"response.completed","response":{"id":"resp_turn_prev_strict_recover_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
 		},
 	}
+	confirmationConn := &openAIWSCaptureConn{events: [][]byte{
+		[]byte(`{"type":"error","error":{"type":"invalid_request_error","code":"previous_response_not_found","message":"missing on fresh connection"}}`),
+	}}
 	dialer := &openAIWSQueueDialer{
-		conns: []openAIWSClientConn{firstConn, secondConn},
+		conns: []openAIWSClientConn{firstConn, confirmationConn, secondConn},
 	}
 	pool := newOpenAIWSConnPool(cfg)
 	pool.setClientDialerForTest(dialer)
@@ -4054,13 +4073,14 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_StoreDisabledStr
 		t.Fatal("等待 ingress websocket 严格亲和 Layer2 恢复结束超时")
 	}
 
-	require.Equal(t, 2, dialer.DialCount(), "严格亲和链路命中 previous_response_not_found 应触发 Layer2 恢复重试")
+	require.Equal(t, 3, dialer.DialCount(), "strict affinity recovery requires fresh-socket confirmation of an unowned error")
 
 	firstConn.mu.Lock()
 	firstWrites := append([]map[string]any(nil), firstConn.writes...)
 	firstConn.mu.Unlock()
 	require.Len(t, firstWrites, 2, "首连接应收到首轮请求和失败的续链请求")
 	require.True(t, gjson.Get(requestToJSONString(firstWrites[1]), "previous_response_id").Exists())
+	require.Equal(t, []map[string]any{firstWrites[1]}, confirmationConn.writes, "confirmation must preserve the anchor and prompt cache key")
 
 	secondConn.mu.Lock()
 	secondWrites := append([]map[string]any(nil), secondConn.writes...)
@@ -4105,8 +4125,11 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PreviousResponse
 			[]byte(`{"type":"response.completed","response":{"id":"resp_turn_prev_once_2","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`),
 		},
 	}
+	confirmationConn := &openAIWSCaptureConn{events: [][]byte{
+		[]byte(`{"type":"error","error":{"type":"invalid_request_error","code":"previous_response_not_found","message":"missing on fresh connection"}}`),
+	}}
 	dialer := &openAIWSQueueDialer{
-		conns: []openAIWSClientConn{firstConn, secondConn},
+		conns: []openAIWSClientConn{firstConn, confirmationConn, secondConn},
 	}
 	pool := newOpenAIWSConnPool(cfg)
 	pool.setClientDialerForTest(dialer)
@@ -4211,13 +4234,14 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_PreviousResponse
 		t.Fatal("等待 ingress websocket 结束超时")
 	}
 
-	require.Equal(t, 2, dialer.DialCount(), "previous_response_not_found 恢复应只重试一次")
+	require.Equal(t, 3, dialer.DialCount(), "confirm the unowned error, then recover the anchor once")
 
 	firstConn.mu.Lock()
 	firstWrites := append([]map[string]any(nil), firstConn.writes...)
 	firstConn.mu.Unlock()
 	require.Len(t, firstWrites, 2)
 	require.True(t, gjson.Get(requestToJSONString(firstWrites[1]), "previous_response_id").Exists())
+	require.Equal(t, []map[string]any{firstWrites[1]}, confirmationConn.writes)
 
 	secondConn.mu.Lock()
 	secondWrites := append([]map[string]any(nil), secondConn.writes...)

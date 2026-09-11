@@ -71,7 +71,7 @@ func TestProxyOpenAIWSHTTPBridgeTurn_KeepsOutboundAndObservedServiceTiersSeparat
 	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
 
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "test-token", payload, len(payload),
+		context.Background(), nil, c, account, "test-token", payload, len(payload),
 		"gpt-5.5", "", "", "", "", 1,
 		func([]byte) error { return nil },
 	)
@@ -109,7 +109,7 @@ func TestProxyOpenAIWSHTTPBridgeTurn_NormalizesFastWithoutLosingObservedDefault(
 	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
 
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "test-token", payload, len(payload),
+		context.Background(), nil, c, account, "test-token", payload, len(payload),
 		"gpt-5.5", "", "", "", "", 1,
 		func([]byte) error { return nil },
 	)
@@ -174,7 +174,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnAPIKeyAdaptsClientTools(t *testing.T) {
 	var events [][]byte
 
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "test-token", payload, len(payload),
+		context.Background(), nil, c, account, "test-token", payload, len(payload),
 		"gpt-5", "", "", "", "", 2,
 		func(message []byte) error {
 			events = append(events, append([]byte(nil), message...))
@@ -244,7 +244,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnAPIKeyRestoresClientToolsInResponseDone(t *t
 	var events [][]byte
 
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "test-token", payload, len(payload),
+		context.Background(), nil, c, account, "test-token", payload, len(payload),
 		"gpt-5", "", "", "", "", 1,
 		func(message []byte) error {
 			events = append(events, append([]byte(nil), message...))
@@ -308,7 +308,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnGrokPromotesDiscoveryAndRestoresNamespaceSSE
 	var events [][]byte
 
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "access-token", payload, len(payload),
+		context.Background(), nil, c, account, "access-token", payload, len(payload),
 		"grok-4.5", "", "", "", "", 1,
 		func(message []byte) error {
 			events = append(events, append([]byte(nil), message...))
@@ -358,7 +358,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnGrokInheritsToolSearchAndPromotesFollowupDis
 
 	first := []byte(`{"type":"response.create","model":"grok-4.5","stream":true,"tools":[{"type":"tool_search"}],"input":"discover tools"}`)
 	_, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "access-token", first, len(first),
+		context.Background(), nil, c, account, "access-token", first, len(first),
 		"grok-4.5", "", "", "", "grok-ws-cache", 1, func([]byte) error { return nil },
 	)
 	require.NoError(t, err)
@@ -371,7 +371,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnGrokInheritsToolSearchAndPromotesFollowupDis
 	}`)
 	var events [][]byte
 	_, err = svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "access-token", second, len(second),
+		context.Background(), nil, c, account, "access-token", second, len(second),
 		"grok-4.5", "", "", "", "grok-ws-cache", 2,
 		func(message []byte) error {
 			events = append(events, append([]byte(nil), message...))
@@ -791,7 +791,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnTransportErrorFailoverSafety(t *testing.T) {
 			var writes [][]byte
 
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-				context.Background(), c, account, "sk-test", payload, len(payload),
+				context.Background(), nil, c, account, "sk-test", payload, len(payload),
 				"gpt-5", "", "", "", "", tt.turn,
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
@@ -849,7 +849,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety(t *testing.T) {
 			var writes [][]byte
 
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-				context.Background(), c, account, "sk-test", payload, len(payload),
+				context.Background(), nil, c, account, "sk-test", payload, len(payload),
 				"gpt-5", "", "", "", "", tt.turn,
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
@@ -899,7 +899,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnRetriesRejectedFieldBeforeClientOutput(t *te
 	var writes [][]byte
 
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "sk-test", payload, len(payload),
+		context.Background(), nil, c, account, "sk-test", payload, len(payload),
 		"gpt-5", "", "", "", "", 1,
 		func(message []byte) error {
 			writes = append(writes, append([]byte(nil), message...))
@@ -938,7 +938,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety(t *testing.T) {
 			var writes [][]byte
 
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-				context.Background(), c, account, "sk-test", payload, len(payload),
+				context.Background(), nil, c, account, "sk-test", payload, len(payload),
 				"gpt-5", "", "", "", "", turn,
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
@@ -996,7 +996,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnRewritesCapacityShedCodeForClient(t *testing
 			var writes [][]byte
 
 			_, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-				context.Background(), c, account, "sk-test", payload, len(payload),
+				context.Background(), nil, c, account, "sk-test", payload, len(payload),
 				"gpt-5", "", "", "", "", tt.turn,
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
@@ -1037,7 +1037,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnBareErrorUsesAuthoritativeFailed(t *testing.
 	payload := []byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`)
 	var writes [][]byte
 
-	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, account, "sk-test", payload, len(payload), "gpt-5", "", "", "", "", 2, func(message []byte) error {
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), nil, c, account, "sk-test", payload, len(payload), "gpt-5", "", "", "", "", 2, func(message []byte) error {
 		writes = append(writes, append([]byte(nil), message...))
 		return nil
 	})
@@ -1065,7 +1065,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnBareErrorEOFSynthesizesFailed(t *testing.T) 
 	payload := []byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`)
 	var writes [][]byte
 
-	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, account, "sk-test", payload, len(payload), "gpt-5", "", "", "", "", 2, func(message []byte) error {
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), nil, c, account, "sk-test", payload, len(payload), "gpt-5", "", "", "", "", 2, func(message []byte) error {
 		writes = append(writes, append([]byte(nil), message...))
 		return nil
 	})
@@ -1098,7 +1098,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnBareErrorFollowedByCompletedUsesCompleted(t 
 	payload := []byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`)
 	var writes [][]byte
 
-	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, account, "sk-test", payload, len(payload), "gpt-5", "", "", "", "", 2, func(message []byte) error {
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), nil, c, account, "sk-test", payload, len(payload), "gpt-5", "", "", "", "", 2, func(message []byte) error {
 		writes = append(writes, append([]byte(nil), message...))
 		return nil
 	})
@@ -1137,7 +1137,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnStagesMetadataBeforeCapacityFailover(t *test
 	var writes [][]byte
 
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "sk-test", payload, len(payload),
+		context.Background(), nil, c, account, "sk-test", payload, len(payload),
 		"gpt-5", "", "", "", "", 1,
 		func(message []byte) error {
 			writes = append(writes, append([]byte(nil), message...))
@@ -1179,7 +1179,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnDoesNotReplayCapacityAfterSemanticOutput(t *
 	var writes [][]byte
 
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "sk-test", payload, len(payload),
+		context.Background(), nil, c, account, "sk-test", payload, len(payload),
 		"gpt-5", "", "", "", "", 1,
 		func(message []byte) error {
 			writes = append(writes, append([]byte(nil), message...))
@@ -1231,7 +1231,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnRequiresTerminalEvent(t *testing.T) {
 			var writes [][]byte
 
 			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-				context.Background(), c, account, "sk-test", payload, len(payload),
+				context.Background(), nil, c, account, "sk-test", payload, len(payload),
 				"gpt-5", "", "", "", "", 1,
 				func(message []byte) error {
 					writes = append(writes, append([]byte(nil), message...))
@@ -1320,7 +1320,7 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 			return conn.Write(writeCtx, coderws.MessageText, message)
 		}
 		result, bridgeErr := svc.proxyOpenAIWSHTTPBridgeTurn(
-			r.Context(),
+			r.Context(), nil,
 			ginCtx,
 			account,
 			"sk-test",
@@ -1414,7 +1414,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnForGrokDefaultsEmptyModelTo45(t *testing.T) 
 	var events [][]byte
 
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "access-token", payload, len(payload),
+		context.Background(), nil, c, account, "access-token", payload, len(payload),
 		"", "", "", "", "", 1,
 		func(message []byte) error {
 			events = append(events, append([]byte(nil), message...))
@@ -1474,7 +1474,7 @@ func TestProxyOpenAIWSHTTPBridgeTurnPromotesCodexAdditionalToolsForMixedCache(t 
 	var events [][]byte
 
 	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "access-token", payload, len(payload),
+		context.Background(), nil, c, account, "access-token", payload, len(payload),
 		"grok", "", "", "", "isolated-ws-cache-id", 1,
 		func(message []byte) error {
 			events = append(events, append([]byte(nil), message...))

@@ -73,7 +73,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 ) (*OpenAIForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
 	setCodexToolNameReverse(c, nil)
-	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
+	if err := s.prepareCodexAttemptIdentity(ctx, c, account, body); err != nil {
 		return nil, err
 	}
 
@@ -305,7 +305,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		} else if promptCacheKey != "" {
 			reqBody["prompt_cache_key"] = promptCacheKey
 		}
-		applyCodexAccountIdentityClientMetadataMap(reqBody, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+		s.codexAttemptIdentity(c, account).applyBody(reqBody)
 		responsesBody, err = json.Marshal(reqBody)
 		if err != nil {
 			return nil, fmt.Errorf("remarshal after codex transform: %w", err)
@@ -351,6 +351,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	}
 
 	// 6. Build upstream request
+	stageCodexAttemptIdentity(c, s.codexAttemptIdentity(c, account).withBridgeSession(promptCacheKey))
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	cancelUpstream := func() {}
 	if clientStream {
@@ -365,11 +366,10 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
-	if promptCacheKey != "" {
-		apiKeyID := getAPIKeyIDFromContext(c)
+	if !account.UsesOpenAICodexProtocol() && promptCacheKey != "" {
 		sessionKey := promptCacheKey
 		if !compatPromptCacheTenantIsolated {
-			sessionKey = isolateOpenAIUpstreamSessionID(apiKeyID, codexAccountIdentitySource(c, account), promptCacheKey)
+			sessionKey = isolateOpenAISessionID(getAPIKeyIDFromContext(c), promptCacheKey)
 		}
 		upstreamReq.Header.Set("session_id", generateSessionUUID(sessionKey))
 	}

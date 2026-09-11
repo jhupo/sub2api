@@ -724,51 +724,67 @@ func TestPassthroughLifecycle_SecondTurnInactivityIsNotFailoverSafe(t *testing.T
 	}
 }
 
-func TestPassthroughLifecycle_SecondTurnCapacityShedIsForwardedWithoutReplayingFirstTurn(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	controlCtx, cancelControl := context.WithCancelCause(context.Background())
-	defer cancelControl(context.Canceled)
-	upstream := newStagedPassthroughConn()
-	upstream.Send(`{"type":"response.completed","response":{"id":"resp_first","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
-	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream), passthroughLifecycleAccount())
-	defer server.Close()
-	clientConn := dialPassthroughLifecycleClient(t, server)
-	defer func() { _ = clientConn.CloseNow() }()
+func TestPassthroughLifecycle_SecondTurnErrorOwnershipNeverReplaysFirstTurn(t *testing.T) {
+	for _, correlated := range []bool{true, false} {
+		name := "uncorrelated_waits_for_owned_terminal"
+		if correlated {
+			name = "correlated_capacity_shed_forwarded"
+		}
+		t.Run(name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			controlCtx, cancelControl := context.WithCancelCause(context.Background())
+			defer cancelControl(context.Canceled)
+			upstream := newStagedPassthroughConn()
+			upstream.Send(`{"type":"response.completed","response":{"id":"resp_first","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
+			server, serverErr := startPassthroughLifecycleServer(t, controlCtx, newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream), passthroughLifecycleAccount())
+			defer server.Close()
+			clientConn := dialPassthroughLifecycleClient(t, server)
+			defer func() { _ = clientConn.CloseNow() }()
 
-	require.Equal(t, "response.create", gjson.GetBytes(requirePassthroughUpstreamWrite(t, upstream, 3*time.Second), "type").String())
-	completed, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-	require.NoError(t, err)
-	require.Equal(t, "response.completed", gjson.GetBytes(completed, "type").String())
+			require.Equal(t, "response.create", gjson.GetBytes(requirePassthroughUpstreamWrite(t, upstream, 3*time.Second), "type").String())
+			completed, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
+			require.NoError(t, err)
+			require.Equal(t, "response.completed", gjson.GetBytes(completed, "type").String())
 
-	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","previous_response_id":"resp_first"}`))
-	cancelWrite()
-	require.NoError(t, err)
-	require.Equal(t, "response.create", gjson.GetBytes(requirePassthroughUpstreamWrite(t, upstream, 3*time.Second), "type").String())
+			writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+			err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","previous_response_id":"resp_first"}`))
+			cancelWrite()
+			require.NoError(t, err)
+			require.Equal(t, "response.create", gjson.GetBytes(requirePassthroughUpstreamWrite(t, upstream, 3*time.Second), "type").String())
 
-	upstream.Send(`{"type":"response.created","response":{"id":"resp_second","model":"gpt-5.1"}}`)
-	upstream.Send(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`)
-	upstream.Send(`{"type":"response.failed","response":{"id":"resp_second","model":"gpt-5.1","status":"failed","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}}`)
+			upstream.Send(`{"type":"response.created","response":{"id":"resp_second","model":"gpt-5.1"}}`)
+			if correlated {
+				upstream.Send(`{"type":"error","response_id":"resp_second","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`)
+			} else {
+				upstream.Send(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`)
+			}
+			upstream.Send(`{"type":"response.failed","response":{"id":"resp_second","model":"gpt-5.1","status":"failed","usage":{"input_tokens":7,"output_tokens":2},"error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}}`)
 
-	created, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-	require.NoError(t, err)
-	require.Equal(t, "response.created", gjson.GetBytes(created, "type").String())
-	errorEvent, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-	require.NoError(t, err)
-	require.Equal(t, "error", gjson.GetBytes(errorEvent, "type").String())
-	require.Equal(t, openAICapacityShedRetryableClientCode, gjson.GetBytes(errorEvent, "error.code").String())
-	failed, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
-	require.NoError(t, err)
-	require.Equal(t, "response.failed", gjson.GetBytes(failed, "type").String())
-	require.Equal(t, openAICapacityShedRetryableClientCode, gjson.GetBytes(failed, "response.error.code").String())
+			created, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
+			require.NoError(t, err)
+			require.Equal(t, "response.created", gjson.GetBytes(created, "type").String())
+			if correlated {
+				errorEvent, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
+				require.NoError(t, err)
+				require.Equal(t, "error", gjson.GetBytes(errorEvent, "type").String())
+				require.Equal(t, openAICapacityShedRetryableClientCode, gjson.GetBytes(errorEvent, "error.code").String())
+			}
+			failed, err := readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
+			require.NoError(t, err)
+			require.Equal(t, "response.failed", gjson.GetBytes(failed, "type").String())
+			require.Equal(t, "resp_second", gjson.GetBytes(failed, "response.id").String())
+			require.Equal(t, openAICapacityShedRetryableClientCode, gjson.GetBytes(failed, "response.error.code").String())
+			require.Equal(t, int64(7), gjson.GetBytes(failed, "response.usage.input_tokens").Int())
 
-	_ = clientConn.CloseNow()
-	cancelControl(context.Canceled)
-	select {
-	case err := <-serverErr:
-		var failoverErr *UpstreamFailoverError
-		require.NotErrorAs(t, err, &failoverErr, "a later passthrough turn cannot replay the connection's initial request")
-	case <-time.After(5 * time.Second):
-		t.Fatal("passthrough connection did not stop after test cancellation")
+			_ = clientConn.CloseNow()
+			cancelControl(context.Canceled)
+			select {
+			case err := <-serverErr:
+				var failoverErr *UpstreamFailoverError
+				require.NotErrorAs(t, err, &failoverErr, "a later passthrough turn cannot replay the connection's initial request")
+			case <-time.After(5 * time.Second):
+				t.Fatal("passthrough connection did not stop after test cancellation")
+			}
+		})
 	}
 }

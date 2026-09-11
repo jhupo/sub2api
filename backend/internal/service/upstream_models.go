@@ -1043,10 +1043,11 @@ func (s *AccountTestService) buildOpenAIOAuthUpstreamModelsRequest(ctx context.C
 		)
 	}
 
+	identity := resolveCodexRequestClientIdentity("", credentialAccount.GetOpenAIUserAgent(), s.cfg != nil && s.cfg.Gateway.ForceCodexCLI)
 	modelsURL, err := buildCodexModelsManifestURL(
 		chatgptCodexModelsURL,
 		false,
-		CodexCanonicalClientVersion(),
+		identity.version,
 	)
 	if err != nil {
 		return nil, newUpstreamModelSyncConfigError("Invalid OpenAI Codex model list URL", err)
@@ -1080,14 +1081,10 @@ func (s *AccountTestService) buildOpenAIOAuthUpstreamModelsRequest(ctx context.C
 		req.Header.Set("Authorization", "Bearer "+accessToken)
 	}
 
-	identity := resolveCodexOutboundIdentity(credentialAccount.GetOpenAIUserAgent())
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Originator", identity.originator)
-	req.Header.Set("User-Agent", identity.userAgent)
-	req.Header.Set("Version", identity.version)
+	identity.applyHeaders(req.Header)
 	setOpenAIChatGPTAccountHeaders(req.Header, credentialAccount)
 	credentialAccount.ApplyHeaderOverrides(req.Header)
-	enforceCodexIdentityHeadersWithUA(req.Header, credentialAccount.GetOpenAIUserAgent())
 	return req, nil
 }
 

@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
-	"time"
 )
 
 // RecoverBalancePreauthorization resumes one durable nonterminal record. It is
@@ -34,29 +34,19 @@ func (s *BalancePreauthorizationService) RecoverBalancePreauthorization(
 		}
 		return s.recoverBalancePreauthorizationRefund(ctx, record)
 	case BalanceSettlementAuthorized:
-		if IsGrokVideoHoldRequestID(record.RequestID) && strings.TrimSpace(record.AsyncTaskID) != "" && !record.ExpiresAt.IsZero() && !record.ExpiresAt.After(time.Now()) {
-			if err := s.repo.BeginBalancePreauthorizationRefund(ctx, record.RequestID, record.APIKeyID); err != nil {
-				return balancePreauthorizationUnavailable(err)
-			}
-			return s.recoverBalancePreauthorizationRefund(ctx, record)
-		}
-		// Redis authorization succeeded, but the process may have crashed after
-		// returning a successful provider response and before its in-memory usage
-		// task reached repo.Apply. The exact spend is unknowable here; refunding
-		// would turn that crash window into a free call. Conservatively settle the
-		// durable hold. Prepared remains the only state eligible for an abandoned
-		// authorization refund.
-		record.Amount = QuantizeUsageBillingAmount(record.HoldAmount)
-		record.RequestFingerprint = balancePreauthorizationRecoveryHoldFingerprint(record)
-		if err := s.repo.BeginBalancePreauthorizationFinalization(
-			ctx, record.RequestID, record.APIKeyID, record.Amount, record.RequestFingerprint,
-		); err != nil {
+		// Authorization proves only that funds were reserved, not that the
+		// provider ran. Only repo.Apply's finalization state contains actual
+		// consumption. Never manufacture usage from an abandoned estimate.
+		if err := s.repo.BeginBalancePreauthorizationRefund(ctx, record.RequestID, record.APIKeyID); err != nil {
 			return balancePreauthorizationUnavailable(err)
 		}
-		if record.Amount == 0 {
-			return s.recoverBalancePreauthorizationRefund(ctx, record)
+		if err := s.recoverBalancePreauthorizationRefund(ctx, record); err != nil {
+			return err
 		}
-		return s.recoverBalancePreauthorizationSettlement(ctx, record)
+		slog.WarnContext(ctx, "billing.authorized_hold_released_without_usage",
+			"request_id", record.RequestID, "api_key_id", record.APIKeyID,
+			"funding_source", FundingSourceWallet, "held_amount", record.HoldAmount)
+		return nil
 	case BalanceSettlementFinalizationPending:
 		if QuantizeUsageBillingAmount(record.Amount) == 0 {
 			return s.recoverBalancePreauthorizationRefund(ctx, record)
@@ -81,15 +71,14 @@ func (s *BalancePreauthorizationService) RecoverSubscriptionAllowance(
 	}
 	switch record.Status {
 	case BillingReservationAuthorized:
-		if IsGrokVideoHoldRequestID(record.RequestID) && strings.TrimSpace(record.AsyncTaskID) != "" {
-			cmd.Amount = 0
-			_, err := s.subscriptionRepo.ReleaseSubscriptionAllowance(ctx, cmd)
+		cmd.Amount = 0
+		if _, err := s.subscriptionRepo.ReleaseSubscriptionAllowance(ctx, cmd); err != nil {
 			return err
 		}
-		cmd.Amount = record.AuthorizedAmount
-		fingerprint := subscriptionAllowanceRecoveryFingerprint(record)
-		_, err := s.subscriptionRepo.CaptureSubscriptionAllowance(ctx, cmd, fingerprint)
-		return err
+		slog.WarnContext(ctx, "billing.authorized_hold_released_without_usage",
+			"request_id", record.RequestID, "api_key_id", record.APIKeyID,
+			"funding_source", FundingSourceSubscription, "held_amount", record.AuthorizedAmount)
+		return nil
 	case BillingReservationFinalizing:
 		if record.CapturedAmount < 0 || strings.TrimSpace(record.RequestFingerprint) == "" {
 			return balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
@@ -100,29 +89,6 @@ func (s *BalancePreauthorizationService) RecoverSubscriptionAllowance(
 	default:
 		return balancePreauthorizationUnavailable(fmt.Errorf("unsupported recoverable subscription reservation status %s", record.Status))
 	}
-}
-
-func subscriptionAllowanceRecoveryFingerprint(record SubscriptionAllowanceReservation) string {
-	cmd := &UsageBillingCommand{
-		UserID: record.UserID, APIKeyID: record.APIKeyID,
-		SubscriptionID: &record.SubscriptionID, BillingType: BillingTypeSubscription,
-		SubscriptionCost:   record.AuthorizedAmount,
-		RequestPayloadHash: "authorized-subscription-hold-recovery:v1:" + strings.TrimSpace(record.RequestID) + ":" + strings.TrimSpace(record.AuthorizationFingerprint),
-	}
-	cmd.Normalize()
-	return cmd.RequestFingerprint
-}
-
-func balancePreauthorizationRecoveryHoldFingerprint(record BalancePreauthorizationRecord) string {
-	cmd := &UsageBillingCommand{
-		UserID:             record.UserID,
-		APIKeyID:           record.APIKeyID,
-		BillingType:        BillingTypeBalance,
-		BalanceCost:        QuantizeUsageBillingAmount(record.HoldAmount),
-		RequestPayloadHash: "authorized-hold-recovery:v1:" + strings.TrimSpace(record.RequestID) + ":" + strings.TrimSpace(record.AuthorizationFingerprint),
-	}
-	cmd.Normalize()
-	return cmd.RequestFingerprint
 }
 
 func (s *BalancePreauthorizationService) recoverBalancePreauthorizationRefund(

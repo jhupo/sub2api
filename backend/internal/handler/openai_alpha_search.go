@@ -176,7 +176,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 
 		account := selection.Account
 		setOpsSelectedAccount(c, account.ID, account.Platform)
-		accountRelease, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, false, &streamStarted, reqLog)
+		account, accountRelease, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, false, &streamStarted, reqLog)
 		if slotResult == openAISlotAcquireProfitVetoed {
 			// 利润终检否决：排除该账号重新选号；否决次数达上限则按无可用账号终止。
 			if !recordOpenAIProfitVeto(failedAccountIDs, account.ID, &profitVetoCount) {
@@ -292,6 +292,7 @@ func (h *OpenAIGatewayHandler) recordAlphaSearchUsage(
 	inboundEndpoint := GetInboundEndpoint(c)
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
+	pricingAt := service.OpenAIPricingAtFromContext(c.Request.Context())
 
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
@@ -309,7 +310,7 @@ func (h *OpenAIGatewayHandler) recordAlphaSearchUsage(
 			QuotaPlatform:      quotaPlatform,
 			SessionID:          sessionID,
 			ChannelUsageFields: channelMapping.ToUsageFields(requestedModel, result.UpstreamModel),
-			PricingAt:          service.OpenAIPricingAtFromContext(c.Request.Context()),
+			PricingAt:          pricingAt,
 		}); err != nil {
 			logger.L().With(
 				zap.String("component", "handler.openai_gateway.alpha_search"),

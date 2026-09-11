@@ -33,6 +33,15 @@ type BalancePreauthorizationTokenEstimate struct {
 // conservative upper bound. The minimum protects small requests without any
 // database lookup; it is a reserve only and is never written as actual usage.
 func EstimateBalancePreauthorizationTokens(body []byte) BalancePreauthorizationTokenEstimate {
+	return estimateBalancePreauthorizationTokens(body, gjson.GetBytes(body, "stream").Bool())
+}
+
+// Responses WebSocket streams even when its payload omits the HTTP stream flag.
+func EstimateStreamingPreauthorizationTokens(body []byte) BalancePreauthorizationTokenEstimate {
+	return estimateBalancePreauthorizationTokens(body, true)
+}
+
+func estimateBalancePreauthorizationTokens(body []byte, streaming bool) BalancePreauthorizationTokenEstimate {
 	inputTokens := estimateBalancePreauthorizationInputTokens(body)
 	if inputTokens < DefaultBalancePreauthorizationInputTokens {
 		inputTokens = DefaultBalancePreauthorizationInputTokens
@@ -41,7 +50,7 @@ func EstimateBalancePreauthorizationTokens(body []byte) BalancePreauthorizationT
 	outputTokens := requestedBalancePreauthorizationOutputTokens(body)
 	if outputTokens <= 0 {
 		outputTokens = DefaultBalancePreauthorizationNonStreamingOutputWindow
-		if gjson.GetBytes(body, "stream").Bool() {
+		if streaming {
 			outputTokens = DefaultBalancePreauthorizationOutputWindow
 		}
 	}

@@ -527,8 +527,8 @@ func NewOpenAIGatewayService(
 	settingService *SettingService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
 ) *OpenAIGatewayService {
-	// enforceCodexIdentityHeaders 是 HTTP / 透传 / WS / 探针 等出站路径共用的纯函数收口点，
-	// 拿不到配置，故在此发布进程级开关快照。配置取反义，零值即「强制统一出口开启」。
+	// 发布身份解析策略；每个逻辑请求捕获一次，HTTP / WS 投影不重新读取。
+	// 配置取反义，零值即「强制统一出口开启」。
 	if cfg != nil {
 		SetCodexIdentityEnforcementEnabled(!cfg.Gateway.DisableCodexIdentityEnforcement)
 		SetCodexQuotaOverdraftEnabled(cfg.Gateway.CodexQuotaOverdraftEnabled)
@@ -646,6 +646,17 @@ func (s *OpenAIGatewayService) checkChannelPricingRestriction(ctx context.Contex
 		return false
 	}
 	return s.channelService.IsModelRestricted(ctx, *groupID, billingModel)
+}
+
+// ValidateOpenAIWSTurnModel applies the scheduler's channel policy to a pinned
+// connection as well. Account support alone does not authorize a channel model.
+func (s *OpenAIGatewayService) ValidateOpenAIWSTurnModel(ctx context.Context, groupID *int64, account *Account, requestedModel string, mapping ChannelMappingResult) error {
+	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) ||
+		(groupID != nil && s.needsUpstreamChannelRestrictionCheck(ctx, groupID) &&
+			s.isUpstreamModelRestrictedByChannel(ctx, *groupID, account, mapping.MappedModel, false)) {
+		return fmt.Errorf("%w: model is restricted by channel pricing", ErrNoAvailableAccounts)
+	}
+	return nil
 }
 
 func (s *OpenAIGatewayService) isUpstreamModelRestrictedByChannel(ctx context.Context, groupID int64, account *Account, requestedModel string, requireCompact bool) bool {

@@ -768,17 +768,13 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			firstClientMessage = aliasedBody
 		}
 	}
-	accountScopedFirst, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(firstClientMessage, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+	identity := s.codexAttemptIdentity(c, account)
+	accountScopedFirst, accountScoped, scopeErr := identity.applyBodyRaw(firstClientMessage)
 	if scopeErr != nil {
 		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket identity metadata", scopeErr)
 	}
 	if accountScoped {
 		firstClientMessage = accountScopedFirst
-	}
-	if fingerprinted, fingerprintChanged, fingerprintErr := applyCodexFingerprintClientMetadataRaw(firstClientMessage, stagedCodexFingerprintIDs(c, account)); fingerprintErr != nil {
-		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket fingerprint metadata", fingerprintErr)
-	} else if fingerprintChanged {
-		firstClientMessage = fingerprinted
 	}
 	// Client→upstream filtering and relay callbacks run in separate goroutines.
 	// Keep the session model synchronized when a client sends session.update,
@@ -948,7 +944,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	}
 	relayUpstreamFrameConn := &openAIWSPassthroughActivityFrameConn{
 		limitAttempts:     codexAdaptiveAccountEligible(account),
-		inner:             upstreamFrameConn,
+		inner:             &openAIWSResponseFrameConn{inner: upstreamFrameConn},
 		activeReadTimeout: s.openAIWSPassthroughIdleTimeout(),
 		deadlineChanged:   make(chan struct{}, 1),
 	}
@@ -984,6 +980,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			}
 			eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
 			isResponseCreate := eventType == "response.create"
+			if hooks != nil && hooks.ValidateClientFrame != nil {
+				if err := hooks.ValidateClientFrame(payload); err != nil {
+					return nil, nil, err
+				}
+			}
 			responseCreateAt := time.Time{}
 			acceptedTurn := false
 			if isResponseCreate {
@@ -1017,17 +1018,15 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				}
 			}
 			if isResponseCreate || eventType == "session.update" {
-				accountScopedPayload, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(payload, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+				if isResponseCreate {
+					identity = identity.forTurn(int(completedTurns.Load()) + 1)
+				}
+				accountScopedPayload, accountScoped, scopeErr := identity.applyBodyRaw(payload)
 				if scopeErr != nil {
 					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket identity metadata", scopeErr)
 				}
 				if accountScoped {
 					payload = accountScopedPayload
-				}
-				if fingerprinted, fingerprintChanged, fingerprintErr := applyCodexFingerprintClientMetadataRaw(payload, stagedCodexFingerprintIDs(c, account)); fingerprintErr != nil {
-					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket fingerprint metadata", fingerprintErr)
-				} else if fingerprintChanged {
-					payload = fingerprinted
 				}
 			}
 			if isResponseCreate {
@@ -1118,6 +1117,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			//     覆盖（Store(nil)），因为 OpenAI 上游对该帧实际不传
 			//     service_tier 时按 default 处理，billing 应如实反映。
 			if policyErr == nil && blocked == nil && isResponseCreate {
+				if hooks != nil && hooks.AuthorizeTurn != nil {
+					if err := hooks.AuthorizeTurn(int(completedTurns.Load())+1, out); err != nil {
+						return nil, nil, err
+					}
+				}
 				usageMeta.updateFromResponseCreate(out, model, requestModelForThisFrame)
 				_, actualModel := usageMeta.turnModels(requestModelForThisFrame)
 				SetOpsUpstreamModel(c, actualModel)
@@ -1142,6 +1146,30 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		},
 	}
 	upstreamFirstMessageSent := false
+	// The first frame is sent directly, before the client-side relay filter
+	// starts. It must participate in the same admission/funding lifecycle.
+	if hooks != nil {
+		if hooks.ValidateClientFrame != nil {
+			if err := hooks.ValidateClientFrame(firstClientMessage); err != nil {
+				return err
+			}
+		}
+		if hooks.BeforeRequest != nil {
+			if err := hooks.BeforeRequest(1, firstClientMessage, initialRequestModel); err != nil {
+				return err
+			}
+		}
+		if hooks.BeforeTurn != nil {
+			if err := hooks.BeforeTurn(1); err != nil {
+				return err
+			}
+		}
+		if hooks.AuthorizeTurn != nil {
+			if err := hooks.AuthorizeTurn(1, firstClientMessage); err != nil {
+				return err
+			}
+		}
+	}
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
 	firstWriteErr := relayUpstreamFrameConn.WriteFrame(firstWriteCtx, coderws.MessageText, firstClientMessage)
 	cancelFirstWrite()
@@ -1313,6 +1341,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				if msgType != coderws.MessageText {
 					return nil
 				}
+				if hooks != nil && hooks.BeforeOutput != nil {
+					if err := hooks.BeforeOutput(payload); err != nil {
+						return err
+					}
+				}
 				eventType, _, _ := parseOpenAIWSEventEnvelope(payload)
 				if eventType == "response.created" {
 					failureAccountSideEffectsApplied = false
@@ -1374,6 +1407,30 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			},
 		},
 	})
+	if pending := relayResult.IncompleteTurn; pending != nil && hooks != nil && hooks.AfterTurn != nil {
+		requestModel, upstreamModel := usageMeta.turnModels(pending.RequestModel)
+		partial := &OpenAIForwardResult{
+			RequestID: pending.RequestID, Model: requestModel, UpstreamModel: upstreamModel,
+			Usage: OpenAIUsage{InputTokens: pending.Usage.InputTokens, OutputTokens: pending.Usage.OutputTokens,
+				CacheReadInputTokens: pending.Usage.CacheReadInputTokens, CacheCreationInputTokens: pending.Usage.CacheCreationInputTokens,
+				ImageOutputTokens: pending.Usage.ImageOutputTokens},
+			Stream: true, OpenAIWSMode: true, ClientDisconnect: context.Cause(ctx) != nil,
+			ServiceTier: usageMeta.serviceTier.Load(), ReasoningEffort: usageMeta.reasoningEffort.Load(),
+			RequestedReasoningEffort: usageMeta.requestedReasoningEffort.Load(),
+			UpstreamResponseModel:    pending.ResponseModel, UpstreamResponseModelConflict: pending.ResponseModelConflict,
+			Duration: pending.Duration, FirstTokenMs: pending.FirstTokenMs, ResponseHeaders: cloneHeader(handshakeHeaders),
+		}
+		partialErr := context.Cause(ctx)
+		if relayExit != nil {
+			partialErr = relayExit.Err
+		}
+		if partialErr == nil {
+			partialErr = context.Canceled
+		}
+		if kept, _ := preserveOpenAIStreamingResultOnError(partial, partialErr); kept != nil {
+			hooks.AfterTurn(int(completedTurns.Load())+1, kept, partialErr)
+		}
+	}
 	if cause := context.Cause(ctx); cause != nil {
 		if isOpenAIWSSessionPreempted(ctx) {
 			return errOpenAIWSSessionPreempted
@@ -1429,7 +1486,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			turnCount,
 		)
 		// 正常路径按 terminal 事件逐 turn 已回调；仅在零 turn 场景兜底回调一次。
-		if turnCount == 0 && hooks != nil && hooks.AfterTurn != nil {
+		if turnCount == 0 && relayResult.IncompleteTurn == nil && hooks != nil && hooks.AfterTurn != nil {
 			if hooks.TurnStarted != nil {
 				hooks.TurnStarted(1, time.Now().Add(-result.Duration))
 			}
