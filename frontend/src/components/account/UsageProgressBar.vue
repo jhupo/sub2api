@@ -29,6 +29,7 @@
     <div class="flex flex-wrap items-center gap-1">
       <!-- Label badge (fixed width for alignment) -->
       <span
+        v-if="!hideLabel"
         :class="['min-w-[32px] shrink-0 rounded px-1 text-center text-[10px] font-medium', labelClass]"
       >
         {{ label }}
@@ -68,6 +69,7 @@ import { formatCompactNumber } from '@/utils/format'
 
 const props = defineProps<{
   label: string
+  hideLabel?: boolean
   utilization: number // Percentage (0-100+)
   resetsAt?: string | null
   color: 'indigo' | 'emerald' | 'purple' | 'amber'

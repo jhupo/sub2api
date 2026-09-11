@@ -151,7 +151,7 @@ func NewBalancePreauthorizationService(
 }
 
 // PreauthorizationEstimateKind selects how estimateHold prices a request.
-// The token upper-bound path is the historical default for chat/text traffic;
+// The token upper-bound path is the default for chat/text traffic;
 // the per-request path prices count/size/duration-metered endpoints (images,
 // video, standalone search) directly through the unified cost engine.
 type PreauthorizationEstimateKind uint8
@@ -187,10 +187,10 @@ type PerRequestPreauthorizationEstimate struct {
 
 // BalancePreauthorizationRequest carries the exact pricing context frozen for
 // the request. For the token upper-bound estimate kind, Tokens in CostInput are
-// ignored: the service prices the same conservative byte upper bound as input,
-// cache-read, and cache-creation and holds the largest result. For the
-// per-request estimate kind, PerRequestEstimate supplies the billing units and
-// the output window is unused.
+// ignored and the service prices the request-local input upper bound plus its
+// bounded output window. Cache disposition is reconciled during final usage
+// settlement. For the per-request estimate kind, PerRequestEstimate supplies
+// the billing units and the output window is unused.
 type BalancePreauthorizationRequest struct {
 	RequestID                  string
 	APIKeyID                   int64
@@ -541,7 +541,11 @@ func (s *BalancePreauthorizationService) estimateHold(
 // estimateTokenUpperBoundHold prices chat/text traffic from the current
 // request's local token estimate. The reserve uses the normal input price and
 // an explicit output limit (or bounded window), then finalization reconciles it
-// to provider-reported usage. No historical usage query belongs on this path.
+// to provider-reported usage. Cache disposition is intentionally excluded from
+// the admission hold: cache creation is not knowable before the upstream call
+// and charging its highest possible price here causes large repeated prompts to
+// reserve several times their normal cost. The final usage record remains the
+// source of truth for cache-read/cache-write pricing.
 func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 	ctx context.Context,
 	request BalancePreauthorizationRequest,
@@ -558,12 +562,6 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 	if inputTokens <= 0 {
 		inputTokens = request.BillableInputBytes
 	}
-	scenarios := []UsageTokens{
-		{InputTokens: inputTokens, OutputTokens: outputWindow},
-		{CacheReadTokens: inputTokens, OutputTokens: outputWindow},
-		{CacheCreationTokens: inputTokens, CacheCreation5mTokens: inputTokens, OutputTokens: outputWindow},
-		{CacheCreationTokens: inputTokens, CacheCreation1hTokens: inputTokens, OutputTokens: outputWindow},
-	}
 	imageInput, imageOutput := request.EstimatedImageInputTokens, request.EstimatedImageOutputTokens
 	if tokens := request.PerRequestEstimate.Tokens; tokens.ImageOutputTokens > 0 {
 		inputTokens, outputWindow = tokens.InputTokens, tokens.OutputTokens
@@ -576,47 +574,30 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 		if outputWindow < 0 || outputWindow > math.MaxInt-imageOutput {
 			return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
 		}
-		textInput := max(inputTokens-imageInput, 0)
-		scenarios = []UsageTokens{
-			{InputTokens: inputTokens},
-			{InputTokens: imageInput, CacheReadTokens: textInput},
-			{InputTokens: imageInput, CacheCreationTokens: textInput, CacheCreation5mTokens: textInput},
-			{InputTokens: imageInput, CacheCreationTokens: textInput, CacheCreation1hTokens: textInput},
-		}
-		for i := range scenarios {
-			scenarios[i].ImageInputTokens = imageInput
-			scenarios[i].OutputTokens = outputWindow + imageOutput
-			scenarios[i].ImageOutputTokens = imageOutput
-		}
 	}
-	if request.EstimatedAudioInputTokens > 0 {
-		scenarios[0].AudioInputTokens = min(request.EstimatedAudioInputTokens, scenarios[0].InputTokens)
-		scenarios[1].AudioCacheReadTokens = min(request.EstimatedAudioInputTokens, scenarios[1].CacheReadTokens)
+	tokens := UsageTokens{
+		InputTokens:       inputTokens,
+		OutputTokens:      outputWindow + imageOutput,
+		ImageInputTokens:  imageInput,
+		ImageOutputTokens: imageOutput,
+		AudioInputTokens:  min(request.EstimatedAudioInputTokens, max(inputTokens-imageInput, 0)),
 	}
-	maxCost := -1.0
-	maxTokens := scenarios[0]
-	for _, tokens := range scenarios {
-		input := base
-		input.Tokens = tokens
-		breakdown, priceErr := s.costCalculator.CalculateCostUnified(input)
-		if priceErr != nil {
-			return balancePreauthorizationEstimate{}, priceErr
-		}
-		if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
-			return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
-		}
-		if breakdown.ActualCost > maxCost {
-			maxCost = breakdown.ActualCost
-			maxTokens = tokens
-		}
+	input := base
+	input.Tokens = tokens
+	breakdown, err := s.costCalculator.CalculateCostUnified(input)
+	if err != nil {
+		return balancePreauthorizationEstimate{}, err
+	}
+	if breakdown == nil || invalidNonnegativeMoney(breakdown.ActualCost) {
+		return balancePreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
 	}
 
-	outputUnitPrice, err := s.estimateOutputUnitPrice(base, maxTokens, outputWindow, maxCost)
+	outputUnitPrice, err := s.estimateOutputUnitPrice(base, tokens, outputWindow, breakdown.ActualCost)
 	if err != nil {
 		return balancePreauthorizationEstimate{}, err
 	}
 	return balancePreauthorizationEstimate{
-		HoldAmount:      quantizeBillingHoldUpFromFloat(maxCost),
+		HoldAmount:      quantizeBillingHoldUpFromFloat(breakdown.ActualCost),
 		OutputWindow:    outputWindow,
 		OutputUnitPrice: outputUnitPrice,
 	}, nil
@@ -624,7 +605,7 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 
 // estimateOutputUnitPrice derives the effective per-output-token price from a
 // windowed-minus-baseline cost difference. Both prices use the same input
-// disposition selected for the maximum hold and differ only in output tokens,
+// and modality counts and differ only in text output tokens,
 // so cache pricing cannot leak into streaming top-up targets.
 // Returns zero (top-ups disabled) for non-positive results.
 func (s *BalancePreauthorizationService) estimateOutputUnitPrice(
@@ -649,17 +630,8 @@ func (s *BalancePreauthorizationService) estimateOutputUnitPrice(
 		return 0, ErrInvalidBillingPreauthorizationEstimate
 	}
 	delta := windowedCost - baselineCost.ActualCost
-	// delta<=0 表示在当前定价下，输出窗口未产生额外边际成本（免费输出，或已并入
-	// 打包/按次价，由 maxCost 场景 hold 覆盖）。此时返回 0 会使 OutputUnitPrice=0，
-	// NewBillingOutputHoldTracker 返回 nil（见 billing_output_hold_tracker.go），
-	// 从而禁用流式补扣——这是安全的：既然输出无边际计价，长流不会随长度增加欠扣，
-	// 结算时仍按实际用量退差。
-	// 前提1（守恒关键）：差分必须用与 baseline 同一输入处置（当前为 maxTokens）的
-	// windowed 成本，否则会把输入/缓存侧价差混入输出单价，
-	// 污染补扣目标额。切勿对真实计费的输出误禁补扣。
-	// 前提2：差分仅在 outputWindow 处单点采样边际价，故"长流不欠扣"依赖输出边际价在
-	// 整段流长上均匀；若将来出现阶梯/阈值型输出定价（窗口内免费、越过阈值才计费），
-	// 该分支需改为不在此禁用补扣，否则长流会欠扣。
+	// A zero marginal price disables text top-ups. This assumes a constant
+	// output rate beyond the initial window; tiered output needs repricing.
 	if delta <= 0 {
 		return 0, nil
 	}
@@ -701,10 +673,7 @@ func (s *BalancePreauthorizationService) estimatePerRequestHold(
 // resolvedPricingCostInput freezes the pricing resolution once so an unknown
 // paid model fails closed before any wallet mutation. A missing resolver is
 // left untouched: CalculateCostUnified falls back to its legacy pricing path.
-// resolvedPricingCostInput 冻结一次 Resolver.Resolve 调用，确保后续 4 个 scenario +
-// output baseline 共 5 次定价对齐到同一定价快照，避免请求内定价缓存刷新导致跨
-// scenario 取 max 不一致。明确禁止未来 optimizer 按 scenario 重新 Resolve，以防
-// 重新引入每 scenario 的 I/O 往返与快照漂移。
+// The initial hold and output-free baseline share one pricing snapshot.
 func (s *BalancePreauthorizationService) resolvedPricingCostInput(
 	ctx context.Context,
 	base CostInput,

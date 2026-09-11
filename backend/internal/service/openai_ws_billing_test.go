@@ -64,9 +64,21 @@ func TestOpenAIWSRepriceRetainsHoldOwnershipAndSettlementID(t *testing.T) {
 	guard, err := f.service.Preauthorize(context.Background(), request)
 	require.NoError(t, err)
 	initial := guard.HoldAmount()
+	for i := 0; i < 3; i++ {
+		require.NoError(t, f.service.RepriceBeforeSend(context.Background(), guard, request))
+		require.Equal(t, initial, guard.HoldAmount())
+	}
+	require.Zero(t, f.wallet.topUpCalls, "retrying an unchanged turn must reuse its hold")
 	request.InitialOutputWindowTokens = 1024
 	require.NoError(t, f.service.RepriceBeforeSend(context.Background(), guard, request))
 	require.Greater(t, guard.HoldAmount(), initial)
+	repriced := guard.HoldAmount()
+	require.NoError(t, f.service.RepriceBeforeSend(context.Background(), guard, request))
+	require.Equal(t, repriced, guard.HoldAmount())
+	require.Equal(t, 1, f.wallet.topUpCalls, "a larger retry reserves its difference only once")
+	require.NoError(t, guard.ObserveStreamingOutput(context.Background(), 100))
+	require.Equal(t, 2, f.wallet.topUpCalls)
+	require.InDelta(t, repriced+1024*0.0001, guard.HoldAmount(), 2e-8)
 	require.Equal(t, request.RequestID, guard.RequestID())
 	require.True(t, guard.IsCurrentOwner())
 	worker, ok := guard.TransferToWorker()

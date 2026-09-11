@@ -1332,7 +1332,7 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).toContain('gemini-3-pro')
     expect(wrapper.text()).toContain('gemini-2.5-flash')
     expect(wrapper.text()).toContain('gemini-3-flash')
-    expect(wrapper.findAllComponents(UsageProgressBar)).toHaveLength(3)
+    expect(wrapper.findAllComponents(UsageProgressBar)).toHaveLength(2)
     expect(wrapper.text()).not.toContain('admin.accounts.gemini.localQuota')
     expect(wrapper.text()).not.toContain('admin.accounts.gemini.upstreamQuota')
     wrapper.unmount()

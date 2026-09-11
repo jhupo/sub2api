@@ -386,7 +386,12 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
-	if preauthorized {
+	// Wallet settlement records already-incurred usage, including any amount
+	// above the estimate. Its finalizer debits that difference atomically;
+	// requiring another admission hold here can strand the actual charge when
+	// the remaining wallet balance is insufficient. Subscription allowances
+	// require authorization before their reservation can be captured.
+	if preauthorized && !walletPreauthorized {
 		if err := guard.TopUpTo(billingCtx, guardedCost); err != nil {
 			return false, err
 		}

@@ -1318,6 +1318,10 @@ export default {
       gemini: {
         localQuota: '本站请求限额',
         quotaUnavailable: '暂未获取配额',
+        compactQuota: {
+          remaining: '上游剩余额度', details: '查看配额详情',
+          week: '周', reset: '重置时间', updated: '更新时间'
+        },
         helpButton: '使用帮助',
         helpDialog: {
           title: 'Gemini 使用指南',

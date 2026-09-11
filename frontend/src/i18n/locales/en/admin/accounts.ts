@@ -1258,6 +1258,10 @@ export default {
       gemini: {
         localQuota: 'Local request limits',
         quotaUnavailable: 'Quota unavailable',
+        compactQuota: {
+          remaining: 'Upstream quota remaining', details: 'Quota details',
+          week: 'Week', reset: 'Resets at', updated: 'Updated'
+        },
         helpButton: 'Help',
         helpDialog: {
           title: 'Gemini Usage Guide',

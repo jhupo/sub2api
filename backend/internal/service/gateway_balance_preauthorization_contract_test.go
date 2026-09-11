@@ -249,7 +249,7 @@ func TestApplyUsageBillingStaleGuardRejectsBeforeRepositoryApply(t *testing.T) {
 	require.Zero(t, fixture.wallet.refundCalls)
 }
 
-func TestApplyUsageBillingGuardedTopUpPrecedesRepositoryApply(t *testing.T) {
+func TestApplyUsageBillingWalletSettlesActualAboveHold(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	handlerGuard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
 	require.NoError(t, err)
@@ -261,13 +261,13 @@ func TestApplyUsageBillingGuardedTopUpPrecedesRepositoryApply(t *testing.T) {
 	_, err = applyUsageBilling(ContextWithBalancePreauthorizationGuard(context.Background(), workerGuard), "request-1", usageLog, params, deps, repo)
 
 	require.NoError(t, err)
-	require.Equal(t, 1, fixture.wallet.topUpCalls)
+	require.Zero(t, fixture.wallet.topUpCalls)
 	require.NotNil(t, repo.lastCmd)
-	require.InDelta(t, repo.lastCmd.BalanceCost, fixture.wallet.lastTopUpTarget, 1e-12)
+	require.InDelta(t, repo.lastCmd.BalanceCost, fixture.wallet.lastActual, 1e-12)
 	require.Equal(t, 1, fixture.wallet.finalizeCalls)
 }
 
-func TestApplyUsageBillingGuardedInsufficientTopUpSkipsApplyAndFinalization(t *testing.T) {
+func TestApplyUsageBillingWalletInsufficientHeadroomStillRecordsActual(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	fixture.wallet.topUp = []LiveBalanceResult{{Outcome: LiveBalanceOutcomeInsufficient, State: LiveBalanceAttemptAuthorized}}
 	handlerGuard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
@@ -279,10 +279,14 @@ func TestApplyUsageBillingGuardedInsufficientTopUpSkipsApplyAndFinalization(t *t
 	repo := &guardedUsageBillingApplyRepoStub{result: &UsageBillingApplyResult{Applied: true}}
 	_, err = applyUsageBilling(ContextWithBalancePreauthorizationGuard(context.Background(), workerGuard), "request-1", usageLog, params, deps, repo)
 
-	require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
-	require.Nil(t, repo.lastCmd)
-	require.Zero(t, fixture.wallet.finalizeCalls)
-	require.True(t, workerGuard.IsCurrentOwner())
+	require.NoError(t, err)
+	require.NotNil(t, repo.lastCmd)
+	require.Zero(t, fixture.wallet.topUpCalls)
+	require.Equal(t, 1, fixture.wallet.finalizeCalls)
+	require.InDelta(t, repo.lastCmd.BalanceCost, fixture.wallet.lastActual, 1e-12)
+	require.False(t, workerGuard.IsCurrentOwner())
+	require.ErrorIs(t, workerGuard.Refund(context.Background()), ErrBalancePreauthorizationAlreadyFinalized)
+	require.Zero(t, fixture.wallet.refundCalls)
 }
 
 func TestApplyUsageBillingFinalizationPendingRetryUsesDurableActualHold(t *testing.T) {

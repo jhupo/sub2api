@@ -94,7 +94,6 @@ func TestOpenAIImageReservationMixedResponseKeepsTextMarginalPrice(t *testing.T)
 	require.NoError(t, err)
 	require.InDelta(t, 20e-6, hold.OutputUnitPrice, 1e-12)
 	require.Equal(t, 200, hold.OutputWindow)
-	// Preserve the existing maximum-input-disposition policy (cache creation
-	// can cost more than an ordinary input), plus upward money quantization.
-	require.InDelta(t, 0.03525, hold.HoldAmount, 2e-8)
+	// Ordinary input plus independent text and image output budgets.
+	require.InDelta(t, 0.035, hold.HoldAmount, 2e-8)
 }

@@ -20,10 +20,10 @@ func TestEstimateBillingPreauthorizationUsesConservativeInputRate(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, 1000, estimate.InputTokenUpperBound)
 	require.Equal(t, 512, estimate.ReservedOutputTokens)
-	require.Equal(t, 0.01015, estimate.HoldAmount)
+	require.Equal(t, 0.0089, estimate.HoldAmount)
 }
 
-func TestEstimateBillingPreauthorizationUsesHigherCacheCreationPrice(t *testing.T) {
+func TestEstimateBillingPreauthorizationUsesOrdinaryInputPrice(t *testing.T) {
 	estimate, err := EstimateBillingPreauthorization(BillingPreauthorizationEstimateInput{
 		BillableInputBytes:         100,
 		InputPricePerToken:         0.001,
@@ -34,7 +34,7 @@ func TestEstimateBillingPreauthorizationUsesHigherCacheCreationPrice(t *testing.
 		InitialOutputWindowTokens:  10,
 	})
 	require.NoError(t, err)
-	require.InDelta(t, 0.34, estimate.HoldAmount, 1e-12)
+	require.InDelta(t, 0.14, estimate.HoldAmount, 1e-12)
 }
 
 func TestEstimateBillingPreauthorizationRoundsHoldUp(t *testing.T) {

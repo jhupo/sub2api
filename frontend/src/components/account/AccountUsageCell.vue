@@ -448,7 +448,7 @@
     <!-- Gemini platform: show quota + local usage window -->
     <template v-else-if="account.platform === 'gemini'">
       <!-- Auth Type + Tier Badge (first line) -->
-      <div v-if="geminiAuthTypeLabel" class="mb-1 flex items-center gap-1">
+      <div v-if="geminiAuthTypeLabel && !isGeminiAntigravity" class="mb-1 flex items-center gap-1">
         <span
           :class="[
             'inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
@@ -494,7 +494,7 @@
       <!-- Usage data or unlimited flow -->
       <div class="space-y-1">
         <div
-          v-if="showGeminiTodayStats && todayStats"
+          v-if="showGeminiTodayStats && todayStats && !isGeminiAntigravity"
           class="mb-0.5 flex items-center"
         >
           <div class="flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-gray-400">
@@ -517,7 +517,7 @@
           </div>
         </div>
         <div
-          v-else-if="showGeminiTodayStats && todayStatsLoading"
+          v-else-if="showGeminiTodayStats && todayStatsLoading && !isGeminiAntigravity"
           class="mb-0.5 flex items-center gap-1"
         >
           <div class="h-3 w-10 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
@@ -532,16 +532,27 @@
           </div>
         </div>
         <div v-else-if="error" class="text-xs text-red-500">
-          {{ error }}
+          <span v-if="isGeminiAntigravity" tabindex="0" :title="error" class="inline-flex h-6 items-center gap-1">
+            <Icon name="exclamationCircle" class="h-3.5 w-3.5" />
+            <span>—</span><span class="sr-only">{{ error }}</span>
+          </span>
+          <template v-else>{{ error }}</template>
         </div>
         <template v-else>
           <div v-if="needsReauth" class="text-xs text-amber-600">{{ t('admin.accounts.needsReauth') }}</div>
           <div v-else-if="isForbidden" class="text-xs text-red-500">{{ forbiddenLabel }}</div>
           <div v-else-if="usageInfo?.error" class="text-xs text-amber-600">{{ usageErrorLabel }}</div>
-          <AntigravityQuotaWindows
+          <GeminiQuotaWindows
             v-if="isGeminiAntigravity && usageInfo && (usageInfo.antigravity_quota_groups?.length || hasAntigravityQuotaFromAPI)"
             :usage="usageInfo"
-          />
+            :account-label="geminiAuthTypeLabel || undefined"
+          >
+            <div v-if="todayStats" class="border-t border-gray-200 pt-2 text-[10px] dark:border-gray-700">
+              {{ formatKeyRequests }} req · {{ formatKeyTokens }}
+              <span :title="t('usage.accountBilled')">A ${{ formatKeyCost }}</span>
+              <span v-if="todayStats.user_cost != null" :title="t('usage.userBilled')"> · U ${{ formatKeyUserCost }}</span>
+            </div>
+          </GeminiQuotaWindows>
           <div v-else-if="geminiUsageBars.length" class="space-y-1">
             <div class="text-[10px] text-gray-500">{{ t('admin.accounts.gemini.localQuota') }}</div>
             <UsageProgressBar
@@ -654,6 +665,8 @@ import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
 import AntigravityQuotaWindows from './AntigravityQuotaWindows.vue'
+import GeminiQuotaWindows from './GeminiQuotaWindows.vue'
+import Icon from '@/components/icons/Icon.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber } from '@/utils/format'

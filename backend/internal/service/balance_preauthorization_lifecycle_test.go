@@ -401,36 +401,32 @@ func balancePreauthorizationTestRequest() BalancePreauthorizationRequest {
 }
 
 // TestBalancePreauthorizationLifecycleUsesRequestLocalPlainInput proves the
-// hold prices the current request once and never reads historical usage.
+// hold uses ordinary input pricing and never reserves a hypothetical cache
+// write before the provider reports actual usage.
 func TestBalancePreauthorizationLifecycleUsesRequestLocalPlainInput(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
 	require.NoError(t, err)
 	require.NotNil(t, guard)
-	// Cache-creation 1h is the most expensive request-local input scenario:
-	// base 0.003 + input 0.025 = 0.028 (the output term is disabled in this
-	// fixture), rounded up by hold quantization.
-	require.InDelta(t, 0.028, guard.HoldAmount(), 1e-4)
+	// Ordinary input plus the bounded output window is 0.013 in this fixture.
+	require.InDelta(t, 0.013, guard.HoldAmount(), 1e-4)
 	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, guard.ReservedOutputTokens())
-	// Five pricing calls: four input dispositions, then the output-free baseline
-	// for the most expensive disposition.
-	require.Len(t, fixture.calculator.inputs, 5)
+	// Two pricing calls: the ordinary input window and its output-free baseline.
+	require.Len(t, fixture.calculator.inputs, 2)
 	require.Equal(t, 100, fixture.calculator.inputs[0].Tokens.InputTokens)
 	require.Equal(t, 0, fixture.calculator.inputs[0].Tokens.CacheReadTokens)
 	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, fixture.calculator.inputs[0].Tokens.OutputTokens)
 	require.Equal(t, "gpt-test", fixture.calculator.inputs[0].Model)
 	require.Equal(t, 1.25, fixture.calculator.inputs[0].RateMultiplier)
-	// The second scenario is cache-read; the final call is the output-free
-	// baseline for the selected cache-creation 1h scenario.
-	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, fixture.calculator.inputs[1].Tokens.OutputTokens)
-	require.Equal(t, 0, fixture.calculator.inputs[4].Tokens.OutputTokens)
-	require.Equal(t, 100, fixture.calculator.inputs[4].Tokens.CacheCreation1hTokens)
-	require.InDelta(t, 0.028, fixture.repo.prepared.HoldAmount, 1e-4)
+	// The second call is the output-free baseline for ordinary input pricing.
+	require.Equal(t, 0, fixture.calculator.inputs[1].Tokens.OutputTokens)
+	require.Equal(t, 100, fixture.calculator.inputs[1].Tokens.InputTokens)
+	require.InDelta(t, 0.013, fixture.repo.prepared.HoldAmount, 1e-4)
 	require.Equal(t, "request-1:7", fixture.wallet.lastAttemptID)
 	require.Equal(t, 10.0, fixture.wallet.lastFallback)
 	require.Equal(t, int64(17), fixture.wallet.lastWatermark)
 	require.Equal(t, []string{
-		"price", "price", "price", "price", "price", "repo_prepare", "balance_snapshot", "wallet_authorize", "repo_authorized",
+		"price", "price", "repo_prepare", "balance_snapshot", "wallet_authorize", "repo_authorized",
 	}, fixture.recorder.snapshot())
 
 	err = guard.Finalize(context.Background(), 0.019999999, " actual-fingerprint ")
@@ -442,6 +438,45 @@ func TestBalancePreauthorizationLifecycleUsesRequestLocalPlainInput(t *testing.T
 	// A retry after all three finalization steps is a local idempotent no-op.
 	require.NoError(t, guard.Finalize(context.Background(), 0.02, "actual-fingerprint"))
 	require.Equal(t, 1, fixture.wallet.finalizeCalls)
+}
+
+func TestBalancePreauthorizationUsesOrdinaryInputAcrossModalities(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		imageInput  int
+		imageOutput int
+		audioInput  int
+		wantHold    float64
+	}{
+		{name: "text", wantHold: 0.006},
+		{name: "image", imageInput: 300, imageOutput: 500, wantHold: 0.0402},
+		{name: "audio", audioInput: 400, wantHold: 0.0212},
+		{name: "mixed", imageInput: 300, imageOutput: 500, audioInput: 400, wantHold: 0.0554},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &BalancePreauthorizationService{costCalculator: &BillingService{}}
+			request := BalancePreauthorizationRequest{
+				EstimatedInputTokens: 1000, InitialOutputWindowTokens: 200,
+				EstimatedImageInputTokens: tc.imageInput, EstimatedImageOutputTokens: tc.imageOutput,
+				EstimatedAudioInputTokens: tc.audioInput,
+				CostInput: CostInput{Model: "test-model", RateMultiplier: 2, Resolver: &ModelPricingResolver{},
+					Resolved: &ResolvedPricing{Mode: BillingModeToken, BasePricing: &ModelPricing{
+						InputPricePerToken: 1e-6, OutputPricePerToken: 10e-6,
+						ImageInputPricePerToken: 8e-6, ImageOutputPricePerToken: 30e-6,
+						AudioInputPricePerToken: 20e-6, AudioCacheReadPricePerToken: 50e-6,
+						CacheReadPricePerToken: 10e-6, CacheCreationPricePerToken: 100e-6,
+					}}},
+			}
+			for _, funding := range []int8{BillingTypeBalance, BillingTypeSubscription} {
+				request.BillingType = funding
+				hold, err := svc.estimateHold(context.Background(), request)
+				require.NoError(t, err)
+				require.InDelta(t, tc.wantHold, hold.HoldAmount, 2e-8)
+				require.Equal(t, 200, hold.OutputWindow)
+				require.InDelta(t, 20e-6, hold.OutputUnitPrice, 1e-12)
+			}
+		})
+	}
 }
 
 func TestBalancePreauthorizationInputOnlyKeepsOutputWindowZero(t *testing.T) {
@@ -470,7 +505,7 @@ func TestBalancePreauthorizationLifecycleHotWalletSkipsPostgreSQLSnapshot(t *tes
 	require.Contains(t, fixture.recorder.snapshot(), "balance_snapshot")
 	require.Contains(t, fixture.recorder.snapshot(), "wallet_authorize")
 	require.Equal(t, []string{
-		"price", "price", "price", "price", "price", "repo_prepare", "balance_snapshot", "wallet_authorize", "repo_authorized",
+		"price", "price", "repo_prepare", "balance_snapshot", "wallet_authorize", "repo_authorized",
 	}, fixture.recorder.snapshot())
 }
 
@@ -578,7 +613,7 @@ func TestBalancePreauthorizationLifecycleInsufficientReturnsRequired403AndCompen
 	require.Equal(t, 403, infraerrors.Code(err))
 	require.Equal(t, "Insufficient balance, withholding failed", infraerrors.Message(err))
 	require.Equal(t, []string{
-		"price", "price", "price", "price", "price", "repo_prepare", "balance_snapshot", "wallet_authorize",
+		"price", "price", "repo_prepare", "balance_snapshot", "wallet_authorize",
 		"repo_begin_refund", "wallet_refund", "repo_complete_refund",
 	}, fixture.recorder.snapshot())
 }

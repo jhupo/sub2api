@@ -60,10 +60,9 @@ type BillingPreauthorizationEstimate struct {
 
 // EstimateBillingPreauthorization computes a conservative initial hold in O(1).
 // A text token cannot encode fewer than one source byte, so transformed payload
-// bytes are a safe token upper bound without tiktoken. Cache disposition is not
-// known before the response, therefore the highest input/cache-read/cache-write
-// price is used. A small output window bounds early output exposure without
-// reserving the request's potentially huge max_tokens value.
+// bytes bound the input estimate without tiktoken. Ordinary input pricing is
+// used for admission; cache pricing is applied to provider-reported usage at
+// settlement. The caller supplies the initial output reservation window.
 func EstimateBillingPreauthorization(in BillingPreauthorizationEstimateInput) (BillingPreauthorizationEstimate, error) {
 	if in.BillableInputBytes < 0 || in.InitialOutputWindowTokens < 0 ||
 		invalidNonnegativeMoney(in.InputPricePerToken) ||
@@ -74,10 +73,11 @@ func EstimateBillingPreauthorization(in BillingPreauthorizationEstimateInput) (B
 		return BillingPreauthorizationEstimate{}, ErrInvalidBillingPreauthorizationEstimate
 	}
 
-	inputRate := math.Max(
-		in.InputPricePerToken,
-		math.Max(in.CacheReadPricePerToken, in.CacheCreationPricePerToken),
-	)
+	// Cache disposition is only known after the provider responds. Admission
+	// reserves ordinary input pricing; final settlement applies the reported
+	// cache-read/cache-write rates. Reserving the highest hypothetical cache
+	// creation rate here overstates long-context requests.
+	inputRate := in.InputPricePerToken
 	inputCost := decimal.NewFromInt(int64(in.BillableInputBytes)).
 		Mul(decimal.NewFromFloat(inputRate))
 	outputCost := decimal.NewFromInt(int64(in.InitialOutputWindowTokens)).
