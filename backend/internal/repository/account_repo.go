@@ -1114,9 +1114,15 @@ func (r *accountRepository) accountListFilteredQuery(platform, accountType, stat
 				}),
 			)
 		case "inactive", service.StatusDisabled:
-			// Account APIs historically exposed "inactive", while persisted and
-			// system-generated disabled accounts use the shared "disabled" status.
-			q = q.Where(dbaccount.StatusIn("inactive", service.StatusDisabled))
+			// "停用" in the admin UI means either an explicitly disabled account
+			// or an active account removed from scheduling by schedulable=false.
+			q = q.Where(dbaccount.Or(
+				dbaccount.StatusIn("inactive", service.StatusDisabled),
+				dbaccount.And(
+					dbaccount.StatusEQ(service.StatusActive),
+					dbaccount.SchedulableEQ(false),
+				),
+			))
 		case "rate_limited":
 			q = q.Where(
 				dbaccount.StatusEQ(service.StatusActive),
