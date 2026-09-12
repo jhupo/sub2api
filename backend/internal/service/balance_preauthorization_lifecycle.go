@@ -229,18 +229,15 @@ type BalancePreauthorizationResumeRequest struct {
 }
 
 // RequiresPreauthorization lets handlers avoid pricing and hashing work for
-// modes that Preauthorize would immediately skip.
+// modes that Preauthorize would immediately skip. The runtime switch applies
+// to both wallet and subscription funding; subscription usage is settled from
+// provider usage when the switch is disabled.
 func (s *BalancePreauthorizationService) RequiresPreauthorization(ctx context.Context, billingType int8) bool {
 	if s == nil || (s.cfg != nil && s.cfg.RunMode == config.RunModeSimple) {
 		return false
 	}
 	switch billingType {
-	case BillingTypeSubscription:
-		// Subscription preauthorization is also the atomic allowance admission
-		// gate. The wallet monetary switch must not let concurrent requests skip
-		// this transaction and oversell a subscription.
-		return true
-	case BillingTypeBalance:
+	case BillingTypeBalance, BillingTypeSubscription:
 		return s.balancePreauthorizationEnabled(ctx)
 	default:
 		return false
@@ -261,8 +258,8 @@ func (s *BalancePreauthorizationService) balancePreauthorizationEnabled(ctx cont
 }
 
 // Preauthorize returns a request-owned guard for the selected funding source.
-// Subscription allowance reservations are always enforced; the feature switch
-// controls only wallet monetary preauthorization.
+// When the runtime switch is disabled, both wallet and subscription requests
+// skip the guard and settle only their provider-reported usage later.
 func (s *BalancePreauthorizationService) Preauthorize(
 	ctx context.Context,
 	request BalancePreauthorizationRequest,
@@ -273,7 +270,8 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		return nil, nil
 	}
-	if request.BillingType == BillingTypeBalance && !s.balancePreauthorizationEnabled(ctx) {
+	if (request.BillingType == BillingTypeBalance || request.BillingType == BillingTypeSubscription) &&
+		!s.balancePreauthorizationEnabled(ctx) {
 		return nil, nil
 	}
 	if err := validateBalancePreauthorizationRequest(&request); err != nil {

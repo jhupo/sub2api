@@ -22,10 +22,10 @@ export default {
           enabledHint: 'Disabling stops enforcement while keeping the configured policy and active list.',
         },
         balancePreauthorization: {
-          title: 'Balance preauthorization',
-          description: 'Reserves estimated balance before requests to prevent overspending.',
-          enabled: 'Enable balance preauthorization',
-          enabledHint: 'Applies to standard balance billing and reserves estimated cost before forwarding.',
+          title: 'Request preauthorization',
+          description: 'Reserves estimated balance or subscription allowance before requests.',
+          enabled: 'Enable request preauthorization',
+          enabledHint: 'Applies to both balance and subscription billing; when disabled, settle actual usage after the request.',
         },
         channelMonitor: {
           title: 'Channel Monitor',

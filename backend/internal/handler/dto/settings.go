@@ -316,7 +316,7 @@ type SystemSettings struct {
 
 	// Available Channels feature switch (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
-	// Balance preauthorization feature switch (standard balance billing only)
+	// Global preauthorization feature switch for both balance and subscription billing.
 	BalancePreauthorizationEnabled bool `json:"balance_preauthorization_enabled"`
 
 	// Model Plaza feature (public group/model pricing showcase)

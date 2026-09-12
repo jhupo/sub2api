@@ -22,10 +22,10 @@ export default {
           enabledHint: '关闭后停止执行所有封禁规则，但保留已配置策略和当前名单。',
         },
         balancePreauthorization: {
-          title: '余额预授权',
-          description: '在请求前预留预计费用，防止并发超额消费。',
-          enabled: '启用余额预授权',
-          enabledHint: '适用于余额计费，在转发请求前预留预计费用。',
+          title: '请求预授权',
+          description: '在请求前预留预计费用或套餐额度，防止请求执行期间的额度失控。',
+          enabled: '启用请求预授权',
+          enabledHint: '同时适用于余额和订阅计费；关闭后按请求完成时的实际用量结算。',
         },
         channelMonitor: {
           title: '渠道监控',

@@ -71,6 +71,41 @@ func TestApplyUsageBillingGuardedDuplicateStillFinalizesReservation(t *testing.T
 	require.NotContains(t, fixture.recorder.snapshot(), "repo_begin_refund")
 }
 
+func TestApplyUsageBillingSubscriptionWithoutPreauthorizationSettlesActualUsage(t *testing.T) {
+	usageLog, params, deps := guardedUsageBillingParams(0.021)
+	usageLog.BillingType = BillingTypeSubscription
+	usageLog.SubscriptionID = int64Pointer(99)
+	params.APIKey.FundingSource = FundingSourceSubscription
+	params.APIKey.SubscriptionID = int64Pointer(99)
+	params.Subscription = &UserSubscription{ID: 99}
+	params.IsSubscriptionBill = true
+	repo := &guardedUsageBillingApplyRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+
+	applied, err := applyUsageBilling(context.Background(), "request-1", usageLog, params, deps, repo)
+
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.NotNil(t, repo.lastCmd)
+	require.False(t, repo.lastCmd.SubscriptionPreauthorized)
+	require.Equal(t, 0.021, repo.lastCmd.SubscriptionCost)
+	require.Nil(t, repo.lastCmd.SubscriptionCaptureCost)
+}
+
+func TestApplyUsageBillingSubscriptionWithoutPreauthorizationRequiresRepository(t *testing.T) {
+	usageLog, params, deps := guardedUsageBillingParams(0.021)
+	usageLog.BillingType = BillingTypeSubscription
+	usageLog.SubscriptionID = int64Pointer(99)
+	params.APIKey.FundingSource = FundingSourceSubscription
+	params.APIKey.SubscriptionID = int64Pointer(99)
+	params.Subscription = &UserSubscription{ID: 99}
+	params.IsSubscriptionBill = true
+
+	applied, err := applyUsageBilling(context.Background(), "request-1", usageLog, params, deps, nil)
+
+	require.False(t, applied)
+	require.ErrorIs(t, err, ErrBillingServiceUnavailable)
+}
+
 func TestApplyUsageBillingGuardedApplyErrorKeepsActiveHold(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	handlerGuard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())

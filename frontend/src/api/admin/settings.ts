@@ -720,7 +720,7 @@ export interface SystemSettings {
   // Available Channels feature switch
   available_channels_enabled: boolean;
 
-  // Balance preauthorization feature switch
+  // Global preauthorization feature switch for balance and subscription billing
   balance_preauthorization_enabled: boolean;
 
   // Model Plaza feature switches + description
@@ -1025,7 +1025,7 @@ export interface UpdateSettingsRequest {
   // Available Channels feature switch
   available_channels_enabled?: boolean;
 
-  // Balance preauthorization feature switch
+  // Global preauthorization feature switch for balance and subscription billing
   balance_preauthorization_enabled?: boolean;
 
   // Model Plaza feature switches + description

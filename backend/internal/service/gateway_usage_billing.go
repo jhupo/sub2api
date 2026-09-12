@@ -132,7 +132,8 @@ func (p *postUsageBillingParams) shouldUpdateAccountQuota() bool {
 
 // postUsageBilling is the wallet-only fallback used when the unified billing
 // repository is unavailable. Subscription billing must never enter this path:
-// its allowance is reserved and captured by the durable PostgreSQL state machine.
+// its actual usage still requires the durable PostgreSQL subscription update,
+// even when preauthorization is disabled.
 func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps) {
 	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
@@ -338,8 +339,8 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	if preauthorized && !guard.IsCurrentOwner() {
 		return false, ErrBalancePreauthorizationOwnershipTransferred
 	}
-	if p.IsSubscriptionBill && !preauthorized {
-		return false, balancePreauthorizationUnavailable(errors.New("subscription billing requires an active allowance reservation"))
+	if p.IsSubscriptionBill && (p.Subscription == nil || p.Subscription.ID <= 0) {
+		return false, ErrUsageBillingRequestConflict
 	}
 	// The reserve is admission state, never a usage measurement. BalanceCost
 	// must come only from the provider's billable units calculated above. A
@@ -380,8 +381,8 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		cmd.Normalize()
 	}
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
-		if preauthorized {
-			return false, balancePreauthorizationUnavailable(errors.New("guarded usage billing repository is unavailable"))
+		if preauthorized || p.IsSubscriptionBill {
+			return false, balancePreauthorizationUnavailable(errors.New("usage billing repository is unavailable"))
 		}
 		postUsageBilling(ctx, p, deps)
 		return true, nil
@@ -392,8 +393,9 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	// Wallet settlement records already-incurred usage, including any amount
 	// above the estimate. Its finalizer debits that difference atomically;
 	// requiring another admission hold here can strand the actual charge when
-	// the remaining wallet balance is insufficient. Subscription allowances
-	// require authorization before their reservation can be captured.
+	// the remaining wallet balance is insufficient. Subscription usage follows
+	// the same repository transaction directly when preauthorization is off;
+	// only an active subscription guard needs top-up/capture handling.
 	if preauthorized && !walletPreauthorized {
 		if err := guard.TopUpTo(billingCtx, guardedCost); err != nil {
 			if !isSubscriptionAllowanceLimitError(err) {

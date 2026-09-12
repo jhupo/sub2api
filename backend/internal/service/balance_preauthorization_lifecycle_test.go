@@ -681,16 +681,13 @@ func TestBalancePreauthorizationLifecycleSkipsSimpleMode(t *testing.T) {
 func TestBalancePreauthorizationRequirementMatchesLifecycleModes(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	require.True(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeBalance))
-	// The runtime switch controls whether the monetary preauthorization path is
-	// entered for either funding source; subscription admission remains atomic
-	// whenever the path is enabled.
+	// The runtime switch controls the preauthorization path for both funding
+	// sources.
 	require.True(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeSubscription))
 
 	fixture.service.cfg.Billing.BalancePreauthorizationEnabled = false
 	require.False(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeBalance))
-	// Subscription allowance admission remains mandatory even when wallet
-	// monetary preauthorization is disabled.
-	require.True(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeSubscription))
+	require.False(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeSubscription))
 	fixture.service.cfg.Billing.BalancePreauthorizationEnabled = true
 	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
 	require.NoError(t, err)
@@ -701,7 +698,7 @@ func TestBalancePreauthorizationRequirementMatchesLifecycleModes(t *testing.T) {
 	require.False(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeBalance))
 }
 
-func TestBalancePreauthorizationSubscriptionAdmissionIgnoresWalletSwitch(t *testing.T) {
+func TestBalancePreauthorizationSubscriptionAdmissionFollowsSwitch(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	admission := &subscriptionAdmissionStub{}
 	fixture.service.subscriptionRepo = admission
@@ -713,8 +710,32 @@ func TestBalancePreauthorizationSubscriptionAdmissionIgnoresWalletSwitch(t *test
 	guard, err := fixture.service.Preauthorize(context.Background(), request)
 
 	require.NoError(t, err)
+	require.Nil(t, guard)
+	require.Zero(t, admission.calls)
+
+	fixture.service.cfg.Billing.BalancePreauthorizationEnabled = true
+	guard, err = fixture.service.Preauthorize(context.Background(), request)
+	require.NoError(t, err)
 	require.NotNil(t, guard)
 	require.Equal(t, 1, admission.calls)
+}
+
+func TestBalancePreauthorizationDisabledSkipsSubscriptionBeforePricing(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	admission := &subscriptionAdmissionStub{}
+	fixture.service.subscriptionRepo = admission
+	fixture.service.cfg.Billing.BalancePreauthorizationEnabled = false
+
+	request := balancePreauthorizationTestRequest()
+	request.BillingType = BillingTypeSubscription
+	request.SubscriptionID = 99
+	request.CostInput.Model = "unknown-model-that-must-not-be-resolved"
+
+	guard, err := fixture.service.Preauthorize(context.Background(), request)
+	require.NoError(t, err)
+	require.Nil(t, guard)
+	require.Zero(t, admission.calls)
+	require.Empty(t, fixture.calculator.inputs)
 }
 
 func TestBalancePreauthorizationGuardTransferInvalidatesHandlerOwnership(t *testing.T) {
