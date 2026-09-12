@@ -61,6 +61,10 @@ export interface RefundResult {
   subscription_days_deducted?: number
 }
 
+export type PaymentDashboardParams =
+  | { days: number; start_date?: never; end_date?: never }
+  | { days?: never; start_date: string; end_date: string }
+
 export const adminPaymentAPI = {
   // ==================== Config ====================
 
@@ -77,9 +81,9 @@ export const adminPaymentAPI = {
   // ==================== Dashboard ====================
 
   /** Get payment dashboard statistics */
-  getDashboard(days?: number) {
+  getDashboard(params: PaymentDashboardParams = { days: 30 }) {
     return apiClient.get<DashboardStats>('/admin/payment/dashboard', {
-      params: days ? { days } : undefined
+      params
     })
   },
 
