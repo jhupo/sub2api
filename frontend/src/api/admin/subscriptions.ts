@@ -51,6 +51,7 @@ export async function list(
 /**
  * Get subscription by ID
  * @param id - Subscription ID
+ * @param replacementSubscriptionId - Optional active subscription to rebind its API keys to
  * @returns Subscription details
  */
 export async function getById(id: number): Promise<UserSubscription> {

@@ -29,9 +29,9 @@ type BalancePreauthorizationTokenEstimate struct {
 // reserve against authoritative provider usage after the request completes.
 //
 // Protocol-specific estimators already used by the count_tokens endpoints are
-// preferred. If a request shape cannot be estimated, raw bytes remain the
-// conservative upper bound. The minimum protects small requests without any
-// database lookup; it is a reserve only and is never written as actual usage.
+// preferred. Unknown request shapes use a bounded character heuristic rather
+// than treating serialized JSON bytes as tokens (which can over-reserve by
+// orders of magnitude for escaped keys and structural syntax).
 func EstimateBalancePreauthorizationTokens(body []byte) BalancePreauthorizationTokenEstimate {
 	return estimateBalancePreauthorizationTokens(body, gjson.GetBytes(body, "stream").Bool())
 }
@@ -160,9 +160,16 @@ func estimateBalancePreauthorizationInputTokens(body []byte) int {
 		return estimated
 	}
 
-	// One token cannot encode fewer than one source byte, so this fallback is
-	// conservative even for an unfamiliar or newly introduced request shape.
-	return len(body)
+	// A rough 4-byte/token heuristic is only a last-resort admission estimate;
+	// provider usage remains authoritative at settlement.
+	return maxIntPreauth(1, (len(body)+3)/4)
+}
+
+func maxIntPreauth(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func requestedBalancePreauthorizationOutputTokens(body []byte) int {

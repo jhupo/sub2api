@@ -232,7 +232,10 @@ func (s *BalancePreauthorizationService) RequiresPreauthorization(ctx context.Co
 	}
 	switch billingType {
 	case BillingTypeSubscription:
-		return true
+		// The same runtime switch gates the monetary hold for both funding
+		// sources. Subscription allowance admission remains atomic inside the
+		// subscription preauthorization transaction.
+		return s.balancePreauthorizationEnabled(ctx)
 	case BillingTypeBalance:
 		return s.balancePreauthorizationEnabled(ctx)
 	default:
@@ -251,8 +254,8 @@ func (s *BalancePreauthorizationService) balancePreauthorizationEnabled(ctx cont
 }
 
 // Preauthorize returns a request-owned guard for the selected funding source.
-// Subscription allowance reservations are always enforced; the feature switch
-// controls only wallet preauthorization.
+// Subscription allowance reservations remain atomic when enabled; the feature
+// switch controls whether the monetary preauthorization path is entered.
 func (s *BalancePreauthorizationService) Preauthorize(
 	ctx context.Context,
 	request BalancePreauthorizationRequest,

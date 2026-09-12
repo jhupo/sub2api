@@ -17,8 +17,10 @@ type UserSubscriptionRepository interface {
 	Update(ctx context.Context, sub *UserSubscription) error
 	Delete(ctx context.Context, id int64) error
 	// Revoke atomically rebinds every API key that references id when a
-	// replacement is supplied, then soft-deletes the entitlement. It returns the
-	// owner ID so callers can invalidate all affected authentication snapshots.
+	// replacement is supplied. Without a replacement, it detaches those keys,
+	// switches them to wallet funding, and clears their group assignment before
+	// soft-deleting the entitlement. It returns the owner ID so callers can
+	// invalidate all affected authentication snapshots.
 	Revoke(ctx context.Context, id int64, replacementID *int64) (userID int64, err error)
 	Restore(ctx context.Context, subscriptionID int64, restoredStatus string) (*UserSubscription, error)
 

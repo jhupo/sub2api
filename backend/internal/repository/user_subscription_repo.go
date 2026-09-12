@@ -214,14 +214,21 @@ func (r *userSubscriptionRepository) revokeInTransaction(ctx context.Context, id
 	if err != nil {
 		return 0, err
 	}
-	if boundCount > 0 && replacement == nil {
-		return 0, service.ErrSubscriptionAPIKeysBound
-	}
 	if boundCount > 0 {
-		if _, err := client.APIKey.Update().
-			Where(apikey.SubscriptionIDEQ(id)).
-			SetSubscriptionID(replacement.ID).
-			Save(allRowsCtx); err != nil {
+		keyUpdate := client.APIKey.Update().Where(apikey.SubscriptionIDEQ(id))
+		if replacement != nil {
+			keyUpdate.SetSubscriptionID(replacement.ID)
+		} else {
+			// A revoked subscription cannot remain a funding source: the API key
+			// check constraint requires a non-null subscription for that source.
+			// Detach the key atomically and clear its group so it cannot continue
+			// routing through the revoked entitlement. The key remains available
+			// for an administrator to explicitly reconfigure later.
+			keyUpdate.SetFundingSource(service.FundingSourceWallet).
+				ClearSubscriptionID().
+				ClearGroupID()
+		}
+		if _, err := keyUpdate.Save(allRowsCtx); err != nil {
 			return 0, err
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/suite"
@@ -17,6 +18,7 @@ import (
 type UserSubscriptionRepoSuite struct {
 	suite.Suite
 	ctx    context.Context
+	tx     *dbent.Tx
 	client *dbent.Client
 	repo   *userSubscriptionRepository
 }
@@ -24,6 +26,7 @@ type UserSubscriptionRepoSuite struct {
 func (s *UserSubscriptionRepoSuite) SetupTest() {
 	s.ctx = context.Background()
 	tx := testEntTx(s.T())
+	s.tx = tx
 	s.client = tx.Client()
 	s.repo = NewUserSubscriptionRepository(s.client).(*userSubscriptionRepository)
 }
@@ -210,6 +213,35 @@ func (s *UserSubscriptionRepoSuite) TestRestore() {
 
 func (s *UserSubscriptionRepoSuite) TestDelete_Idempotent() {
 	s.Require().NoError(s.repo.Delete(s.ctx, 42424242), "Delete should be idempotent")
+}
+
+func (s *UserSubscriptionRepoSuite) TestRevokeWithoutReplacementUnbindsKeysAndClearsGroup() {
+	user := s.mustCreateUser("revoke-unbound@test.com", service.RoleUser)
+	plan := s.mustCreatePlan("g-revoke-unbound")
+	group := mustCreateGroup(s.T(), s.client, &service.Group{Name: "revoke-unbound-group"})
+	sub := s.mustCreateSubscription(user.ID, plan.ID, nil)
+
+	key, err := s.client.APIKey.Create().
+		SetUserID(user.ID).
+		SetKey("sk-revoke-unbound").
+		SetName("revoke-unbound").
+		SetGroupID(group.ID).
+		SetFundingSource(service.FundingSourceSubscription).
+		SetSubscriptionID(sub.ID).
+		Save(s.ctx)
+	s.Require().NoError(err, "create bound api key")
+
+	userID, err := s.repo.revokeInTransaction(dbent.NewTxContext(s.ctx, s.tx), sub.ID, nil)
+	s.Require().NoError(err, "revoke subscription without replacement")
+	s.Require().Equal(user.ID, userID)
+
+	gotKey, err := s.client.APIKey.Query().Where(apikey.IDEQ(key.ID)).Only(s.ctx)
+	s.Require().NoError(err, "load detached api key")
+	s.Require().Equal(service.FundingSourceWallet, gotKey.FundingSource)
+	s.Require().Nil(gotKey.SubscriptionID)
+	s.Require().Nil(gotKey.GroupID)
+	_, err = s.repo.GetByID(s.ctx, sub.ID)
+	s.Require().ErrorIs(err, service.ErrSubscriptionNotFound)
 }
 
 // --- GetByUserIDAndPlanVersionID / GetActiveByUserIDAndPlanID ---

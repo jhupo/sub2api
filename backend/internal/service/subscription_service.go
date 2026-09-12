@@ -32,7 +32,6 @@ var (
 	ErrSubscriptionAssignConflict  = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with the current assignment")
 	ErrSubscriptionNotRevoked      = infraerrors.Conflict("SUBSCRIPTION_NOT_REVOKED", "subscription is not revoked")
 	ErrSubscriptionRestoreConflict = infraerrors.Conflict("SUBSCRIPTION_RESTORE_CONFLICT", "subscription already exists for this user and plan")
-	ErrSubscriptionAPIKeysBound    = infraerrors.Conflict("SUBSCRIPTION_API_KEYS_BOUND", "subscription is still bound to API keys; select an active replacement subscription before revoking it")
 	ErrSubscriptionReplacement     = infraerrors.BadRequest("SUBSCRIPTION_REPLACEMENT_INVALID", "replacement subscription must be a different active subscription owned by the same user")
 	ErrSubscriptionNilInput        = infraerrors.BadRequest("SUBSCRIPTION_NIL_INPUT", "subscription is required")
 	ErrInvalidInput                = infraerrors.BadRequest("INVALID_INPUT", "at least one quota window must be selected")

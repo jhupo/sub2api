@@ -48,7 +48,8 @@ func TestEstimateBalancePreauthorizationTokensUsesLargestOutputLimit(t *testing.
 func TestEstimateBalancePreauthorizationTokensFallsBackWithoutIO(t *testing.T) {
 	body := []byte(`{"model":"custom","prompt":"` + strings.Repeat("x", 700) + `"}`)
 	got := EstimateBalancePreauthorizationTokens(body)
-	require.Equal(t, len(body), got.InputTokens)
+	require.GreaterOrEqual(t, got.InputTokens, DefaultBalancePreauthorizationInputTokens)
+	require.Less(t, got.InputTokens, len(body))
 	require.Equal(t, DefaultBalancePreauthorizationNonStreamingOutputWindow, got.OutputTokens)
 }
 

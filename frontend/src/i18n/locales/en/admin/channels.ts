@@ -743,8 +743,8 @@ export default {
         "Are you sure you want to revoke the subscription for '{user}'? You can restore it later from the revoked list.",
       replacementSubscription: 'Replacement for API keys',
       noReplacementSubscription: 'Do not rebind',
-      replacementSubscriptionHint: 'API keys bound to this subscription require another active subscription owned by the same user.',
-      noReplacementAvailable: 'This user has no other active subscription. Assign one or update the API keys before revoking a bound subscription.',
+      replacementSubscriptionHint: 'When selected, API keys bound to this subscription move to another active subscription owned by the same user.',
+      noReplacementAvailable: 'Without a replacement, bound API keys switch to wallet funding and are ungrouped. Reconfigure them before use.',
       failedToLoadReplacements: 'Failed to load replacement subscriptions',
       restoreConfirm:
         "Restore the subscription for '{user}'? If the original subscription has expired, it will be restored as expired.",
