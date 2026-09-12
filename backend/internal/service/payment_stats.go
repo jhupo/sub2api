@@ -12,6 +12,8 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
 
 // --- Dashboard & Analytics ---
@@ -20,16 +22,26 @@ func (s *PaymentService) GetDashboardStats(ctx context.Context, days int) (*Dash
 	if days <= 0 {
 		days = 30
 	}
-	now := time.Now()
-	since := now.AddDate(0, 0, -days)
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	today := timezone.Today()
+	return s.GetDashboardStatsRange(ctx, today.AddDate(0, 0, 1-days), today)
+}
+
+// GetDashboardStatsRange uses inclusive calendar dates in the site's timezone.
+// The database query and daily buckets share the same [start, endExclusive) bounds.
+func (s *PaymentService) GetDashboardStatsRange(ctx context.Context, start, end time.Time) (*DashboardStats, error) {
+	if start.IsZero() || end.IsZero() || end.Before(start) {
+		return nil, infraerrors.BadRequest("INVALID_DATE_RANGE", "invalid payment date range")
+	}
+	start = timezone.StartOfDay(start)
+	endExclusive := timezone.StartOfDay(end).AddDate(0, 0, 1)
 
 	paidStatuses := []string{OrderStatusCompleted, OrderStatusPaid, OrderStatusRecharging}
 
 	orders, err := s.entClient.PaymentOrder.Query().
 		Where(
 			paymentorder.StatusIn(paidStatuses...),
-			paymentorder.PaidAtGTE(since),
+			paymentorder.PaidAtGTE(start),
+			paymentorder.PaidAtLT(endExclusive),
 		).
 		All(ctx)
 	if err != nil {
@@ -37,7 +49,7 @@ func (s *PaymentService) GetDashboardStats(ctx context.Context, days int) (*Dash
 	}
 
 	st := &DashboardStats{}
-	computeBasicStats(st, orders, todayStart)
+	computeBasicStats(st, orders, timezone.Today())
 
 	st.PendingOrders, err = s.entClient.PaymentOrder.Query().
 		Where(paymentorder.StatusEQ(OrderStatusPending)).
@@ -46,7 +58,7 @@ func (s *PaymentService) GetDashboardStats(ctx context.Context, days int) (*Dash
 		return nil, err
 	}
 
-	st.DailySeries = buildDailySeries(orders, since, days)
+	st.DailySeries = buildDailySeries(orders, start, endExclusive)
 	st.PaymentMethods = buildMethodDistribution(orders)
 	st.TopUsers = buildTopUsers(orders)
 
@@ -63,7 +75,7 @@ func computeBasicStats(st *DashboardStats, orders []*dbent.PaymentOrder, todaySt
 		currency := PaymentOrderCurrency(o)
 		st.TotalAmount[currency] += o.PayAmount
 		currencyCounts[currency]++
-		if o.PaidAt != nil && !o.PaidAt.Before(todayStart) {
+		if o.PaidAt != nil && !o.PaidAt.Before(todayStart) && o.PaidAt.Before(todayStart.AddDate(0, 0, 1)) {
 			st.TodayAmount[currency] += o.PayAmount
 			todayCount++
 		}
@@ -77,13 +89,13 @@ func computeBasicStats(st *DashboardStats, orders []*dbent.PaymentOrder, todaySt
 	roundCurrencyAmounts(st.TodayAmount)
 }
 
-func buildDailySeries(orders []*dbent.PaymentOrder, since time.Time, days int) []DailyStats {
+func buildDailySeries(orders []*dbent.PaymentOrder, start, endExclusive time.Time) []DailyStats {
 	dailyMap := make(map[string]*DailyStats)
 	for _, o := range orders {
-		if o.PaidAt == nil {
+		if o.PaidAt == nil || o.PaidAt.Before(start) || !o.PaidAt.Before(endExclusive) {
 			continue
 		}
-		date := o.PaidAt.Format("2006-01-02")
+		date := o.PaidAt.In(start.Location()).Format("2006-01-02")
 		ds, ok := dailyMap[date]
 		if !ok {
 			ds = &DailyStats{Date: date, Amount: make(CurrencyAmounts)}
@@ -92,9 +104,9 @@ func buildDailySeries(orders []*dbent.PaymentOrder, since time.Time, days int) [
 		ds.Amount[PaymentOrderCurrency(o)] += o.PayAmount
 		ds.Count++
 	}
-	series := make([]DailyStats, 0, days)
-	for i := 0; i < days; i++ {
-		date := since.AddDate(0, 0, i+1).Format("2006-01-02")
+	series := make([]DailyStats, 0)
+	for day := start; day.Before(endExclusive); day = day.AddDate(0, 0, 1) {
+		date := day.Format("2006-01-02")
 		if ds, ok := dailyMap[date]; ok {
 			roundCurrencyAmounts(ds.Amount)
 			series = append(series, *ds)

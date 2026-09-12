@@ -1,24 +1,28 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <!-- Header with Day Switcher -->
-      <div class="flex items-center justify-end">
-        <div class="flex items-center gap-2">
-          <div class="flex rounded-lg border border-gray-200 dark:border-dark-600">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-gray-500 dark:text-gray-400" data-testid="displayed-range" aria-live="polite">
+          {{ displayedRange }}
+        </p>
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="inline-flex shrink-0 overflow-hidden rounded-lg border border-gray-200 dark:border-dark-600">
             <button
-              v-for="d in DAYS_OPTIONS"
-              :key="d"
+              v-for="option in periodOptions"
+              :key="option.value"
               type="button"
-              class="px-3 py-1.5 text-xs font-medium transition-colors first:rounded-l-lg last:rounded-r-lg"
-              :class="days === d
+              class="whitespace-nowrap px-3 py-2 text-sm font-medium transition-colors"
+              :aria-pressed="period === option.value"
+              :data-testid="`period-${option.value}`"
+              :class="period === option.value
                 ? 'bg-primary-600 text-white'
                 : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700'"
-              @click="days = d"
+              @click="selectPeriod(option.value)"
             >
-              {{ d }}{{ t('payment.admin.daySuffix') }}
+              {{ option.label }}
             </button>
           </div>
-          <button @click="loadDashboard" :disabled="loading" class="btn btn-secondary" :title="t('common.refresh')">
+          <button @click="loadDashboard" :disabled="loading" class="btn btn-secondary" :title="t('common.refresh')" :aria-label="t('common.refresh')">
             <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
           </button>
         </div>
@@ -67,17 +71,36 @@
         </div>
       </template>
     </div>
+    <BaseDialog :show="showCustomRange" :title="t('payment.admin.customDateRange')" width="narrow" @close="showCustomRange = false">
+      <form id="payment-date-range" class="space-y-4" @submit.prevent="applyCustomRange">
+        <div>
+          <label for="payment-start-date" class="input-label">{{ t('payment.admin.startDate') }}</label>
+          <input id="payment-start-date" v-model="draftStartDate" type="date" class="input" required :max="draftEndDate || undefined" />
+        </div>
+        <div>
+          <label for="payment-end-date" class="input-label">{{ t('payment.admin.endDate') }}</label>
+          <input id="payment-end-date" v-model="draftEndDate" type="date" class="input" required :min="draftStartDate || undefined" />
+        </div>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.dateRangeHint') }}</p>
+        <p v-if="rangeError" role="alert" class="text-sm text-red-600">{{ rangeError }}</p>
+      </form>
+      <template #footer>
+        <button type="button" class="btn btn-secondary" @click="showCustomRange = false">{{ t('common.cancel') }}</button>
+        <button type="submit" form="payment-date-range" class="btn btn-primary" :disabled="!!rangeError" data-testid="apply-range">{{ t('payment.admin.applyDateRange') }}</button>
+      </template>
+    </BaseDialog>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
-import { adminPaymentAPI } from '@/api/admin/payment'
+import { adminPaymentAPI, type PaymentDashboardParams } from '@/api/admin/payment'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import type { CurrencyAmounts, DashboardStats, TopUserPaymentStats } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Icon from '@/components/icons/Icon.vue'
 import OrderStatsCards from '@/components/admin/payment/OrderStatsCards.vue'
@@ -86,10 +109,30 @@ import DailyRevenueChart from '@/components/admin/payment/DailyRevenueChart.vue'
 const { t } = useI18n()
 const appStore = useAppStore()
 
-const DAYS_OPTIONS = [7, 30, 90] as const
-const days = ref<number>(30)
+type Period = 7 | 30 | 90 | 'custom'
+const periodOptions = computed(() => [
+  ...([7, 30, 90] as const).map(value => ({ value, label: `${value}${t('payment.admin.daySuffix')}` })),
+  { value: 'custom' as const, label: t('payment.admin.customPeriod') }
+])
+const period = ref<Period>(30)
+const customRange = ref<{ start_date: string; end_date: string } | null>(null)
+const showCustomRange = ref(false)
+const draftStartDate = ref('')
+const draftEndDate = ref('')
 const loading = ref(false)
 const stats = ref<DashboardStats | null>(null)
+let requestSequence = 0
+
+const displayedRange = computed(() => {
+  const series = stats.value?.daily_series
+  if (!series?.length || loading.value) return ''
+  return t('payment.admin.selectedDateRange', { start: series[0].date, end: series[series.length - 1].date })
+})
+const rangeError = computed(() => {
+  if (!draftStartDate.value || !draftEndDate.value) return t('payment.admin.dateRangeRequired')
+  if (draftStartDate.value > draftEndDate.value) return t('payment.admin.dateRangeInvalid')
+  return ''
+})
 
 function methodColor(type: string): string {
   const c: Record<string, string> = {
@@ -124,17 +167,44 @@ function formatMoney(currency: string, amount: number): string {
 }
 
 async function loadDashboard() {
+  const query: PaymentDashboardParams = period.value === 'custom'
+    ? { ...customRange.value! }
+    : { days: period.value }
+  const sequence = ++requestSequence
   loading.value = true
   try {
-    const res = await adminPaymentAPI.getDashboard(days.value)
-    stats.value = res.data
+    const res = await adminPaymentAPI.getDashboard(query)
+    if (sequence === requestSequence) stats.value = res.data
   } catch (err: unknown) {
-    appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+    if (sequence === requestSequence) {
+      stats.value = null
+      appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+    }
   } finally {
-    loading.value = false
+    if (sequence === requestSequence) loading.value = false
   }
 }
 
-watch(days, () => loadDashboard())
+function selectPeriod(value: Period) {
+  if (value === 'custom') {
+    const series = stats.value?.daily_series
+    draftStartDate.value = customRange.value?.start_date || series?.[0]?.date || ''
+    draftEndDate.value = customRange.value?.end_date || series?.[series.length - 1]?.date || ''
+    showCustomRange.value = true
+    return
+  }
+  period.value = value
+  void loadDashboard()
+}
+
+function applyCustomRange() {
+  if (rangeError.value) return
+  customRange.value = { start_date: draftStartDate.value, end_date: draftEndDate.value }
+  period.value = 'custom'
+  showCustomRange.value = false
+  void loadDashboard()
+}
+
 onMounted(() => loadDashboard())
+onUnmounted(() => { requestSequence++ })
 </script>

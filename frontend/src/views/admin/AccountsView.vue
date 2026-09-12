@@ -2039,6 +2039,9 @@ const accountMatchesCurrentFilters = (account: Account) => {
       if (account.status !== 'active' || !isRateLimited || isTempUnschedulable) return false
     } else if (filters.status === 'temp_unschedulable') {
       if (account.status !== 'active' || !isTempUnschedulable) return false
+    } else if (filters.status === 'inactive') {
+      // “停用”包含显式停用账号，以及关闭“参与调度”开关的账号。
+      if (!(account.status === 'inactive' || (account.status === 'active' && !account.schedulable))) return false
     } else if (filters.status === 'unschedulable') {
       if (account.status !== 'active' || account.schedulable || isRateLimited || isTempUnschedulable) return false
     } else if (account.status !== filters.status) {

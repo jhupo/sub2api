@@ -6,6 +6,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -30,11 +31,29 @@ func NewPaymentHandler(paymentService *service.PaymentService, configService *se
 // GetDashboard returns payment dashboard statistics.
 // GET /api/v1/admin/payment/dashboard
 func (h *PaymentHandler) GetDashboard(c *gin.Context) {
+	if c.Query("start_date") != "" || c.Query("end_date") != "" {
+		start, startErr := timezone.ParseInLocation("2006-01-02", c.Query("start_date"))
+		end, endErr := timezone.ParseInLocation("2006-01-02", c.Query("end_date"))
+		if startErr != nil || endErr != nil || end.Before(start) {
+			response.BadRequest(c, "start_date and end_date must be valid dates (YYYY-MM-DD), with end_date on or after start_date")
+			return
+		}
+		stats, err := h.paymentService.GetDashboardStatsRange(c.Request.Context(), start, end)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		response.Success(c, stats)
+		return
+	}
 	days := 30
 	if d := c.Query("days"); d != "" {
-		if v, err := strconv.Atoi(d); err == nil && v > 0 {
-			days = v
+		v, err := strconv.Atoi(d)
+		if err != nil || v <= 0 || v > 3660 {
+			response.BadRequest(c, "days must be between 1 and 3660")
+			return
 		}
+		days = v
 	}
 	stats, err := h.paymentService.GetDashboardStats(c.Request.Context(), days)
 	if err != nil {
