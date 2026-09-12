@@ -1713,6 +1713,10 @@ func (r *stubUserSubscriptionRepo) Delete(ctx context.Context, id int64) error {
 	return errors.New("not implemented")
 }
 
+func (r *stubUserSubscriptionRepo) Revoke(ctx context.Context, id int64, replacementID *int64) (int64, error) {
+	return 0, errors.New("not implemented")
+}
+
 func (r *stubUserSubscriptionRepo) Restore(ctx context.Context, subscriptionID int64, restoredStatus string) (*service.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }

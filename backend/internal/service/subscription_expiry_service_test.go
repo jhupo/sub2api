@@ -56,6 +56,10 @@ func (r *subscriptionExpiryRepoStub) Delete(context.Context, int64) error {
 	return nil
 }
 
+func (r *subscriptionExpiryRepoStub) Revoke(context.Context, int64, *int64) (int64, error) {
+	return 0, nil
+}
+
 func (r *subscriptionExpiryRepoStub) Restore(context.Context, int64, string) (*UserSubscription, error) {
 	return nil, ErrSubscriptionNotFound
 }

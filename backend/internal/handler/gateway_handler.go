@@ -620,7 +620,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				upstreamErrorAlreadyCommunicated := gatewayForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
-					wroteFallback = h.ensureForwardErrorResponse(c, streamStarted)
+					wroteFallback = h.ensureForwardErrorResponseFor(c, err, streamStarted)
 				}
 				forwardFailedFields := []zap.Field{
 					zap.Int64("account_id", account.ID),
@@ -1093,7 +1093,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				upstreamErrorAlreadyCommunicated := gatewayForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
-					wroteFallback = h.ensureForwardErrorResponse(c, streamStarted)
+					wroteFallback = h.ensureForwardErrorResponseFor(c, err, streamStarted)
 				}
 				forwardFailedFields := []zap.Field{
 					zap.Int64("account_id", account.ID),
@@ -1999,6 +1999,10 @@ func (h *GatewayHandler) mapUpstreamError(statusCode int) (int, string, string) 
 
 // handleStreamingAwareError handles errors that may occur after streaming has started
 func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {
+	h.handleStreamingAwareErrorWithCode(c, status, errType, "", message, streamStarted)
+}
+
+func (h *GatewayHandler) handleStreamingAwareErrorWithCode(c *gin.Context, status int, errType, code, message string, streamStarted bool) {
 	// A compatibility stream may have committed HTTP 200 using only the
 	// pre-header keepalive comments. Stop the producer before taking over the
 	// writer and treat that case as a stream, while leaving ordinary JSON errors
@@ -2017,15 +2021,22 @@ func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, e
 		// response.completed/failed/incomplete/cancelled 集合。
 		// Anthropic-backed Responses 路径同样会因为通用 error 帧被拒。
 		if inboundIsResponses(c) {
-			if writeResponsesFailedSSE(c, errType, message) {
+			if writeResponsesFailedSSEWithCode(c, errType, code, message) {
 				return
 			}
 		}
 		// Stream already started, send error as SSE event then close
 		flusher, ok := c.Writer.(http.Flusher)
 		if ok {
-			// SSE 错误事件固定 schema，使用 Quote 直拼可避免额外 Marshal 分配。
+			// Preserve the stable legacy field order when no code is needed. Billing
+			// failures use structured JSON so clients can inspect the exact limit.
 			errorEvent := `data: {"type":"error","error":{"type":` + strconv.Quote(errType) + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
+			if code != "" {
+				errorObject := gin.H{"type": errType, "code": code, "message": message}
+				if payload, marshalErr := json.Marshal(gin.H{"type": "error", "error": errorObject}); marshalErr == nil {
+					errorEvent = "data: " + string(payload) + "\n\n"
+				}
+			}
 			if _, err := fmt.Fprint(c.Writer, errorEvent); err != nil {
 				_ = c.Error(err)
 			}
@@ -2035,7 +2046,11 @@ func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, e
 	}
 
 	// Normal case: return JSON response with proper status code
-	h.errorResponse(c, status, errType, message)
+	if code == "" {
+		h.errorResponse(c, status, errType, message)
+		return
+	}
+	c.JSON(status, gin.H{"error": gin.H{"type": errType, "code": code, "message": message}})
 }
 
 // ensureForwardErrorResponse 在 Forward 返回错误但尚未写响应时补写统一错误响应。
@@ -2054,6 +2069,20 @@ func (h *GatewayHandler) ensureForwardErrorResponse(c *gin.Context, streamStarte
 	}
 	h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed", streamStarted)
 	return true
+}
+
+func (h *GatewayHandler) ensureForwardErrorResponseFor(c *gin.Context, err error, streamStarted bool) bool {
+	if status, errType, code, message, ok := streamOutputHoldClientError(err); ok {
+		if c == nil || c.Writer == nil {
+			return false
+		}
+		if c.Writer.Written() {
+			streamStarted = true
+		}
+		h.handleStreamingAwareErrorWithCode(c, status, errType, code, message, streamStarted)
+		return true
+	}
+	return h.ensureForwardErrorResponse(c, streamStarted)
 }
 
 // gatewayForwardErrorAlreadyCommunicated reports whether a Forward implementation
@@ -2480,6 +2509,15 @@ func extractQuotaResetSeconds(err error) int {
 }
 
 func billingErrorDetails(err error) (status int, code, message string, retryAfter int) {
+	if errors.Is(err, service.ErrDailyLimitExceeded) {
+		return http.StatusTooManyRequests, "DAILY_LIMIT_EXCEEDED", "Daily subscription usage limit exceeded", 0
+	}
+	if errors.Is(err, service.ErrWeeklyLimitExceeded) {
+		return http.StatusTooManyRequests, "WEEKLY_LIMIT_EXCEEDED", "Weekly subscription usage limit exceeded", 0
+	}
+	if errors.Is(err, service.ErrMonthlyLimitExceeded) {
+		return http.StatusTooManyRequests, "MONTHLY_LIMIT_EXCEEDED", "Monthly subscription usage limit exceeded", 0
+	}
 	if errors.Is(err, service.ErrBillingServiceUnavailable) {
 		msg := pkgerrors.Message(err)
 		if msg == "" {

@@ -645,6 +645,7 @@ var (
 		{Name: "subscription_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "authorized_amount", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,10)"}},
 		{Name: "captured_amount", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,10)"}},
+		{Name: "actual_amount", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,10)"}},
 		{Name: "status", Type: field.TypeString, Size: 20, Default: "authorized"},
 		{Name: "authorization_fingerprint", Type: field.TypeString, Size: 128},
 		{Name: "request_fingerprint", Type: field.TypeString, Size: 128, Default: ""},
@@ -671,22 +672,22 @@ var (
 			{
 				Name:    "billingreservation_status_expires_at",
 				Unique:  false,
-				Columns: []*schema.Column{BillingReservationsColumns[8], BillingReservationsColumns[16]},
+				Columns: []*schema.Column{BillingReservationsColumns[9], BillingReservationsColumns[17]},
 			},
 			{
 				Name:    "billingreservation_subscription_id_status",
 				Unique:  false,
-				Columns: []*schema.Column{BillingReservationsColumns[5], BillingReservationsColumns[8]},
+				Columns: []*schema.Column{BillingReservationsColumns[5], BillingReservationsColumns[9]},
 			},
 			{
 				Name:    "billingreservation_user_id_status",
 				Unique:  false,
-				Columns: []*schema.Column{BillingReservationsColumns[3], BillingReservationsColumns[8]},
+				Columns: []*schema.Column{BillingReservationsColumns[3], BillingReservationsColumns[9]},
 			},
 			{
 				Name:    "billingreservation_async_task_id_api_key_id",
 				Unique:  true,
-				Columns: []*schema.Column{BillingReservationsColumns[14], BillingReservationsColumns[2]},
+				Columns: []*schema.Column{BillingReservationsColumns[15], BillingReservationsColumns[2]},
 			},
 		},
 	}

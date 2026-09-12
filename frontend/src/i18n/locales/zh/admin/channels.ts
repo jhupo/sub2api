@@ -740,6 +740,11 @@ export default {
       pleaseSelectUser: '请选择用户',
       pleaseSelectPlan: '请选择套餐',
       revokeConfirm: "确定要撤销 '{user}' 的订阅吗？可稍后在已撤销列表中恢复。",
+      replacementSubscription: 'API Key 替代套餐',
+      noReplacementSubscription: '不重绑套餐',
+      replacementSubscriptionHint: '若 API Key 绑定了当前套餐，必须选择同一用户的其他有效套餐。',
+      noReplacementAvailable: '该用户没有其他有效套餐。若当前套餐仍绑定 API Key，请先为用户分配套餐或调整 Key。',
+      failedToLoadReplacements: '加载替代套餐失败',
       restoreConfirm: "确定要恢复 '{user}' 的订阅吗？如果原订阅已过期，恢复后将显示为已过期。",
       guide: {
         title: '订阅管理教程',

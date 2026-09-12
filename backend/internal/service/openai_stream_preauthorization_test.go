@@ -30,6 +30,7 @@ type streamTopUpAllowanceRepo struct {
 	topUpCalls   int
 	captureCalls int
 	captured     float64
+	actual       float64
 }
 
 func (r *streamTopUpAllowanceRepo) TopUpSubscriptionAllowance(ctx context.Context, cmd *SubscriptionAllowanceCommand) (*SubscriptionAllowanceReservation, error) {
@@ -52,6 +53,11 @@ func (r *streamTopUpAllowanceRepo) CaptureSubscriptionAllowance(ctx context.Cont
 	}
 	r.captureCalls++
 	r.captured = cmd.Amount
+	if cmd.ActualAmount != nil {
+		r.actual = *cmd.ActualAmount
+	} else {
+		r.actual = cmd.Amount
+	}
 	return &SubscriptionAllowanceReservation{}, nil
 }
 

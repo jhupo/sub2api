@@ -24,6 +24,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	reqBody map[string]any,
 	rawBody []byte,
 	clientPromptCacheKey string,
+	executionScope string,
 	token string,
 	decision OpenAIWSProtocolDecision,
 	isCodexCLI bool,
@@ -129,6 +130,12 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		sessionHash, legacySessionHash = openAIWSSessionHashesFromID(promptCacheKey)
 		attachOpenAILegacySessionHashToGin(c, legacySessionHash)
 		sessionHash = s.ScopeSessionHash(c, sessionHash)
+	}
+	if executionScope = strings.TrimSpace(executionScope); executionScope != "" {
+		// The handler computed this from the unmodified client request. Reuse it
+		// after account namespace and fingerprint rewrites so HTTP and WS paths
+		// address the same thread-scoped state key.
+		sessionHash = executionScope
 	}
 	stateSessionHash := sessionHash
 	if turnState == "" && stateStore != nil && stateSessionHash != "" {

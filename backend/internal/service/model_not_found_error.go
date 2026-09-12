@@ -7,12 +7,27 @@ import (
 
 var upstreamModelNotFoundKeywords = []string{"model not found", "unknown model", "not found"}
 
+var upstreamModelProviderUnavailableKeywords = []string{
+	"no provider supports",
+	"no providers support",
+	"no provider found for",
+	"no providers found for",
+}
+
 func isUpstreamModelNotFoundError(statusCode int, body []byte) bool {
 	if statusCode != http.StatusNotFound {
 		return false
 	}
 	normalized := normalizeModelNotFoundBody(body)
-	if normalized == "" || !strings.Contains(normalized, "model") {
+	if normalized == "" {
+		return false
+	}
+	for _, keyword := range upstreamModelProviderUnavailableKeywords {
+		if strings.Contains(normalized, keyword) {
+			return true
+		}
+	}
+	if !strings.Contains(normalized, "model") {
 		return false
 	}
 	return containsModelNotFoundKeyword(normalized)

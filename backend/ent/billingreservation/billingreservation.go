@@ -27,6 +27,8 @@ const (
 	FieldAuthorizedAmount = "authorized_amount"
 	// FieldCapturedAmount holds the string denoting the captured_amount field in the database.
 	FieldCapturedAmount = "captured_amount"
+	// FieldActualAmount holds the string denoting the actual_amount field in the database.
+	FieldActualAmount = "actual_amount"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
 	// FieldAuthorizationFingerprint holds the string denoting the authorization_fingerprint field in the database.
@@ -63,6 +65,7 @@ var Columns = []string{
 	FieldSubscriptionID,
 	FieldAuthorizedAmount,
 	FieldCapturedAmount,
+	FieldActualAmount,
 	FieldStatus,
 	FieldAuthorizationFingerprint,
 	FieldRequestFingerprint,
@@ -95,6 +98,8 @@ var (
 	DefaultAuthorizedAmount float64
 	// DefaultCapturedAmount holds the default value on creation for the "captured_amount" field.
 	DefaultCapturedAmount float64
+	// DefaultActualAmount holds the default value on creation for the "actual_amount" field.
+	DefaultActualAmount float64
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
 	// StatusValidator is a validator for the "status" field. It is called by the builders before save.
@@ -156,6 +161,11 @@ func ByAuthorizedAmount(opts ...sql.OrderTermOption) OrderOption {
 // ByCapturedAmount orders the results by the captured_amount field.
 func ByCapturedAmount(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCapturedAmount, opts...).ToFunc()
+}
+
+// ByActualAmount orders the results by the actual_amount field.
+func ByActualAmount(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldActualAmount, opts...).ToFunc()
 }
 
 // ByStatus orders the results by the status field.

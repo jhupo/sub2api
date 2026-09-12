@@ -89,6 +89,11 @@ func CapturedAmount(v float64) predicate.BillingReservation {
 	return predicate.BillingReservation(sql.FieldEQ(FieldCapturedAmount, v))
 }
 
+// ActualAmount applies equality check predicate on the "actual_amount" field. It's identical to ActualAmountEQ.
+func ActualAmount(v float64) predicate.BillingReservation {
+	return predicate.BillingReservation(sql.FieldEQ(FieldActualAmount, v))
+}
+
 // Status applies equality check predicate on the "status" field. It's identical to StatusEQ.
 func Status(v string) predicate.BillingReservation {
 	return predicate.BillingReservation(sql.FieldEQ(FieldStatus, v))
@@ -477,6 +482,46 @@ func CapturedAmountLT(v float64) predicate.BillingReservation {
 // CapturedAmountLTE applies the LTE predicate on the "captured_amount" field.
 func CapturedAmountLTE(v float64) predicate.BillingReservation {
 	return predicate.BillingReservation(sql.FieldLTE(FieldCapturedAmount, v))
+}
+
+// ActualAmountEQ applies the EQ predicate on the "actual_amount" field.
+func ActualAmountEQ(v float64) predicate.BillingReservation {
+	return predicate.BillingReservation(sql.FieldEQ(FieldActualAmount, v))
+}
+
+// ActualAmountNEQ applies the NEQ predicate on the "actual_amount" field.
+func ActualAmountNEQ(v float64) predicate.BillingReservation {
+	return predicate.BillingReservation(sql.FieldNEQ(FieldActualAmount, v))
+}
+
+// ActualAmountIn applies the In predicate on the "actual_amount" field.
+func ActualAmountIn(vs ...float64) predicate.BillingReservation {
+	return predicate.BillingReservation(sql.FieldIn(FieldActualAmount, vs...))
+}
+
+// ActualAmountNotIn applies the NotIn predicate on the "actual_amount" field.
+func ActualAmountNotIn(vs ...float64) predicate.BillingReservation {
+	return predicate.BillingReservation(sql.FieldNotIn(FieldActualAmount, vs...))
+}
+
+// ActualAmountGT applies the GT predicate on the "actual_amount" field.
+func ActualAmountGT(v float64) predicate.BillingReservation {
+	return predicate.BillingReservation(sql.FieldGT(FieldActualAmount, v))
+}
+
+// ActualAmountGTE applies the GTE predicate on the "actual_amount" field.
+func ActualAmountGTE(v float64) predicate.BillingReservation {
+	return predicate.BillingReservation(sql.FieldGTE(FieldActualAmount, v))
+}
+
+// ActualAmountLT applies the LT predicate on the "actual_amount" field.
+func ActualAmountLT(v float64) predicate.BillingReservation {
+	return predicate.BillingReservation(sql.FieldLT(FieldActualAmount, v))
+}
+
+// ActualAmountLTE applies the LTE predicate on the "actual_amount" field.
+func ActualAmountLTE(v float64) predicate.BillingReservation {
+	return predicate.BillingReservation(sql.FieldLTE(FieldActualAmount, v))
 }
 
 // StatusEQ applies the EQ predicate on the "status" field.

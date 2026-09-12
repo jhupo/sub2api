@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -75,6 +76,30 @@ func TestOpenAIHandleStreamingAwareError_ResponsesStreamingEmitsResponseFailed(t
 	assert.True(t, strings.HasPrefix(id, "resp_"), "id should start with resp_, got %q", id)
 	assert.Equal(t, "rate_limit_exceeded", errObj["code"])
 	assert.Equal(t, "Concurrency limit exceeded for user, please retry later", errObj["message"])
+}
+
+func TestOpenAIStreamingAllowanceFailureEmitsExactResponsesCode(t *testing.T) {
+	c, w := newGinContextForEndpoint(t, EndpointResponses)
+	_, _ = c.Writer.WriteString("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
+
+	err := service.WrapStreamOutputHoldTopUpFailure(service.ErrDailyLimitExceeded)
+	h := &OpenAIGatewayHandler{}
+	require.True(t, h.ensureForwardErrorResponseFor(c, err, true))
+
+	body := w.Body.String()
+	require.Contains(t, body, "event: response.failed\n")
+	require.Contains(t, body, `"code":"DAILY_LIMIT_EXCEEDED"`)
+	require.Contains(t, body, "Daily subscription usage limit exceeded")
+}
+
+func TestGatewayStreamingAllowanceFailureIncludesCode(t *testing.T) {
+	c, w := newGinContextForEndpoint(t, EndpointMessages)
+	err := service.WrapStreamOutputHoldTopUpFailure(service.ErrMonthlyLimitExceeded)
+
+	h := &GatewayHandler{}
+	require.True(t, h.ensureForwardErrorResponseFor(c, err, true))
+
+	require.Contains(t, w.Body.String(), `"code":"MONTHLY_LIMIT_EXCEEDED"`)
 }
 
 // 当 setOpsRequestContext 写过 model，合成事件应回填该字段（与 codebase 已有 makeResponsesCompletedEvent 对齐）。

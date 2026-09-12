@@ -16,6 +16,10 @@ type UserSubscriptionRepository interface {
 	GetActiveByUserIDAndPlanID(ctx context.Context, userID, planID int64) (*UserSubscription, error)
 	Update(ctx context.Context, sub *UserSubscription) error
 	Delete(ctx context.Context, id int64) error
+	// Revoke atomically rebinds every API key that references id when a
+	// replacement is supplied, then soft-deletes the entitlement. It returns the
+	// owner ID so callers can invalidate all affected authentication snapshots.
+	Revoke(ctx context.Context, id int64, replacementID *int64) (userID int64, err error)
 	Restore(ctx context.Context, subscriptionID int64, restoredStatus string) (*UserSubscription, error)
 
 	ListByUserID(ctx context.Context, userID int64) ([]UserSubscription, error)

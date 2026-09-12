@@ -48,9 +48,12 @@ func TestCNProviderBalanceCheckRunOnceProbesCodingPlanQuota(t *testing.T) {
 		Credentials: map[string]any{"account_mode": "coding"}}
 	zhipuCoding := Account{ID: 4, Platform: PlatformZhipu, Type: AccountTypeAPIKey, Status: StatusActive,
 		Credentials: map[string]any{"account_mode": "coding"}}
+	// 平台标签与模式不足以证明额度能力。第三方端点不应被当作 Kimi 官方额度端点探测。
+	kimiThirdParty := Account{ID: 5, Platform: PlatformKimi, Type: AccountTypeAPIKey, Status: StatusActive,
+		Credentials: map[string]any{"account_mode": "coding", "base_url": "https://integrate.api.nvidia.com/v1"}}
 
 	repo := &fakeCNCheckRepo{byPlatform: map[string][]Account{
-		PlatformKimi:  {kimiActive, kimiPaused, kimiInactive},
+		PlatformKimi:  {kimiActive, kimiPaused, kimiInactive, kimiThirdParty},
 		PlatformZhipu: {zhipuCoding},
 	}}
 	prober := &fakeCNQuotaProber{}

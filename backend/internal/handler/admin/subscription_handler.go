@@ -2,6 +2,8 @@ package admin
 
 import (
 	"context"
+	"errors"
+	"io"
 	"strconv"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
@@ -219,6 +221,10 @@ type ResetSubscriptionQuotaRequest struct {
 	Monthly bool `json:"monthly"`
 }
 
+type RevokeSubscriptionRequest struct {
+	ReplacementSubscriptionID *int64 `json:"replacement_subscription_id"`
+}
+
 // ResetQuota resets daily, weekly, and/or monthly usage for a subscription.
 // POST /api/v1/admin/subscriptions/:id/reset-quota
 func (h *SubscriptionHandler) ResetQuota(c *gin.Context) {
@@ -254,7 +260,17 @@ func (h *SubscriptionHandler) Revoke(c *gin.Context) {
 		return
 	}
 
-	err = h.subscriptionService.RevokeSubscription(c.Request.Context(), subscriptionID)
+	var req RevokeSubscriptionRequest
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if req.ReplacementSubscriptionID != nil && *req.ReplacementSubscriptionID <= 0 {
+		response.BadRequest(c, "replacement_subscription_id must be greater than zero")
+		return
+	}
+
+	err = h.subscriptionService.RevokeSubscription(c.Request.Context(), subscriptionID, req.ReplacementSubscriptionID)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

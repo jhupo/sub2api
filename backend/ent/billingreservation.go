@@ -32,6 +32,8 @@ type BillingReservation struct {
 	AuthorizedAmount float64 `json:"authorized_amount,omitempty"`
 	// CapturedAmount holds the value of the "captured_amount" field.
 	CapturedAmount float64 `json:"captured_amount,omitempty"`
+	// ActualAmount holds the value of the "actual_amount" field.
+	ActualAmount float64 `json:"actual_amount,omitempty"`
 	// Status holds the value of the "status" field.
 	Status string `json:"status,omitempty"`
 	// AuthorizationFingerprint holds the value of the "authorization_fingerprint" field.
@@ -64,7 +66,7 @@ func (*BillingReservation) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case billingreservation.FieldAsyncMetadata:
 			values[i] = new([]byte)
-		case billingreservation.FieldAuthorizedAmount, billingreservation.FieldCapturedAmount:
+		case billingreservation.FieldAuthorizedAmount, billingreservation.FieldCapturedAmount, billingreservation.FieldActualAmount:
 			values[i] = new(sql.NullFloat64)
 		case billingreservation.FieldID, billingreservation.FieldAPIKeyID, billingreservation.FieldUserID, billingreservation.FieldSubscriptionID:
 			values[i] = new(sql.NullInt64)
@@ -135,6 +137,12 @@ func (_m *BillingReservation) assignValues(columns []string, values []any) error
 				return fmt.Errorf("unexpected type %T for field captured_amount", values[i])
 			} else if value.Valid {
 				_m.CapturedAmount = value.Float64
+			}
+		case billingreservation.FieldActualAmount:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field actual_amount", values[i])
+			} else if value.Valid {
+				_m.ActualAmount = value.Float64
 			}
 		case billingreservation.FieldStatus:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -266,6 +274,9 @@ func (_m *BillingReservation) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("captured_amount=")
 	builder.WriteString(fmt.Sprintf("%v", _m.CapturedAmount))
+	builder.WriteString(", ")
+	builder.WriteString("actual_amount=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ActualAmount))
 	builder.WriteString(", ")
 	builder.WriteString("status=")
 	builder.WriteString(_m.Status)

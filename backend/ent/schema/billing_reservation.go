@@ -31,6 +31,7 @@ func (BillingReservation) Fields() []ent.Field {
 		field.Int64("subscription_id").Optional().Nillable(),
 		field.Float("authorized_amount").SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).Default(0),
 		field.Float("captured_amount").SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).Default(0),
+		field.Float("actual_amount").SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).Default(0),
 		field.String("status").MaxLen(20).Default("authorized"),
 		field.String("authorization_fingerprint").MaxLen(128),
 		field.String("request_fingerprint").MaxLen(128).Default(""),

@@ -14793,6 +14793,8 @@ type BillingReservationMutation struct {
 	addauthorized_amount      *float64
 	captured_amount           *float64
 	addcaptured_amount        *float64
+	actual_amount             *float64
+	addactual_amount          *float64
 	status                    *string
 	authorization_fingerprint *string
 	request_fingerprint       *string
@@ -15273,6 +15275,62 @@ func (m *BillingReservationMutation) AddedCapturedAmount() (r float64, exists bo
 func (m *BillingReservationMutation) ResetCapturedAmount() {
 	m.captured_amount = nil
 	m.addcaptured_amount = nil
+}
+
+// SetActualAmount sets the "actual_amount" field.
+func (m *BillingReservationMutation) SetActualAmount(f float64) {
+	m.actual_amount = &f
+	m.addactual_amount = nil
+}
+
+// ActualAmount returns the value of the "actual_amount" field in the mutation.
+func (m *BillingReservationMutation) ActualAmount() (r float64, exists bool) {
+	v := m.actual_amount
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldActualAmount returns the old "actual_amount" field's value of the BillingReservation entity.
+// If the BillingReservation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *BillingReservationMutation) OldActualAmount(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldActualAmount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldActualAmount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldActualAmount: %w", err)
+	}
+	return oldValue.ActualAmount, nil
+}
+
+// AddActualAmount adds f to the "actual_amount" field.
+func (m *BillingReservationMutation) AddActualAmount(f float64) {
+	if m.addactual_amount != nil {
+		*m.addactual_amount += f
+	} else {
+		m.addactual_amount = &f
+	}
+}
+
+// AddedActualAmount returns the value that was added to the "actual_amount" field in this mutation.
+func (m *BillingReservationMutation) AddedActualAmount() (r float64, exists bool) {
+	v := m.addactual_amount
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetActualAmount resets all changes to the "actual_amount" field.
+func (m *BillingReservationMutation) ResetActualAmount() {
+	m.actual_amount = nil
+	m.addactual_amount = nil
 }
 
 // SetStatus sets the "status" field.
@@ -15786,7 +15844,7 @@ func (m *BillingReservationMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *BillingReservationMutation) Fields() []string {
-	fields := make([]string, 0, 18)
+	fields := make([]string, 0, 19)
 	if m.request_id != nil {
 		fields = append(fields, billingreservation.FieldRequestID)
 	}
@@ -15807,6 +15865,9 @@ func (m *BillingReservationMutation) Fields() []string {
 	}
 	if m.captured_amount != nil {
 		fields = append(fields, billingreservation.FieldCapturedAmount)
+	}
+	if m.actual_amount != nil {
+		fields = append(fields, billingreservation.FieldActualAmount)
 	}
 	if m.status != nil {
 		fields = append(fields, billingreservation.FieldStatus)
@@ -15863,6 +15924,8 @@ func (m *BillingReservationMutation) Field(name string) (ent.Value, bool) {
 		return m.AuthorizedAmount()
 	case billingreservation.FieldCapturedAmount:
 		return m.CapturedAmount()
+	case billingreservation.FieldActualAmount:
+		return m.ActualAmount()
 	case billingreservation.FieldStatus:
 		return m.Status()
 	case billingreservation.FieldAuthorizationFingerprint:
@@ -15908,6 +15971,8 @@ func (m *BillingReservationMutation) OldField(ctx context.Context, name string) 
 		return m.OldAuthorizedAmount(ctx)
 	case billingreservation.FieldCapturedAmount:
 		return m.OldCapturedAmount(ctx)
+	case billingreservation.FieldActualAmount:
+		return m.OldActualAmount(ctx)
 	case billingreservation.FieldStatus:
 		return m.OldStatus(ctx)
 	case billingreservation.FieldAuthorizationFingerprint:
@@ -15987,6 +16052,13 @@ func (m *BillingReservationMutation) SetField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCapturedAmount(v)
+		return nil
+	case billingreservation.FieldActualAmount:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetActualAmount(v)
 		return nil
 	case billingreservation.FieldStatus:
 		v, ok := value.(string)
@@ -16088,6 +16160,9 @@ func (m *BillingReservationMutation) AddedFields() []string {
 	if m.addcaptured_amount != nil {
 		fields = append(fields, billingreservation.FieldCapturedAmount)
 	}
+	if m.addactual_amount != nil {
+		fields = append(fields, billingreservation.FieldActualAmount)
+	}
 	return fields
 }
 
@@ -16106,6 +16181,8 @@ func (m *BillingReservationMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedAuthorizedAmount()
 	case billingreservation.FieldCapturedAmount:
 		return m.AddedCapturedAmount()
+	case billingreservation.FieldActualAmount:
+		return m.AddedActualAmount()
 	}
 	return nil, false
 }
@@ -16149,6 +16226,13 @@ func (m *BillingReservationMutation) AddField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddCapturedAmount(v)
+		return nil
+	case billingreservation.FieldActualAmount:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddActualAmount(v)
 		return nil
 	}
 	return fmt.Errorf("unknown BillingReservation numeric field %s", name)
@@ -16236,6 +16320,9 @@ func (m *BillingReservationMutation) ResetField(name string) error {
 		return nil
 	case billingreservation.FieldCapturedAmount:
 		m.ResetCapturedAmount()
+		return nil
+	case billingreservation.FieldActualAmount:
+		m.ResetActualAmount()
 		return nil
 	case billingreservation.FieldStatus:
 		m.ResetStatus()

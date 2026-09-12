@@ -1,5 +1,8 @@
 # Upgrade From Official v0.2.1
 
+For the Chinese Docker operator guide and the v0.2.14 isolated rehearsal results,
+see [Chinese Upgrade Guide](UPGRADE_FROM_UPSTREAM_V0_2_1.zh-CN.md).
+
 This is a local-code deployment plan, not evidence of a production rehearsal.
 Use a tested release containing the WS funding and auth-cache fixes; an older
 published tag does not include uncommitted working-tree changes.

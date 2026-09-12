@@ -147,6 +147,7 @@ docs/*
 !docs/CODEX_OUTBOUND_IDENTITY.md
 !docs/GATEWAY_REQUEST_LIFECYCLE_REVIEW.md
 !docs/UPGRADE_FROM_UPSTREAM_V0_2_1.md
+!docs/UPGRADE_FROM_UPSTREAM_V0_2_1.zh-CN.md
 !docs/PLUGIN_DEVELOPMENT.md
 !docs/channel-monitor-v2-safe-defaults.md
 !docs/legal/

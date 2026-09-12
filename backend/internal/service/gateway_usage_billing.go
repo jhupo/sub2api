@@ -357,12 +357,14 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		}
 	}
 	guardedCost := 0.0
+	guardedCaptureCost := 0.0
 	walletPreauthorized := false
 	if preauthorized && cmd != nil {
 		switch guard.FundingSource() {
 		case FundingSourceWallet:
 			cmd.BalancePreauthorized = true
 			guardedCost = cmd.BalanceCost
+			guardedCaptureCost = guardedCost
 			walletPreauthorized = true
 		case FundingSourceSubscription:
 			guardSubscriptionID := guard.SubscriptionID()
@@ -371,6 +373,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 			}
 			cmd.SubscriptionPreauthorized = true
 			guardedCost = cmd.SubscriptionCost
+			guardedCaptureCost = guardedCost
 		default:
 			return false, balancePreauthorizationUnavailable(errors.New("guard funding source is invalid"))
 		}
@@ -393,7 +396,21 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	// require authorization before their reservation can be captured.
 	if preauthorized && !walletPreauthorized {
 		if err := guard.TopUpTo(billingCtx, guardedCost); err != nil {
-			return false, err
+			if !isSubscriptionAllowanceLimitError(err) {
+				return false, err
+			}
+			guardedCaptureCost = min(guardedCost, guard.HoldAmount())
+			capture := guardedCaptureCost
+			cmd.SubscriptionCaptureCost = &capture
+			cmd.Normalize()
+			slog.WarnContext(billingCtx, "billing.subscription_partial_capture_planned",
+				"request_id", requestID,
+				"api_key_id", cmd.APIKeyID,
+				"subscription_id", valueOrZero(cmd.SubscriptionID),
+				"actual_amount", guardedCost,
+				"captured_amount", guardedCaptureCost,
+				"uncovered_amount", QuantizeUsageBillingAmount(guardedCost-guardedCaptureCost),
+				"cause", err)
 		}
 	}
 
@@ -408,7 +425,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		// Finalize even when Apply reports a duplicate. A prior worker may have
 		// committed finalization_pending and crashed before settling the Redis
 		// hold; Applied=false is therefore not proof that settlement completed.
-		if err := guard.Finalize(billingCtx, guardedCost, cmd.RequestFingerprint); err != nil {
+		if err := guard.FinalizeCaptured(billingCtx, guardedCaptureCost, guardedCost, cmd.RequestFingerprint); err != nil {
 			return false, err
 		}
 	} else if applyErr != nil {
@@ -428,6 +445,12 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	finalizePostUsageBilling(billingCtx, p, deps, result, walletPreauthorized)
 	return true, nil
+}
+
+func isSubscriptionAllowanceLimitError(err error) bool {
+	return errors.Is(err, ErrDailyLimitExceeded) ||
+		errors.Is(err, ErrWeeklyLimitExceeded) ||
+		errors.Is(err, ErrMonthlyLimitExceeded)
 }
 
 func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult, balancePreauthorized bool) {

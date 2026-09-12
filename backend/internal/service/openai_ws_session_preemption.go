@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -18,7 +20,17 @@ const (
 	openAIWSSessionPreemptOwnerTTL      = 2 * time.Hour
 	openAIWSSessionPreemptWatchInterval = 2 * time.Second
 	openAIWSSessionPreemptCachePrefix   = "wspreempt:"
+	openAIWSSessionPreemptCloseGrace    = time.Second
+	openAIWSSessionPreemptedCloseReason = "session preempted by a newer connection"
 )
+
+type openAIWSPreemptClientCloser interface {
+	Close(code coderws.StatusCode, reason string) error
+}
+
+type openAIWSSessionPreemptState struct {
+	preempted atomic.Bool
+}
 
 // OpenAIWSSessionPreemptionCache is an optional GatewayCache capability. The
 // production Redis cache implements all operations atomically; cache stubs do
@@ -50,41 +62,80 @@ func (s *OpenAIGatewayService) BeginOpenAIWSIngressSessionPreemption(
 	account *Account,
 	firstClientMessage []byte,
 ) (context.Context, func(), bool) {
+	return s.BeginOpenAIWSIngressSessionPreemptionWithClient(ctx, c, account, firstClientMessage, nil)
+}
+
+// BeginOpenAIWSIngressSessionPreemptionWithClient also registers the client
+// connection so a replaced session receives an explicit retryable close frame
+// before its context is cancelled.
+func (s *OpenAIGatewayService) BeginOpenAIWSIngressSessionPreemptionWithClient(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	firstClientMessage []byte,
+	clientConn openAIWSPreemptClientCloser,
+) (context.Context, func(), bool) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if state, _ := ctx.Value(openAIWSSessionPreemptContextKey{}).(*openAIWSSessionPreemptState); state != nil {
+		return ctx, func() {}, true
+	}
 	if armed, _ := ctx.Value(openAIWSSessionPreemptContextKey{}).(bool); armed {
 		return ctx, func() {}, true
+	}
+	var notifyPreempted func()
+	if clientConn != nil {
+		notifyPreempted = func() {
+			_ = clientConn.Close(coderws.StatusTryAgainLater, openAIWSSessionPreemptedCloseReason)
+		}
 	}
 	if s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIWS.ModeRouterV2Enabled &&
 		account != nil && account.ResolveOpenAIResponsesWebSocketV2Mode(s.cfg.Gateway.OpenAIWS.IngressModeDefault) == OpenAIWSIngressModePassthrough {
 		return ctx, func() {}, false
 	}
 
-	preemptSessionHash := ""
+	preemptScope := ""
+	preemptThreadID := ""
 	preemptGroupID := getOpenAIGroupIDFromContext(c)
+	preemptAPIKeyID := getAPIKeyIDFromContext(c)
 	if account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth {
-		preemptSessionHash = s.GenerateScopedSessionHash(c, firstClientMessage)
+		preemptScope, preemptThreadID = resolveOpenAIWSExecutionScope(c, firstClientMessage, preemptAPIKeyID)
+		if preemptScope == "" && s != nil {
+			// Ordinary session-id turns retain the established content/session
+			// affinity key. Thread-aware and independent request lanes use the
+			// execution scope above to avoid parent/child collisions.
+			preemptScope = s.GenerateScopedSessionHash(c, firstClientMessage)
+		}
 	}
 	preemptCtx, cleanup, armed, preemptedPrevious := s.beginOpenAIWSSessionPreemptContext(
 		ctx,
 		account,
 		preemptGroupID,
-		getAPIKeyIDFromContext(c),
-		preemptSessionHash,
+		preemptAPIKeyID,
+		preemptScope,
 		false,
+		notifyPreempted,
 	)
 	if !armed {
 		return ctx, func() {}, false
 	}
 	if preemptedPrevious {
 		if stateStore := s.getOpenAIWSStateStore(); stateStore != nil {
-			stateSessionHash := preemptSessionHash
-			stateStore.DeleteSessionTurnState(preemptGroupID, stateSessionHash)
-			stateStore.DeleteSessionConn(preemptGroupID, stateSessionHash)
+			stateStore.DeleteSessionTurnState(preemptGroupID, preemptScope)
+			stateStore.DeleteSessionConn(preemptGroupID, preemptScope)
 		}
+		lane := resolveOpenAIWSExecutionLane(c, firstClientMessage)
+		if lane == "" {
+			lane = "main"
+		}
+		logOpenAIWSModeInfo("ingress_ws_session_preempted account_id=%d group_id=%d api_key_id=%d scope=%s thread_id=%s lane=%s",
+			account.ID, preemptGroupID, preemptAPIKeyID,
+			truncateOpenAIWSLogValue(preemptScope, 12),
+			truncateOpenAIWSLogValue(preemptThreadID, openAIWSIDValueMaxLen),
+			truncateOpenAIWSLogValue(lane, openAIWSLogValueMaxLen))
 	}
-	return context.WithValue(preemptCtx, openAIWSSessionPreemptContextKey{}, true), cleanup, true
+	return preemptCtx, cleanup, true
 }
 
 func newOpenAIWSSessionPreemptKey(groupID, apiKeyID int64, sessionHash string) (openAIWSSessionPreemptKey, bool) {
@@ -142,6 +193,7 @@ func (s *OpenAIGatewayService) beginOpenAIWSSessionPreemptContext(
 	groupID, apiKeyID int64,
 	sessionHash string,
 	httpIngressWSOneShot bool,
+	notify ...func(),
 ) (context.Context, func(), bool, bool) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -154,17 +206,38 @@ func (s *OpenAIGatewayService) beginOpenAIWSSessionPreemptContext(
 		return ctx, func() {}, false, false
 	}
 
-	preemptCtx, cancel := context.WithCancelCause(ctx)
+	state := &openAIWSSessionPreemptState{}
+	preemptCtx, cancel := context.WithCancelCause(context.WithValue(ctx, openAIWSSessionPreemptContextKey{}, state))
 	ownerToken := uuid.NewString()
+	var notifyPreempted func()
+	if len(notify) > 0 {
+		notifyPreempted = notify[0]
+	}
 	var preemptOnce sync.Once
 	preempt := func() {
 		preemptOnce.Do(func() {
+			state.preempted.Store(true)
 			if stateStore := s.getOpenAIWSStateStore(); stateStore != nil {
 				stateSessionHash := key.sessionHash
 				stateStore.DeleteSessionTurnState(key.groupID, stateSessionHash)
 				stateStore.DeleteSessionConn(key.groupID, stateSessionHash)
 			}
-			cancel(errOpenAIWSSessionPreempted)
+			if notifyPreempted == nil {
+				cancel(errOpenAIWSSessionPreempted)
+				return
+			}
+			notified := make(chan struct{})
+			go func() {
+				defer close(notified)
+				notifyPreempted()
+			}()
+			go func() {
+				select {
+				case <-notified:
+				case <-time.After(openAIWSSessionPreemptCloseGrace):
+				}
+				cancel(errOpenAIWSSessionPreempted)
+			}()
 		})
 	}
 	previousRemoteOwner, remoteClaimed := s.claimOpenAIWSSessionPreemptOwner(ctx, key, ownerToken)
@@ -266,7 +339,13 @@ func (s *OpenAIGatewayService) watchOpenAIWSSessionPreemptOwner(ctx context.Cont
 }
 
 func isOpenAIWSSessionPreempted(ctx context.Context) bool {
-	return ctx != nil && errors.Is(context.Cause(ctx), errOpenAIWSSessionPreempted)
+	if ctx == nil {
+		return false
+	}
+	if state, _ := ctx.Value(openAIWSSessionPreemptContextKey{}).(*openAIWSSessionPreemptState); state != nil && state.preempted.Load() {
+		return true
+	}
+	return errors.Is(context.Cause(ctx), errOpenAIWSSessionPreempted)
 }
 
 func IsOpenAIWSSessionPreemptedError(err error) bool {

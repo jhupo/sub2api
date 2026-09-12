@@ -12,6 +12,7 @@ type recoverySubscriptionRepo struct {
 	SubscriptionAllowanceRepository
 	released, captured int
 	amount             float64
+	actual             float64
 	fingerprint        string
 	err                error
 }
@@ -24,6 +25,9 @@ func (r *recoverySubscriptionRepo) ReleaseSubscriptionAllowance(_ context.Contex
 func (r *recoverySubscriptionRepo) CaptureSubscriptionAllowance(_ context.Context, cmd *SubscriptionAllowanceCommand, fingerprint string) (*SubscriptionAllowanceReservation, error) {
 	r.captured++
 	r.amount, r.fingerprint = cmd.Amount, fingerprint
+	if cmd.ActualAmount != nil {
+		r.actual = *cmd.ActualAmount
+	}
 	return nil, r.err
 }
 
@@ -33,7 +37,7 @@ func TestRecoverSubscriptionRequiresDurableMeasuredUsage(t *testing.T) {
 			repo := &recoverySubscriptionRepo{}
 			svc := &BalancePreauthorizationService{subscriptionRepo: repo}
 			record := SubscriptionAllowanceReservation{RequestID: "request", APIKeyID: 1, UserID: 2, SubscriptionID: 3,
-				Status: status, AuthorizedAmount: 10, CapturedAmount: 0.25, RequestFingerprint: "durable-usage"}
+				Status: status, AuthorizedAmount: 10, CapturedAmount: 0.25, ActualAmount: 0.75, RequestFingerprint: "durable-usage"}
 			require.NoError(t, svc.RecoverSubscriptionAllowance(context.Background(), record))
 			if status == BillingReservationAuthorized {
 				require.Equal(t, 1, repo.released)
@@ -43,6 +47,7 @@ func TestRecoverSubscriptionRequiresDurableMeasuredUsage(t *testing.T) {
 				require.Equal(t, 1, repo.captured)
 				require.Zero(t, repo.released)
 				require.Equal(t, 0.25, repo.amount)
+				require.Equal(t, 0.75, repo.actual)
 				require.Equal(t, "durable-usage", repo.fingerprint)
 			}
 			repo.err = errors.New("database unavailable")

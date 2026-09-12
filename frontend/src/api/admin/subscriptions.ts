@@ -115,8 +115,16 @@ export async function extend(
  * @param id - Subscription ID
  * @returns Success confirmation
  */
-export async function revoke(id: number): Promise<{ message: string }> {
-  const { data } = await apiClient.post<{ message: string }>(`/admin/subscriptions/${id}/revoke`)
+export async function revoke(
+  id: number,
+  replacementSubscriptionId?: number
+): Promise<{ message: string }> {
+  const { data } = await apiClient.post<{ message: string }>(
+    `/admin/subscriptions/${id}/revoke`,
+    replacementSubscriptionId
+      ? { replacement_subscription_id: replacementSubscriptionId }
+      : {}
+  )
   return data
 }
 
@@ -176,16 +184,9 @@ export async function listByPlan(
  * @returns Paginated list of user's subscriptions
  */
 export async function listByUser(
-  userId: number,
-  page: number = 1,
-  pageSize: number = 20
-): Promise<PaginatedResponse<UserSubscription>> {
-  const { data } = await apiClient.get<PaginatedResponse<UserSubscription>>(
-    `/admin/users/${userId}/subscriptions`,
-    {
-      params: { page, page_size: pageSize }
-    }
-  )
+  userId: number
+): Promise<UserSubscription[]> {
+  const { data } = await apiClient.get<UserSubscription[]>(`/admin/users/${userId}/subscriptions`)
   return data
 }
 

@@ -609,17 +609,49 @@
       </template>
     </BaseDialog>
 
-    <!-- Revoke Confirmation Dialog -->
-    <ConfirmDialog
+    <!-- Revoke Dialog -->
+    <BaseDialog
       :show="showRevokeDialog"
       :title="t('admin.subscriptions.revokeSubscription')"
-      :message="t('admin.subscriptions.revokeConfirm', { user: revokingSubscription?.user?.email })"
-      :confirm-text="t('admin.subscriptions.revoke')"
-      :cancel-text="t('common.cancel')"
-      :danger="true"
-      @confirm="confirmRevoke"
-      @cancel="showRevokeDialog = false"
-    />
+      width="narrow"
+      @close="closeRevokeDialog"
+    >
+      <div class="space-y-4">
+        <p class="text-sm text-gray-600 dark:text-gray-300">
+          {{ t('admin.subscriptions.revokeConfirm', { user: revokingSubscription?.user?.email }) }}
+        </p>
+        <div v-if="replacementOptions.length > 0">
+          <label class="input-label">{{ t('admin.subscriptions.replacementSubscription') }}</label>
+          <Select
+            v-model="replacementSubscriptionID"
+            :options="replacementOptions"
+            :placeholder="t('admin.subscriptions.noReplacementSubscription')"
+          />
+          <p class="input-hint">{{ t('admin.subscriptions.replacementSubscriptionHint') }}</p>
+        </div>
+        <p
+          v-else-if="!replacementSubscriptionsLoading"
+          class="text-sm text-amber-700 dark:text-amber-300"
+        >
+          {{ t('admin.subscriptions.noReplacementAvailable') }}
+        </p>
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <button type="button" class="btn btn-secondary" @click="closeRevokeDialog">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-danger"
+            :disabled="submitting || replacementSubscriptionsLoading"
+            @click="confirmRevoke"
+          >
+            {{ submitting ? t('common.processing') : t('admin.subscriptions.revoke') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
 
     <!-- Restore Confirmation Dialog -->
     <ConfirmDialog
@@ -929,6 +961,9 @@ const resettingQuota = ref(false)
 const extendingSubscription = ref<UserSubscription | null>(null)
 const revokingSubscription = ref<UserSubscription | null>(null)
 const restoringSubscription = ref<UserSubscription | null>(null)
+const replacementSubscriptions = ref<UserSubscription[]>([])
+const replacementSubscriptionID = ref<number | null>(null)
+const replacementSubscriptionsLoading = ref(false)
 
 const assignForm = reactive({
   user_id: null as number | null,
@@ -948,6 +983,13 @@ const planAssignOptions = computed(() =>
   plans.value.filter((plan) => !plan.is_historical).map((plan) => ({
     value: plan.id,
     label: plan.name
+  }))
+)
+
+const replacementOptions = computed(() =>
+  replacementSubscriptions.value.map((subscription) => ({
+    value: subscription.id,
+    label: `${subscription.plan?.name || `#${subscription.plan_id}`} (#${subscription.id})`
   }))
 )
 
@@ -1200,23 +1242,53 @@ const handleExtendSubscription = async () => {
   }
 }
 
-const handleRevoke = (subscription: UserSubscription) => {
+const handleRevoke = async (subscription: UserSubscription) => {
   revokingSubscription.value = subscription
+  replacementSubscriptionID.value = null
+  replacementSubscriptions.value = []
   showRevokeDialog.value = true
+  replacementSubscriptionsLoading.value = true
+  try {
+    const userSubscriptions = await adminAPI.subscriptions.listByUser(subscription.user_id)
+    const now = Date.now()
+    replacementSubscriptions.value = userSubscriptions.filter((candidate) =>
+      candidate.id !== subscription.id &&
+      candidate.status === 'active' &&
+      new Date(candidate.starts_at).getTime() <= now &&
+      new Date(candidate.expires_at).getTime() > now
+    )
+  } catch (error) {
+    console.error('Error loading replacement subscriptions:', error)
+    appStore.showError(t('admin.subscriptions.failedToLoadReplacements'))
+  } finally {
+    replacementSubscriptionsLoading.value = false
+  }
+}
+
+const closeRevokeDialog = () => {
+  showRevokeDialog.value = false
+  revokingSubscription.value = null
+  replacementSubscriptions.value = []
+  replacementSubscriptionID.value = null
 }
 
 const confirmRevoke = async () => {
   if (!revokingSubscription.value) return
 
+  submitting.value = true
   try {
-    await adminAPI.subscriptions.revoke(revokingSubscription.value.id)
+    await adminAPI.subscriptions.revoke(
+      revokingSubscription.value.id,
+      replacementSubscriptionID.value || undefined
+    )
     appStore.showSuccess(t('admin.subscriptions.subscriptionRevoked'))
-    showRevokeDialog.value = false
-    revokingSubscription.value = null
+    closeRevokeDialog()
     loadSubscriptions()
   } catch (error: any) {
     appStore.showError(error.response?.data?.detail || t('admin.subscriptions.failedToRevoke'))
     console.error('Error revoking subscription:', error)
+  } finally {
+    submitting.value = false
   }
 }
 

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -419,3 +420,18 @@ func shouldRecordStandaloneCyberUsage(forwardErr error, hasUsageResult bool) boo
 }
 
 var errDuplicateBalancePreauthorizationUsageTask = errors.New("duplicate balance preauthorization usage task")
+
+func streamOutputHoldClientError(err error) (status int, errType, code, message string, ok bool) {
+	code, message, ok = service.StreamOutputHoldTopUpFailureDetails(err)
+	if !ok {
+		return 0, "", "", "", false
+	}
+	switch code {
+	case "DAILY_LIMIT_EXCEEDED", "WEEKLY_LIMIT_EXCEEDED", "MONTHLY_LIMIT_EXCEEDED":
+		return http.StatusTooManyRequests, "rate_limit_error", code, message, true
+	case "INSUFFICIENT_BALANCE":
+		return http.StatusForbidden, "billing_error", code, message, true
+	default:
+		return http.StatusServiceUnavailable, "server_error", code, message, true
+	}
+}

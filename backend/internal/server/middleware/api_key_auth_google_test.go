@@ -205,6 +205,9 @@ func (f fakeGoogleSubscriptionRepo) Update(ctx context.Context, sub *service.Use
 func (f fakeGoogleSubscriptionRepo) Delete(ctx context.Context, id int64) error {
 	return errors.New("not implemented")
 }
+func (f fakeGoogleSubscriptionRepo) Revoke(ctx context.Context, id int64, replacementID *int64) (int64, error) {
+	return 0, errors.New("not implemented")
+}
 func (f fakeGoogleSubscriptionRepo) Restore(ctx context.Context, subscriptionID int64, restoredStatus string) (*service.UserSubscription, error) {
 	return nil, errors.New("not implemented")
 }

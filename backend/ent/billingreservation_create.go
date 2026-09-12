@@ -89,6 +89,20 @@ func (_c *BillingReservationCreate) SetNillableCapturedAmount(v *float64) *Billi
 	return _c
 }
 
+// SetActualAmount sets the "actual_amount" field.
+func (_c *BillingReservationCreate) SetActualAmount(v float64) *BillingReservationCreate {
+	_c.mutation.SetActualAmount(v)
+	return _c
+}
+
+// SetNillableActualAmount sets the "actual_amount" field if the given value is not nil.
+func (_c *BillingReservationCreate) SetNillableActualAmount(v *float64) *BillingReservationCreate {
+	if v != nil {
+		_c.SetActualAmount(*v)
+	}
+	return _c
+}
+
 // SetStatus sets the "status" field.
 func (_c *BillingReservationCreate) SetStatus(v string) *BillingReservationCreate {
 	_c.mutation.SetStatus(v)
@@ -262,6 +276,10 @@ func (_c *BillingReservationCreate) defaults() {
 		v := billingreservation.DefaultCapturedAmount
 		_c.mutation.SetCapturedAmount(v)
 	}
+	if _, ok := _c.mutation.ActualAmount(); !ok {
+		v := billingreservation.DefaultActualAmount
+		_c.mutation.SetActualAmount(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := billingreservation.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -309,6 +327,9 @@ func (_c *BillingReservationCreate) check() error {
 	}
 	if _, ok := _c.mutation.CapturedAmount(); !ok {
 		return &ValidationError{Name: "captured_amount", err: errors.New(`ent: missing required field "BillingReservation.captured_amount"`)}
+	}
+	if _, ok := _c.mutation.ActualAmount(); !ok {
+		return &ValidationError{Name: "actual_amount", err: errors.New(`ent: missing required field "BillingReservation.actual_amount"`)}
 	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "BillingReservation.status"`)}
@@ -402,6 +423,10 @@ func (_c *BillingReservationCreate) createSpec() (*BillingReservation, *sqlgraph
 	if value, ok := _c.mutation.CapturedAmount(); ok {
 		_spec.SetField(billingreservation.FieldCapturedAmount, field.TypeFloat64, value)
 		_node.CapturedAmount = value
+	}
+	if value, ok := _c.mutation.ActualAmount(); ok {
+		_spec.SetField(billingreservation.FieldActualAmount, field.TypeFloat64, value)
+		_node.ActualAmount = value
 	}
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(billingreservation.FieldStatus, field.TypeString, value)
@@ -616,6 +641,24 @@ func (u *BillingReservationUpsert) UpdateCapturedAmount() *BillingReservationUps
 // AddCapturedAmount adds v to the "captured_amount" field.
 func (u *BillingReservationUpsert) AddCapturedAmount(v float64) *BillingReservationUpsert {
 	u.Add(billingreservation.FieldCapturedAmount, v)
+	return u
+}
+
+// SetActualAmount sets the "actual_amount" field.
+func (u *BillingReservationUpsert) SetActualAmount(v float64) *BillingReservationUpsert {
+	u.Set(billingreservation.FieldActualAmount, v)
+	return u
+}
+
+// UpdateActualAmount sets the "actual_amount" field to the value that was provided on create.
+func (u *BillingReservationUpsert) UpdateActualAmount() *BillingReservationUpsert {
+	u.SetExcluded(billingreservation.FieldActualAmount)
+	return u
+}
+
+// AddActualAmount adds v to the "actual_amount" field.
+func (u *BillingReservationUpsert) AddActualAmount(v float64) *BillingReservationUpsert {
+	u.Add(billingreservation.FieldActualAmount, v)
 	return u
 }
 
@@ -951,6 +994,27 @@ func (u *BillingReservationUpsertOne) AddCapturedAmount(v float64) *BillingReser
 func (u *BillingReservationUpsertOne) UpdateCapturedAmount() *BillingReservationUpsertOne {
 	return u.Update(func(s *BillingReservationUpsert) {
 		s.UpdateCapturedAmount()
+	})
+}
+
+// SetActualAmount sets the "actual_amount" field.
+func (u *BillingReservationUpsertOne) SetActualAmount(v float64) *BillingReservationUpsertOne {
+	return u.Update(func(s *BillingReservationUpsert) {
+		s.SetActualAmount(v)
+	})
+}
+
+// AddActualAmount adds v to the "actual_amount" field.
+func (u *BillingReservationUpsertOne) AddActualAmount(v float64) *BillingReservationUpsertOne {
+	return u.Update(func(s *BillingReservationUpsert) {
+		s.AddActualAmount(v)
+	})
+}
+
+// UpdateActualAmount sets the "actual_amount" field to the value that was provided on create.
+func (u *BillingReservationUpsertOne) UpdateActualAmount() *BillingReservationUpsertOne {
+	return u.Update(func(s *BillingReservationUpsert) {
+		s.UpdateActualAmount()
 	})
 }
 
@@ -1477,6 +1541,27 @@ func (u *BillingReservationUpsertBulk) AddCapturedAmount(v float64) *BillingRese
 func (u *BillingReservationUpsertBulk) UpdateCapturedAmount() *BillingReservationUpsertBulk {
 	return u.Update(func(s *BillingReservationUpsert) {
 		s.UpdateCapturedAmount()
+	})
+}
+
+// SetActualAmount sets the "actual_amount" field.
+func (u *BillingReservationUpsertBulk) SetActualAmount(v float64) *BillingReservationUpsertBulk {
+	return u.Update(func(s *BillingReservationUpsert) {
+		s.SetActualAmount(v)
+	})
+}
+
+// AddActualAmount adds v to the "actual_amount" field.
+func (u *BillingReservationUpsertBulk) AddActualAmount(v float64) *BillingReservationUpsertBulk {
+	return u.Update(func(s *BillingReservationUpsert) {
+		s.AddActualAmount(v)
+	})
+}
+
+// UpdateActualAmount sets the "actual_amount" field to the value that was provided on create.
+func (u *BillingReservationUpsertBulk) UpdateActualAmount() *BillingReservationUpsertBulk {
+	return u.Update(func(s *BillingReservationUpsert) {
+		s.UpdateActualAmount()
 	})
 }
 

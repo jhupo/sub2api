@@ -5,6 +5,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
 	"github.com/Wei-Shaw/sub2api/ent/subscriptionplanversion"
@@ -160,6 +161,74 @@ func (r *userSubscriptionRepository) Delete(ctx context.Context, id int64) error
 	client := clientFromContext(ctx, r.client)
 	_, err := client.UserSubscription.Delete().Where(usersubscription.IDEQ(id)).Exec(ctx)
 	return err
+}
+
+func (r *userSubscriptionRepository) Revoke(ctx context.Context, id int64, replacementID *int64) (int64, error) {
+	if dbent.TxFromContext(ctx) != nil {
+		return r.revokeInTransaction(ctx, id, replacementID)
+	}
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	txCtx := dbent.NewTxContext(ctx, tx)
+	userID, err := r.revokeInTransaction(txCtx, id, replacementID)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return userID, nil
+}
+
+func (r *userSubscriptionRepository) revokeInTransaction(ctx context.Context, id int64, replacementID *int64) (int64, error) {
+	client := clientFromContext(ctx, r.client)
+	source, err := client.UserSubscription.Query().
+		Where(usersubscription.IDEQ(id)).
+		ForUpdate().
+		Only(ctx)
+	if err != nil {
+		return 0, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	}
+
+	var replacement *dbent.UserSubscription
+	if replacementID != nil {
+		if *replacementID <= 0 || *replacementID == id {
+			return 0, service.ErrSubscriptionReplacement
+		}
+		replacement, err = client.UserSubscription.Query().
+			Where(usersubscription.IDEQ(*replacementID)).
+			ForUpdate().
+			Only(ctx)
+		now := time.Now()
+		if err != nil || replacement.UserID != source.UserID || replacement.Status != service.SubscriptionStatusActive ||
+			now.Before(replacement.StartsAt) || !now.Before(replacement.ExpiresAt) {
+			return 0, service.ErrSubscriptionReplacement
+		}
+	}
+
+	allRowsCtx := mixins.SkipSoftDelete(ctx)
+	boundCount, err := client.APIKey.Query().Where(apikey.SubscriptionIDEQ(id)).Count(allRowsCtx)
+	if err != nil {
+		return 0, err
+	}
+	if boundCount > 0 && replacement == nil {
+		return 0, service.ErrSubscriptionAPIKeysBound
+	}
+	if boundCount > 0 {
+		if _, err := client.APIKey.Update().
+			Where(apikey.SubscriptionIDEQ(id)).
+			SetSubscriptionID(replacement.ID).
+			Save(allRowsCtx); err != nil {
+			return 0, err
+		}
+	}
+	if _, err := client.UserSubscription.Delete().Where(usersubscription.IDEQ(id)).Exec(ctx); err != nil {
+		return 0, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	}
+	return source.UserID, nil
 }
 
 func (r *userSubscriptionRepository) Restore(ctx context.Context, id int64, status string) (*service.UserSubscription, error) {

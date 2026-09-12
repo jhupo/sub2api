@@ -13,8 +13,9 @@ import (
 type revokeCacheUserSubRepoStub struct {
 	userSubRepoNoop
 
-	sub     *UserSubscription
-	deleted bool
+	sub           *UserSubscription
+	deleted       bool
+	replacementID *int64
 }
 
 func (r *revokeCacheUserSubRepoStub) GetByID(_ context.Context, id int64) (*UserSubscription, error) {
@@ -33,6 +34,15 @@ func (r *revokeCacheUserSubRepoStub) Delete(_ context.Context, id int64) error {
 	return nil
 }
 
+func (r *revokeCacheUserSubRepoStub) Revoke(_ context.Context, id int64, replacementID *int64) (int64, error) {
+	if r.sub == nil || r.sub.ID != id || r.deleted {
+		return 0, ErrSubscriptionNotFound
+	}
+	r.deleted = true
+	r.replacementID = replacementID
+	return r.sub.UserID, nil
+}
+
 func TestRevokeSubscription_DeletesEntitlementSynchronously(t *testing.T) {
 	repo := &revokeCacheUserSubRepoStub{
 		sub: &UserSubscription{
@@ -46,7 +56,7 @@ func TestRevokeSubscription_DeletesEntitlementSynchronously(t *testing.T) {
 	}
 	svc := NewSubscriptionService(repo, nil)
 
-	err := svc.RevokeSubscription(context.Background(), 1)
+	err := svc.RevokeSubscription(context.Background(), 1, nil)
 	require.NoError(t, err)
 	require.True(t, repo.deleted)
 }

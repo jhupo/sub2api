@@ -38,6 +38,7 @@ func scanSubscriptionAllowance(scanner subscriptionAllowanceScanner) (*service.S
 		&requestFingerprint,
 		&record.AuthorizedAmount,
 		&record.CapturedAmount,
+		&record.ActualAmount,
 		&record.Status,
 		&dailyStart,
 		&weeklyStart,
@@ -72,6 +73,7 @@ const subscriptionAllowanceReturning = `
 	request_fingerprint,
 	authorized_amount,
 	captured_amount,
+	actual_amount,
 	status,
 	daily_window_start,
 	weekly_window_start,
@@ -88,9 +90,14 @@ func normalizeSubscriptionAllowanceCommand(cmd *service.SubscriptionAllowanceCom
 	cmd.RequestID = strings.TrimSpace(cmd.RequestID)
 	cmd.AuthorizationFingerprint = strings.TrimSpace(cmd.AuthorizationFingerprint)
 	cmd.Amount = service.QuantizeUsageBillingAmount(cmd.Amount)
+	if cmd.ActualAmount != nil {
+		actual := service.QuantizeUsageBillingAmount(*cmd.ActualAmount)
+		cmd.ActualAmount = &actual
+	}
 	if cmd.RequestID == "" || cmd.AuthorizationFingerprint == "" || cmd.APIKeyID <= 0 ||
 		cmd.UserID <= 0 || cmd.SubscriptionID <= 0 || cmd.Amount < 0 ||
-		math.IsNaN(cmd.Amount) || math.IsInf(cmd.Amount, 0) {
+		math.IsNaN(cmd.Amount) || math.IsInf(cmd.Amount, 0) ||
+		(cmd.ActualAmount != nil && (*cmd.ActualAmount < cmd.Amount || math.IsNaN(*cmd.ActualAmount) || math.IsInf(*cmd.ActualAmount, 0))) {
 		return service.ErrInvalidBillingPreauthorizationEstimate
 	}
 	if cmd.AuthorizedAt.IsZero() {
@@ -208,12 +215,12 @@ func (r *usageBillingRepository) AuthorizeSubscriptionAllowance(
 	record, err := scanSubscriptionAllowance(tx.QueryRowContext(ctx, `
 		INSERT INTO billing_reservations (
 			request_id, api_key_id, user_id, funding_source, subscription_id,
-			authorized_amount, captured_amount, status,
+			authorized_amount, captured_amount, actual_amount, status,
 			authorization_fingerprint, request_fingerprint,
 			daily_window_start, weekly_window_start, monthly_window_start,
 			expires_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, '', $9, $10, $11, $12)
+		VALUES ($1, $2, $3, $4, $5, $6, 0, 0, $7, $8, '', $9, $10, $11, $12)
 		RETURNING `+subscriptionAllowanceReturning,
 		cmd.RequestID, cmd.APIKeyID, cmd.UserID, service.FundingSourceSubscription,
 		cmd.SubscriptionID, cmd.Amount, service.BillingReservationAuthorized,
@@ -605,11 +612,20 @@ func (r *usageBillingRepository) finishSubscriptionAllowance(
 		return nil, err
 	}
 	wantedStatus := service.BillingReservationReleased
+	actual := 0.0
 	if capture {
+		actual = cmd.Amount
+		if cmd.ActualAmount != nil {
+			actual = *cmd.ActualAmount
+		}
 		wantedStatus = service.BillingReservationCaptured
+		if actual > cmd.Amount {
+			wantedStatus = service.BillingReservationPartiallyCaptured
+		}
 	}
 	if candidate.Status == wantedStatus {
-		if capture && (!subscriptionAllowanceAmountEqual(candidate.CapturedAmount, cmd.Amount) || candidate.RequestFingerprint != requestFingerprint) {
+		if capture && (!subscriptionAllowanceAmountEqual(candidate.CapturedAmount, cmd.Amount) ||
+			!subscriptionAllowanceAmountEqual(candidate.ActualAmount, actual) || candidate.RequestFingerprint != requestFingerprint) {
 			return nil, service.ErrUsageBillingRequestConflict
 		}
 		return candidate, nil
@@ -630,13 +646,15 @@ func (r *usageBillingRepository) finishSubscriptionAllowance(
 		return nil, err
 	}
 	if record.Status == wantedStatus {
-		if capture && (!subscriptionAllowanceAmountEqual(record.CapturedAmount, cmd.Amount) || record.RequestFingerprint != requestFingerprint) {
+		if capture && (!subscriptionAllowanceAmountEqual(record.CapturedAmount, cmd.Amount) ||
+			!subscriptionAllowanceAmountEqual(record.ActualAmount, actual) || record.RequestFingerprint != requestFingerprint) {
 			return nil, service.ErrUsageBillingRequestConflict
 		}
 		return record, nil
 	}
 	if capture && record.Status == service.BillingReservationFinalizing {
-		if !subscriptionAllowanceAmountEqual(record.CapturedAmount, cmd.Amount) || record.RequestFingerprint != requestFingerprint {
+		if !subscriptionAllowanceAmountEqual(record.CapturedAmount, cmd.Amount) ||
+			!subscriptionAllowanceAmountEqual(record.ActualAmount, actual) || record.RequestFingerprint != requestFingerprint {
 			return nil, service.ErrUsageBillingRequestConflict
 		}
 	} else if record.Status != service.BillingReservationAuthorized {
@@ -645,9 +663,9 @@ func (r *usageBillingRepository) finishSubscriptionAllowance(
 	if cmd.Amount > record.AuthorizedAmount {
 		return nil, service.ErrUsageBillingRequestConflict
 	}
-	actual := 0.0
+	captured := 0.0
 	if capture {
-		actual = cmd.Amount
+		captured = cmd.Amount
 	}
 	// A zero-amount authorization does not occupy any allowance. It may remain
 	// authorized across a calendar/rolling-window transition because the
@@ -671,7 +689,7 @@ func (r *usageBillingRepository) finishSubscriptionAllowance(
 				AND daily_reserved_usd >= $2
 				AND weekly_reserved_usd >= $2
 				AND monthly_reserved_usd >= $2
-		`, record.SubscriptionID, record.AuthorizedAmount, actual,
+		`, record.SubscriptionID, record.AuthorizedAmount, captured,
 			record.DailyWindowStart, record.WeeklyWindowStart, record.MonthlyWindowStart)
 		if err != nil {
 			return nil, err
@@ -682,11 +700,11 @@ func (r *usageBillingRepository) finishSubscriptionAllowance(
 	}
 	record, err = scanSubscriptionAllowance(tx.QueryRowContext(ctx, `
 		UPDATE billing_reservations
-		SET captured_amount = $3, status = $4, request_fingerprint = $5, updated_at = NOW()
+		SET captured_amount = $3, actual_amount = $4, status = $5, request_fingerprint = $6, updated_at = NOW()
 		WHERE request_id = $1 AND api_key_id = $2
-			AND funding_source = $6 AND status IN ($7, $8)
+			AND funding_source = $7 AND status IN ($8, $9)
 		RETURNING `+subscriptionAllowanceReturning,
-		cmd.RequestID, cmd.APIKeyID, actual, wantedStatus, requestFingerprint,
+		cmd.RequestID, cmd.APIKeyID, captured, actual, wantedStatus, requestFingerprint,
 		service.FundingSourceSubscription, service.BillingReservationAuthorized,
 		service.BillingReservationFinalizing,
 	))
@@ -740,6 +758,7 @@ func (r *usageBillingRepository) ListRecoverableSubscriptionAllowances(ctx conte
 				reservation.request_fingerprint,
 				reservation.authorized_amount,
 				reservation.captured_amount,
+				reservation.actual_amount,
 				reservation.status,
 				reservation.daily_window_start,
 				reservation.weekly_window_start,

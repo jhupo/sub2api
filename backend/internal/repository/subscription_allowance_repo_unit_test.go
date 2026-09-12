@@ -79,10 +79,10 @@ func TestCaptureSubscriptionAllowanceZeroAmountSurvivesWindowAdvance(t *testing.
 	updatedAt := time.Now().UTC()
 	rows := sqlmock.NewRows([]string{
 		"request_id", "api_key_id", "user_id", "subscription_id", "authorization_fingerprint",
-		"request_fingerprint", "authorized_amount", "captured_amount", "status",
+		"request_fingerprint", "authorized_amount", "captured_amount", "actual_amount", "status",
 		"daily_window_start", "weekly_window_start", "monthly_window_start", "expires_at",
 		"updated_at", "async_task_id",
-	}).AddRow("request", 7, 42, 99, "authorization", "", 0.0, 0.0,
+	}).AddRow("request", 7, 42, 99, "authorization", "", 0.0, 0.0, 0.0,
 		service.BillingReservationAuthorized, time.Now().UTC().Add(-24*time.Hour),
 		time.Now().UTC().Add(-7*24*time.Hour), time.Now().UTC().Add(-30*24*time.Hour), expiresAt, updatedAt, "")
 	// The first read is deliberately stale: after this zero-cost request was
@@ -98,21 +98,21 @@ func TestCaptureSubscriptionAllowanceZeroAmountSurvivesWindowAdvance(t *testing.
 		WithArgs("request", int64(7), service.FundingSourceSubscription).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"request_id", "api_key_id", "user_id", "subscription_id", "authorization_fingerprint",
-			"request_fingerprint", "authorized_amount", "captured_amount", "status",
+			"request_fingerprint", "authorized_amount", "captured_amount", "actual_amount", "status",
 			"daily_window_start", "weekly_window_start", "monthly_window_start", "expires_at",
 			"updated_at", "async_task_id",
-		}).AddRow("request", 7, 42, 99, "authorization", "", 0.0, 0.0,
+		}).AddRow("request", 7, 42, 99, "authorization", "", 0.0, 0.0, 0.0,
 			service.BillingReservationAuthorized, time.Now().UTC().Add(-24*time.Hour),
 			time.Now().UTC().Add(-7*24*time.Hour), time.Now().UTC().Add(-30*24*time.Hour), expiresAt, updatedAt, ""))
-	mock.ExpectQuery(`(?s)UPDATE billing_reservations\s+SET captured_amount = \$3, status = \$4`).
-		WithArgs("request", int64(7), 0.0, service.BillingReservationCaptured, "capture-fingerprint",
+	mock.ExpectQuery(`(?s)UPDATE billing_reservations\s+SET captured_amount = \$3, actual_amount = \$4, status = \$5`).
+		WithArgs("request", int64(7), 0.0, 0.0, service.BillingReservationCaptured, "capture-fingerprint",
 			service.FundingSourceSubscription, service.BillingReservationAuthorized, service.BillingReservationFinalizing).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"request_id", "api_key_id", "user_id", "subscription_id", "authorization_fingerprint",
-			"request_fingerprint", "authorized_amount", "captured_amount", "status",
+			"request_fingerprint", "authorized_amount", "captured_amount", "actual_amount", "status",
 			"daily_window_start", "weekly_window_start", "monthly_window_start", "expires_at",
 			"updated_at", "async_task_id",
-		}).AddRow("request", 7, 42, 99, "authorization", "capture-fingerprint", 0.0, 0.0,
+		}).AddRow("request", 7, 42, 99, "authorization", "capture-fingerprint", 0.0, 0.0, 0.0,
 			service.BillingReservationCaptured, nil, nil, nil, expiresAt, updatedAt, ""))
 	mock.ExpectCommit()
 
@@ -124,6 +124,59 @@ func TestCaptureSubscriptionAllowanceZeroAmountSurvivesWindowAdvance(t *testing.
 	}, "capture-fingerprint")
 	require.NoError(t, err)
 	require.Equal(t, service.BillingReservationCaptured, record.Status)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCaptureSubscriptionAllowancePersistsPartialDeliveryTerminalState(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	expiresAt := now.Add(time.Hour)
+	columns := []string{
+		"request_id", "api_key_id", "user_id", "subscription_id", "authorization_fingerprint",
+		"request_fingerprint", "authorized_amount", "captured_amount", "actual_amount", "status",
+		"daily_window_start", "weekly_window_start", "monthly_window_start", "expires_at",
+		"updated_at", "async_task_id",
+	}
+	reservation := func(status, fingerprint string, captured, actual float64) *sqlmock.Rows {
+		return sqlmock.NewRows(columns).AddRow(
+			"request", 7, 42, 99, "authorization", fingerprint,
+			0.5, captured, actual, status, nil, nil, nil, expiresAt, now, "",
+		)
+	}
+
+	mock.ExpectQuery(`(?s)SELECT .*FROM billing_reservations.*WHERE request_id = \$1 AND api_key_id = \$2 AND funding_source = \$3`).
+		WithArgs("request", int64(7), service.FundingSourceSubscription).
+		WillReturnRows(reservation(service.BillingReservationFinalizing, "usage-fingerprint", 0.5, 0.75))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT id\s+FROM user_subscriptions\s+WHERE id = \$1\s+FOR UPDATE`).
+		WithArgs(int64(99)).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(99)))
+	mock.ExpectQuery(`(?s)SELECT .*FROM billing_reservations.*FOR UPDATE`).
+		WithArgs("request", int64(7), service.FundingSourceSubscription).
+		WillReturnRows(reservation(service.BillingReservationFinalizing, "usage-fingerprint", 0.5, 0.75))
+	mock.ExpectExec(`(?s)UPDATE user_subscriptions\s+SET daily_reserved_usd = daily_reserved_usd - \$2`).
+		WithArgs(int64(99), 0.5, 0.5, nil, nil, nil).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`(?s)UPDATE billing_reservations\s+SET captured_amount = \$3, actual_amount = \$4, status = \$5`).
+		WithArgs("request", int64(7), 0.5, 0.75, service.BillingReservationPartiallyCaptured, "usage-fingerprint",
+			service.FundingSourceSubscription, service.BillingReservationAuthorized, service.BillingReservationFinalizing).
+		WillReturnRows(reservation(service.BillingReservationPartiallyCaptured, "usage-fingerprint", 0.5, 0.75))
+	mock.ExpectCommit()
+
+	actual := 0.75
+	repo := &usageBillingRepository{db: db}
+	record, err := repo.CaptureSubscriptionAllowance(context.Background(), &service.SubscriptionAllowanceCommand{
+		RequestID: "request", APIKeyID: 7, UserID: 42, SubscriptionID: 99,
+		AuthorizationFingerprint: "authorization", Amount: 0.5, ActualAmount: &actual,
+		AuthorizedAt: now, ExpiresAt: expiresAt,
+	}, "usage-fingerprint")
+
+	require.NoError(t, err)
+	require.Equal(t, service.BillingReservationPartiallyCaptured, record.Status)
+	require.Equal(t, 0.5, record.CapturedAmount)
+	require.Equal(t, 0.75, record.ActualAmount)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -139,13 +192,13 @@ func TestTopUpSubscriptionAllowanceZeroAmountRebindsAdvancedWindow(t *testing.T)
 	oldMonthly := now.Add(-31 * 24 * time.Hour)
 	reservationColumns := []string{
 		"request_id", "api_key_id", "user_id", "subscription_id", "authorization_fingerprint",
-		"request_fingerprint", "authorized_amount", "captured_amount", "status",
+		"request_fingerprint", "authorized_amount", "captured_amount", "actual_amount", "status",
 		"daily_window_start", "weekly_window_start", "monthly_window_start", "expires_at",
 		"updated_at", "async_task_id",
 	}
 	addReservation := func(amount float64, daily, weekly, monthly any) *sqlmock.Rows {
 		return sqlmock.NewRows(reservationColumns).AddRow(
-			"request", 7, 42, 99, "authorization", "", amount, 0.0,
+			"request", 7, 42, 99, "authorization", "", amount, 0.0, 0.0,
 			service.BillingReservationAuthorized, daily, weekly, monthly, expiresAt, now, "",
 		)
 	}
@@ -207,10 +260,10 @@ func TestListRecoverableSubscriptionAllowancesLeasesSubscriptionRows(t *testing.
 			service.BillingReservationFinalizing, finalizationCutoff, int64(60), 500).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"request_id", "api_key_id", "user_id", "subscription_id", "authorization_fingerprint",
-			"request_fingerprint", "authorized_amount", "captured_amount", "status",
+			"request_fingerprint", "authorized_amount", "captured_amount", "actual_amount", "status",
 			"daily_window_start", "weekly_window_start", "monthly_window_start", "expires_at",
 			"updated_at", "async_task_id",
-		}).AddRow("request", 7, 42, 99, "authorization", "", "0.50", "0", service.BillingReservationAuthorized,
+		}).AddRow("request", 7, 42, 99, "authorization", "", "0.50", "0", "0", service.BillingReservationAuthorized,
 			nil, nil, nil, expiresAt, updatedAt, ""))
 
 	repo := &usageBillingRepository{db: db}

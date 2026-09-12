@@ -46,7 +46,7 @@ type BalancePreauthorizationGuard struct {
 
 type billingPreauthorizationReservation interface {
 	TopUp(context.Context, float64) error
-	Capture(context.Context, float64, string) error
+	Capture(context.Context, float64, float64, string) error
 	Release(context.Context) error
 	FundingSource() string
 	SubscriptionID() *int64
@@ -160,7 +160,57 @@ func wrapStreamOutputHoldTopUpFailure(err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("stream output hold top-up failed: %w", err)
+	return &StreamOutputHoldTopUpError{cause: err}
+}
+
+func WrapStreamOutputHoldTopUpFailure(err error) error {
+	return wrapStreamOutputHoldTopUpFailure(err)
+}
+
+// StreamOutputHoldTopUpError identifies a local funding failure after a stream
+// has started. Handlers use this type to emit a protocol terminal event instead
+// of misreporting the failure as an upstream disconnect.
+type StreamOutputHoldTopUpError struct {
+	cause error
+}
+
+func (e *StreamOutputHoldTopUpError) Error() string {
+	if e == nil || e.cause == nil {
+		return "stream output hold top-up failed"
+	}
+	return fmt.Sprintf("stream output hold top-up failed: %v", e.cause)
+}
+
+func (e *StreamOutputHoldTopUpError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func IsStreamOutputHoldTopUpFailure(err error) bool {
+	var target *StreamOutputHoldTopUpError
+	return errors.As(err, &target)
+}
+
+// StreamOutputHoldTopUpFailureDetails returns stable client-safe details for a
+// funding failure. It intentionally does not expose database or cache errors.
+func StreamOutputHoldTopUpFailureDetails(err error) (code, message string, ok bool) {
+	if !IsStreamOutputHoldTopUpFailure(err) {
+		return "", "", false
+	}
+	switch {
+	case errors.Is(err, ErrDailyLimitExceeded):
+		return "DAILY_LIMIT_EXCEEDED", "Daily subscription usage limit exceeded", true
+	case errors.Is(err, ErrWeeklyLimitExceeded):
+		return "WEEKLY_LIMIT_EXCEEDED", "Weekly subscription usage limit exceeded", true
+	case errors.Is(err, ErrMonthlyLimitExceeded):
+		return "MONTHLY_LIMIT_EXCEEDED", "Monthly subscription usage limit exceeded", true
+	case errors.Is(err, ErrBalanceWithholdingFailed):
+		return "INSUFFICIENT_BALANCE", "Insufficient balance to continue the response", true
+	default:
+		return "BILLING_SERVICE_ERROR", "Billing authorization failed while streaming", true
+	}
 }
 
 // detachedBalancePreauthorizationWalletContext keeps a money mutation alive
@@ -244,12 +294,23 @@ func (g *BalancePreauthorizationGuard) topUpToLocked(ctx context.Context, target
 }
 
 func (g *BalancePreauthorizationGuard) Finalize(ctx context.Context, actual float64, requestFingerprint string) error {
+	return g.FinalizeCaptured(ctx, actual, actual, requestFingerprint)
+}
+
+// FinalizeCaptured settles a delivered request whose durable usage cost may be
+// greater than the amount covered by a subscription reservation. Wallet
+// reservations always require captured == actual; subscription reservations
+// may capture less after a definitive allowance-limit failure.
+func (g *BalancePreauthorizationGuard) FinalizeCaptured(ctx context.Context, captured, actual float64, requestFingerprint string) error {
 	if g == nil || g.core == nil {
 		return nil
 	}
+	captured = QuantizeUsageBillingAmount(captured)
 	actual = QuantizeUsageBillingAmount(actual)
 	requestFingerprint = strings.TrimSpace(requestFingerprint)
-	if actual < 0 || math.IsNaN(actual) || math.IsInf(actual, 0) || requestFingerprint == "" {
+	if captured < 0 || actual < 0 || captured > actual ||
+		math.IsNaN(captured) || math.IsInf(captured, 0) ||
+		math.IsNaN(actual) || math.IsInf(actual, 0) || requestFingerprint == "" {
 		return ErrInvalidBillingPreauthorizationEstimate
 	}
 	ctx = nonNilContext(ctx)
@@ -273,7 +334,13 @@ func (g *BalancePreauthorizationGuard) Finalize(ctx context.Context, actual floa
 	if g.core.reservation == nil {
 		return balancePreauthorizationUnavailable(errors.New("billing reservation is unavailable"))
 	}
-	if err := g.core.reservation.Capture(ctx, actual, requestFingerprint); err != nil {
+	if g.core.reservation.FundingSource() == FundingSourceWallet && captured != actual {
+		return ErrInvalidBillingPreauthorizationEstimate
+	}
+	if g.core.reservation.FundingSource() == FundingSourceSubscription && captured > g.core.holdAmount {
+		return ErrInvalidBillingPreauthorizationEstimate
+	}
+	if err := g.core.reservation.Capture(ctx, captured, actual, requestFingerprint); err != nil {
 		return err
 	}
 	g.core.terminalState = balancePreauthorizationGuardFinalized
@@ -303,9 +370,12 @@ func (r *walletPreauthorizationReservation) TopUp(ctx context.Context, target fl
 	return nil
 }
 
-func (r *walletPreauthorizationReservation) Capture(ctx context.Context, actual float64, requestFingerprint string) error {
+func (r *walletPreauthorizationReservation) Capture(ctx context.Context, captured, actual float64, requestFingerprint string) error {
 	if r == nil || r.service == nil || r.service.repo == nil || r.service.wallet == nil {
 		return balancePreauthorizationUnavailable(errors.New("live balance reservation is unavailable"))
+	}
+	if captured != actual {
+		return ErrInvalidBillingPreauthorizationEstimate
 	}
 	if err := r.service.repo.BeginBalancePreauthorizationFinalization(ctx, r.requestID, r.apiKeyID, actual, requestFingerprint); err != nil {
 		return balancePreauthorizationUnavailable(err)
@@ -366,12 +436,13 @@ func (r *subscriptionPreauthorizationReservation) TopUp(ctx context.Context, tar
 	return nil
 }
 
-func (r *subscriptionPreauthorizationReservation) Capture(ctx context.Context, actual float64, requestFingerprint string) error {
+func (r *subscriptionPreauthorizationReservation) Capture(ctx context.Context, captured, actual float64, requestFingerprint string) error {
 	if r == nil || r.repo == nil {
 		return balancePreauthorizationUnavailable(errors.New("subscription allowance repository is unavailable"))
 	}
 	cmd := r.cmd
-	cmd.Amount = actual
+	cmd.Amount = captured
+	cmd.ActualAmount = &actual
 	_, err := r.repo.CaptureSubscriptionAllowance(ctx, &cmd, requestFingerprint)
 	return err
 }

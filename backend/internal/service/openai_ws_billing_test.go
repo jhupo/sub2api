@@ -2,11 +2,21 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
+
+func TestOpenAIWSFundingFailureEventPreservesSubscriptionLimitCode(t *testing.T) {
+	payload := buildOpenAIWSFailureEvent("resp_partial", "gpt-test", "DAILY_LIMIT_EXCEEDED", "Daily subscription usage limit exceeded")
+	require.True(t, json.Valid(payload))
+	require.Equal(t, "response.failed", gjson.GetBytes(payload, "type").String())
+	require.Equal(t, "DAILY_LIMIT_EXCEEDED", gjson.GetBytes(payload, "response.error.code").String())
+	require.Equal(t, "Daily subscription usage limit exceeded", gjson.GetBytes(payload, "response.error.message").String())
+}
 
 func TestOpenAIWSTurnBillingIDOverridesConnectionAndUpstream(t *testing.T) {
 	ctx := context.WithValue(context.Background(), ctxkey.ClientRequestID, "same-client-id")

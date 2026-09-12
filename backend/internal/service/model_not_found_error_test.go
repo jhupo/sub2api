@@ -31,6 +31,12 @@ func TestIsUpstreamModelNotFoundError(t *testing.T) {
 			want:       true,
 		},
 		{
+			name:       "404 third party provider has no model route",
+			statusCode: http.StatusNotFound,
+			body:       []byte(`{"error":{"message":"No provider supports gpt-5.6-luna"}}`),
+			want:       true,
+		},
+		{
 			name:       "404 endpoint not found is not model specific",
 			statusCode: http.StatusNotFound,
 			body:       []byte(`{"error":{"message":"endpoint not found"}}`),

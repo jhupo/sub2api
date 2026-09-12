@@ -104,7 +104,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 
 	// The handler normally owns this registration across retry attempts. Direct
 	// callers still get the same session-scoped preemption behavior here.
-	if preemptCtx, cleanupPreempt, armed := s.BeginOpenAIWSIngressSessionPreemption(ctx, c, account, firstClientMessage); armed {
+	if preemptCtx, cleanupPreempt, armed := s.BeginOpenAIWSIngressSessionPreemptionWithClient(ctx, c, account, firstClientMessage, clientConn); armed {
 		ctx = preemptCtx
 		defer cleanupPreempt()
 		defer func() {
@@ -530,6 +530,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	turnState := strings.TrimSpace(c.GetHeader(openAIWSTurnStateHeader))
 	stateStore := s.getOpenAIWSStateStore()
 	groupID := getOpenAIGroupIDFromContext(c)
+	apiKeyID := getAPIKeyIDFromContext(c)
 	storeDisabledConnMode := s.openAIWSStoreDisabledConnMode()
 	sessionHash := ""
 	stateSessionHash := ""
@@ -537,6 +538,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	storeDisabled := false
 	refreshIngressRouteState := func(payload openAIWSClientPayload) {
 		sessionHash = s.GenerateScopedSessionHash(c, payload.rawForHash)
+		if scope, _ := resolveOpenAIWSExecutionScope(c, payload.rawForHash, apiKeyID); scope != "" {
+			sessionHash = scope
+		}
 		stateSessionHash = sessionHash
 		if turnState == "" && stateStore != nil && stateSessionHash != "" {
 			if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, stateSessionHash); ok {
@@ -1041,6 +1045,18 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 							truncateOpenAIWSLogValue(closeReason, openAIWSHeaderValueMaxLen),
 						)
 						return nil
+					}
+					if code, failureMessage, ok := StreamOutputHoldTopUpFailureDetails(err); ok {
+						failureResponseID := responseID
+						if failureResponseID == "" {
+							_, failureResponseID, _ = parseOpenAIWSEventEnvelope(message)
+						}
+						if eventBytes := buildOpenAIWSFailureEvent(failureResponseID, mappedModel, code, failureMessage); eventBytes != nil {
+							writeCtx, cancelWrite := newOpenAIWSDownstreamWriteContext(ctx, hooks, s.openAIWSWriteTimeout())
+							_ = clientConn.Write(writeCtx, coderws.MessageText, eventBytes)
+							cancelWrite()
+							wroteDownstream = true
+						}
 					}
 					return wrapOpenAIWSIngressTurnError(
 						"write_client",

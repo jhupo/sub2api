@@ -257,6 +257,9 @@ func validateCodingPlanAccount(account *Account) error {
 	if !account.IsCodingPlan() {
 		return infraerrors.New(http.StatusBadRequest, "CN_QUOTA_NOT_CODING_PLAN", "account is not a coding plan account")
 	}
+	if provider := account.GetCodingPlanProvider(); provider == "" || provider != account.Platform {
+		return infraerrors.New(http.StatusBadRequest, "CN_QUOTA_UNSUPPORTED_ENDPOINT", "coding plan quota queries require the official kimi or zhipu endpoint")
+	}
 	return nil
 }
 

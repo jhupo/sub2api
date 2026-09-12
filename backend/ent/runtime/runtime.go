@@ -628,32 +628,36 @@ func init() {
 	billingreservationDescCapturedAmount := billingreservationFields[6].Descriptor()
 	// billingreservation.DefaultCapturedAmount holds the default value on creation for the captured_amount field.
 	billingreservation.DefaultCapturedAmount = billingreservationDescCapturedAmount.Default.(float64)
+	// billingreservationDescActualAmount is the schema descriptor for actual_amount field.
+	billingreservationDescActualAmount := billingreservationFields[7].Descriptor()
+	// billingreservation.DefaultActualAmount holds the default value on creation for the actual_amount field.
+	billingreservation.DefaultActualAmount = billingreservationDescActualAmount.Default.(float64)
 	// billingreservationDescStatus is the schema descriptor for status field.
-	billingreservationDescStatus := billingreservationFields[7].Descriptor()
+	billingreservationDescStatus := billingreservationFields[8].Descriptor()
 	// billingreservation.DefaultStatus holds the default value on creation for the status field.
 	billingreservation.DefaultStatus = billingreservationDescStatus.Default.(string)
 	// billingreservation.StatusValidator is a validator for the "status" field. It is called by the builders before save.
 	billingreservation.StatusValidator = billingreservationDescStatus.Validators[0].(func(string) error)
 	// billingreservationDescAuthorizationFingerprint is the schema descriptor for authorization_fingerprint field.
-	billingreservationDescAuthorizationFingerprint := billingreservationFields[8].Descriptor()
+	billingreservationDescAuthorizationFingerprint := billingreservationFields[9].Descriptor()
 	// billingreservation.AuthorizationFingerprintValidator is a validator for the "authorization_fingerprint" field. It is called by the builders before save.
 	billingreservation.AuthorizationFingerprintValidator = billingreservationDescAuthorizationFingerprint.Validators[0].(func(string) error)
 	// billingreservationDescRequestFingerprint is the schema descriptor for request_fingerprint field.
-	billingreservationDescRequestFingerprint := billingreservationFields[9].Descriptor()
+	billingreservationDescRequestFingerprint := billingreservationFields[10].Descriptor()
 	// billingreservation.DefaultRequestFingerprint holds the default value on creation for the request_fingerprint field.
 	billingreservation.DefaultRequestFingerprint = billingreservationDescRequestFingerprint.Default.(string)
 	// billingreservation.RequestFingerprintValidator is a validator for the "request_fingerprint" field. It is called by the builders before save.
 	billingreservation.RequestFingerprintValidator = billingreservationDescRequestFingerprint.Validators[0].(func(string) error)
 	// billingreservationDescAsyncTaskID is the schema descriptor for async_task_id field.
-	billingreservationDescAsyncTaskID := billingreservationFields[13].Descriptor()
+	billingreservationDescAsyncTaskID := billingreservationFields[14].Descriptor()
 	// billingreservation.AsyncTaskIDValidator is a validator for the "async_task_id" field. It is called by the builders before save.
 	billingreservation.AsyncTaskIDValidator = billingreservationDescAsyncTaskID.Validators[0].(func(string) error)
 	// billingreservationDescCreatedAt is the schema descriptor for created_at field.
-	billingreservationDescCreatedAt := billingreservationFields[16].Descriptor()
+	billingreservationDescCreatedAt := billingreservationFields[17].Descriptor()
 	// billingreservation.DefaultCreatedAt holds the default value on creation for the created_at field.
 	billingreservation.DefaultCreatedAt = billingreservationDescCreatedAt.Default.(func() time.Time)
 	// billingreservationDescUpdatedAt is the schema descriptor for updated_at field.
-	billingreservationDescUpdatedAt := billingreservationFields[17].Descriptor()
+	billingreservationDescUpdatedAt := billingreservationFields[18].Descriptor()
 	// billingreservation.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	billingreservation.DefaultUpdatedAt = billingreservationDescUpdatedAt.Default.(func() time.Time)
 	// billingreservation.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

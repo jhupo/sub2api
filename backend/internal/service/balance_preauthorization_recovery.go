@@ -80,10 +80,11 @@ func (s *BalancePreauthorizationService) RecoverSubscriptionAllowance(
 			"funding_source", FundingSourceSubscription, "held_amount", record.AuthorizedAmount)
 		return nil
 	case BillingReservationFinalizing:
-		if record.CapturedAmount < 0 || strings.TrimSpace(record.RequestFingerprint) == "" {
+		if record.CapturedAmount < 0 || record.ActualAmount < record.CapturedAmount || strings.TrimSpace(record.RequestFingerprint) == "" {
 			return balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
 		}
 		cmd.Amount = record.CapturedAmount
+		cmd.ActualAmount = &record.ActualAmount
 		_, err := s.subscriptionRepo.CaptureSubscriptionAllowance(ctx, cmd, record.RequestFingerprint)
 		return err
 	default:

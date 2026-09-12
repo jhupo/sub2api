@@ -59,9 +59,14 @@ type UsageBillingCommand struct {
 	// increment subscription usage; capture performs that transition exactly once.
 	SubscriptionPreauthorized bool
 	SubscriptionCost          float64
-	APIKeyQuotaCost           float64
-	APIKeyRateLimitCost       float64
-	AccountQuotaCost          float64
+	// SubscriptionCaptureCost is set only when a delivered request cannot extend
+	// its allowance reservation to the full actual cost. Nil means capture the
+	// complete SubscriptionCost; a non-nil value records the covered portion and
+	// leaves the full cost available for usage/audit accounting.
+	SubscriptionCaptureCost *float64
+	APIKeyQuotaCost         float64
+	APIKeyRateLimitCost     float64
+	AccountQuotaCost        float64
 }
 
 func (c *UsageBillingCommand) Normalize() {
@@ -103,6 +108,10 @@ const UsageBillingMonetaryScale = 8
 func (c *UsageBillingCommand) quantizeMonetaryFields() {
 	c.BalanceCost = QuantizeUsageBillingAmount(c.BalanceCost)
 	c.SubscriptionCost = QuantizeUsageBillingAmount(c.SubscriptionCost)
+	if c.SubscriptionCaptureCost != nil {
+		capture := QuantizeUsageBillingAmount(*c.SubscriptionCaptureCost)
+		c.SubscriptionCaptureCost = &capture
+	}
 	c.APIKeyQuotaCost = QuantizeUsageBillingAmount(c.APIKeyQuotaCost)
 	c.APIKeyRateLimitCost = QuantizeUsageBillingAmount(c.APIKeyRateLimitCost)
 	c.AccountQuotaCost = QuantizeUsageBillingAmount(c.AccountQuotaCost)
@@ -224,10 +233,11 @@ type BalancePreauthorizationRecord struct {
 }
 
 const (
-	BillingReservationAuthorized = "authorized"
-	BillingReservationFinalizing = "finalizing"
-	BillingReservationCaptured   = "captured"
-	BillingReservationReleased   = "released"
+	BillingReservationAuthorized        = "authorized"
+	BillingReservationFinalizing        = "finalizing"
+	BillingReservationCaptured          = "captured"
+	BillingReservationPartiallyCaptured = "partially_captured"
+	BillingReservationReleased          = "released"
 )
 
 type SubscriptionAllowanceCommand struct {
@@ -237,8 +247,12 @@ type SubscriptionAllowanceCommand struct {
 	SubscriptionID           int64
 	AuthorizationFingerprint string
 	Amount                   float64
-	AuthorizedAt             time.Time
-	ExpiresAt                time.Time
+	// ActualAmount is the complete delivered cost. It is nil for authorization
+	// and top-up commands; capture commands set it even when the covered amount
+	// in Amount is zero.
+	ActualAmount *float64
+	AuthorizedAt time.Time
+	ExpiresAt    time.Time
 }
 
 type SubscriptionAllowanceReservation struct {
@@ -250,6 +264,7 @@ type SubscriptionAllowanceReservation struct {
 	RequestFingerprint       string
 	AuthorizedAmount         float64
 	CapturedAmount           float64
+	ActualAmount             float64
 	Status                   string
 	DailyWindowStart         *time.Time
 	WeeklyWindowStart        *time.Time

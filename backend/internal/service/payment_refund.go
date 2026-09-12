@@ -337,7 +337,7 @@ func (s *PaymentService) ExecuteRefund(ctx context.Context, p *RefundPlan) (*Ref
 				if errors.Is(err, ErrAdjustWouldExpire) {
 					// Deduction would expire the subscription — revoke it entirely
 					slog.Info("subscription deduction would expire, revoking", "orderID", p.OrderID, "subID", p.SubscriptionID, "days", p.SubDaysToDeduct)
-					if revokeErr := s.subscriptionSvc.RevokeSubscription(ctx, p.SubscriptionID); revokeErr != nil {
+					if revokeErr := s.subscriptionSvc.RevokeSubscription(ctx, p.SubscriptionID, nil); revokeErr != nil {
 						s.restoreStatus(ctx, p)
 						return nil, fmt.Errorf("revoke subscription: %w", revokeErr)
 					}
@@ -563,7 +563,7 @@ func (s *PaymentService) applyRefundFinalDeduction(ctx context.Context, p *Refun
 	if p.DeductionType == payment.DeductionTypeSubscription && p.SubDaysToDeduct > 0 && p.SubscriptionID > 0 {
 		if _, err := s.subscriptionSvc.ExtendSubscription(ctx, p.SubscriptionID, -p.SubDaysToDeduct); err != nil {
 			if errors.Is(err, ErrAdjustWouldExpire) {
-				if revokeErr := s.subscriptionSvc.RevokeSubscription(ctx, p.SubscriptionID); revokeErr != nil {
+				if revokeErr := s.subscriptionSvc.RevokeSubscription(ctx, p.SubscriptionID, nil); revokeErr != nil {
 					return fmt.Errorf("revoke subscription: %w", revokeErr)
 				}
 			} else {

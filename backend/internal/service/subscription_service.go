@@ -32,6 +32,8 @@ var (
 	ErrSubscriptionAssignConflict  = infraerrors.Conflict("SUBSCRIPTION_ASSIGN_CONFLICT", "subscription exists but request conflicts with the current assignment")
 	ErrSubscriptionNotRevoked      = infraerrors.Conflict("SUBSCRIPTION_NOT_REVOKED", "subscription is not revoked")
 	ErrSubscriptionRestoreConflict = infraerrors.Conflict("SUBSCRIPTION_RESTORE_CONFLICT", "subscription already exists for this user and plan")
+	ErrSubscriptionAPIKeysBound    = infraerrors.Conflict("SUBSCRIPTION_API_KEYS_BOUND", "subscription is still bound to API keys; select an active replacement subscription before revoking it")
+	ErrSubscriptionReplacement     = infraerrors.BadRequest("SUBSCRIPTION_REPLACEMENT_INVALID", "replacement subscription must be a different active subscription owned by the same user")
 	ErrSubscriptionNilInput        = infraerrors.BadRequest("SUBSCRIPTION_NIL_INPUT", "subscription is required")
 	ErrInvalidInput                = infraerrors.BadRequest("INVALID_INPUT", "at least one quota window must be selected")
 	ErrDailyLimitExceeded          = infraerrors.TooManyRequests("DAILY_LIMIT_EXCEEDED", "daily usage limit exceeded")
@@ -44,8 +46,9 @@ var (
 // SubscriptionService owns entitlement lifecycle and allowance-window state.
 // Routing groups are intentionally absent from this service.
 type SubscriptionService struct {
-	userSubRepo UserSubscriptionRepository
-	entClient   *dbent.Client
+	userSubRepo          UserSubscriptionRepository
+	entClient            *dbent.Client
+	authCacheInvalidator APIKeyAuthCacheInvalidator
 	// now is injectable for deterministic quota-window tests; production uses time.Now.
 	now func() time.Time
 }
@@ -299,11 +302,15 @@ func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input 
 	return result, nil
 }
 
-func (s *SubscriptionService) RevokeSubscription(ctx context.Context, id int64) error {
-	if _, err := s.userSubRepo.GetByID(ctx, id); err != nil {
+func (s *SubscriptionService) RevokeSubscription(ctx context.Context, id int64, replacementID *int64) error {
+	userID, err := s.userSubRepo.Revoke(ctx, id, replacementID)
+	if err != nil {
 		return err
 	}
-	return s.userSubRepo.Delete(ctx, id)
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
+	}
+	return nil
 }
 
 func (s *SubscriptionService) RestoreSubscription(ctx context.Context, id int64) (*UserSubscription, error) {

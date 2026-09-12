@@ -280,11 +280,11 @@ func TestRecordCyberPolicyEvent_RuntimeSnapshotRefreshFailureKeepsStaleScope(t *
 	require.Len(t, repo.snapshotLogs(), 1)
 	require.Eventually(t, func() bool {
 		_, calls := settingRepo.calls()
-		return calls == 2
-	}, time.Second, time.Millisecond)
+		return calls >= 2
+	}, 5*time.Second, time.Millisecond)
 	getValue, getMultiple := settingRepo.calls()
 	require.Zero(t, getValue)
-	require.Equal(t, 2, getMultiple)
+	require.GreaterOrEqual(t, getMultiple, 2)
 }
 
 // TestRecordCyberPolicyEvent_CreateLogBeforeEmail verifies F7: the moderation

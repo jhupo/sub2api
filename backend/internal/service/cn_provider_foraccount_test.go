@@ -123,3 +123,14 @@ func TestCNProviderServices_IDEntryAppliesSameValidation(t *testing.T) {
 	requireReason(t, err, "CN_QUOTA_NOT_CODING_PLAN")
 	require.Zero(t, upstream.calls)
 }
+
+func TestCNProviderQuotaService_RejectsThirdPartyCodingEndpoint(t *testing.T) {
+	upstream := &recordingHTTPUpstream{}
+	svc := NewCNProviderQuotaService(&fakeCNProbeAccountRepo{}, nil, upstream, nil)
+	account := codingAccount(PlatformKimi)
+	account.Credentials["base_url"] = "https://integrate.api.nvidia.com/v1"
+
+	_, err := svc.QueryUsageForAccount(context.Background(), account)
+	requireReason(t, err, "CN_QUOTA_UNSUPPORTED_ENDPOINT")
+	require.Zero(t, upstream.calls)
+}

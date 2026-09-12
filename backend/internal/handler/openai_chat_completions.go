@@ -443,7 +443,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				if !upstreamErrorAlreadyCommunicated {
 					wroteFallback = h.ensureOpenAIStreamReadErrorResponse(c, err, streamStarted)
 					if !wroteFallback {
-						wroteFallback = h.ensureForwardErrorResponse(c, streamStarted)
+						wroteFallback = h.ensureForwardErrorResponseFor(c, err, streamStarted)
 					}
 				}
 				reqLog.Warn("openai_chat_completions.forward_failed",

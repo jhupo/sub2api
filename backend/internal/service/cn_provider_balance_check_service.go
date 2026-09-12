@@ -116,7 +116,9 @@ func (s *CNProviderBalanceCheckService) runOnce() {
 			// coding 账号：探测滚动窗口并落快照（不要求 Schedulable——已被
 			// 阈值停调的账号也需要新鲜快照决定是否续停）。
 			if account.IsCodingPlan() {
-				quotaTargets = append(quotaTargets, quotaTarget{id: account.ID, platform: account.Platform})
+				if provider := account.GetCodingPlanProvider(); provider == account.Platform {
+					quotaTargets = append(quotaTargets, quotaTarget{id: account.ID, platform: provider})
+				}
 				continue
 			}
 			// payg 余额探测仅 kimi/deepseek（智谱无公开余额端点，payg 账号

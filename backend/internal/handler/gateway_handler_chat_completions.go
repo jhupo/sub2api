@@ -380,7 +380,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			upstreamErrorAlreadyCommunicated := gatewayForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 			wroteFallback := false
 			if !upstreamErrorAlreadyCommunicated {
-				wroteFallback = h.ensureForwardErrorResponse(c, streamStarted)
+				wroteFallback = h.ensureForwardErrorResponseFor(c, err, streamStarted)
 			}
 			logGatewayForwardFailure(reqLog, c, "gateway.cc.forward_failed", err,
 				zap.Int64("account_id", account.ID),

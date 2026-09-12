@@ -1577,17 +1577,25 @@ func (s *adminServiceImpl) loadGroupsForAccountBinding(ctx context.Context, grou
 
 func validateAccountGroupSet(account *Account, groups []*Group) error {
 	for _, group := range groups {
-		if accountCanBindToGroup(account, group) {
-			continue
+		if !accountCanBindToGroup(account, group) {
+			return infraerrors.Newf(
+				http.StatusBadRequest,
+				"ACCOUNT_GROUP_PLATFORM_MISMATCH",
+				"%s account cannot bind to %s group %q",
+				account.Platform,
+				group.Platform,
+				group.Name,
+			)
 		}
-		return infraerrors.Newf(
-			http.StatusBadRequest,
-			"ACCOUNT_GROUP_PLATFORM_MISMATCH",
-			"%s account cannot bind to %s group %q",
-			account.Platform,
-			group.Platform,
-			group.Name,
-		)
+		if group.RequirePrivacySet && !account.IsPrivacySet() {
+			return infraerrors.Newf(
+				http.StatusBadRequest,
+				"ACCOUNT_GROUP_PRIVACY_NOT_SET",
+				"account %d cannot bind to privacy-required group %q until its upstream privacy setting is confirmed",
+				account.ID,
+				group.Name,
+			)
+		}
 	}
 	return nil
 }
@@ -1622,6 +1630,15 @@ func (s *adminServiceImpl) validateAccountIDsForGroup(ctx context.Context, accou
 				account.Platform,
 				account.ID,
 				group.Platform,
+				group.Name,
+			)
+		}
+		if group.RequirePrivacySet && !account.IsPrivacySet() {
+			return infraerrors.Newf(
+				http.StatusBadRequest,
+				"ACCOUNT_GROUP_PRIVACY_NOT_SET",
+				"account %d cannot bind to privacy-required group %q until its upstream privacy setting is confirmed",
+				account.ID,
 				group.Name,
 			)
 		}

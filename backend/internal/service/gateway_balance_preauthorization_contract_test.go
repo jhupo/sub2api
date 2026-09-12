@@ -289,6 +289,91 @@ func TestApplyUsageBillingWalletInsufficientHeadroomStillRecordsActual(t *testin
 	require.Zero(t, fixture.wallet.refundCalls)
 }
 
+func TestApplyUsageBillingSubscriptionLimitCapturesAuthorizedPortionAndRecordsActual(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	handlerGuard := streamingPreauthorizationGuard(t, fixture)
+	allowance := &streamTopUpAllowanceRepo{topUpErr: ErrDailyLimitExceeded}
+	handlerGuard.core.reservation = &subscriptionPreauthorizationReservation{
+		repo: allowance,
+		cmd: SubscriptionAllowanceCommand{
+			RequestID: "request-1", APIKeyID: 7, UserID: 42, SubscriptionID: 99,
+			AuthorizationFingerprint: "authorization",
+		},
+	}
+	workerGuard, ok := handlerGuard.TransferToWorker()
+	require.True(t, ok)
+
+	actual := workerGuard.HoldAmount() + 0.25
+	usageLog, params, deps := guardedUsageBillingParams(actual)
+	usageLog.BillingType = BillingTypeSubscription
+	usageLog.SubscriptionID = int64Pointer(99)
+	params.APIKey.FundingSource = FundingSourceSubscription
+	params.APIKey.SubscriptionID = int64Pointer(99)
+	params.Subscription = &UserSubscription{ID: 99}
+	params.IsSubscriptionBill = true
+	repo := &guardedUsageBillingApplyRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+
+	applied, err := applyUsageBilling(
+		ContextWithBalancePreauthorizationGuard(context.Background(), workerGuard),
+		"request-1", usageLog, params, deps, repo,
+	)
+
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.NotNil(t, repo.lastCmd)
+	require.True(t, repo.lastCmd.SubscriptionPreauthorized)
+	require.InDelta(t, actual, repo.lastCmd.SubscriptionCost, 1e-12)
+	require.NotNil(t, repo.lastCmd.SubscriptionCaptureCost)
+	require.InDelta(t, handlerGuard.HoldAmount(), *repo.lastCmd.SubscriptionCaptureCost, 1e-12)
+	require.Equal(t, 1, allowance.topUpCalls)
+	require.Equal(t, 1, allowance.captureCalls)
+	require.InDelta(t, handlerGuard.HoldAmount(), allowance.captured, 1e-12)
+	require.InDelta(t, actual, allowance.actual, 1e-12)
+	require.InDelta(t, actual, usageLog.ActualCost, 1e-12)
+	require.False(t, workerGuard.IsCurrentOwner())
+}
+
+func TestApplyUsageBillingSubscriptionInfrastructureTopUpFailureRemainsRecoverable(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	handlerGuard := streamingPreauthorizationGuard(t, fixture)
+	topUpErr := errors.New("database unavailable")
+	allowance := &streamTopUpAllowanceRepo{topUpErr: topUpErr}
+	handlerGuard.core.reservation = &subscriptionPreauthorizationReservation{
+		repo: allowance,
+		cmd: SubscriptionAllowanceCommand{
+			RequestID: "request-1", APIKeyID: 7, UserID: 42, SubscriptionID: 99,
+			AuthorizationFingerprint: "authorization",
+		},
+	}
+	workerGuard, ok := handlerGuard.TransferToWorker()
+	require.True(t, ok)
+
+	actual := workerGuard.HoldAmount() + 0.25
+	usageLog, params, deps := guardedUsageBillingParams(actual)
+	usageLog.BillingType = BillingTypeSubscription
+	usageLog.SubscriptionID = int64Pointer(99)
+	params.APIKey.FundingSource = FundingSourceSubscription
+	params.APIKey.SubscriptionID = int64Pointer(99)
+	params.Subscription = &UserSubscription{ID: 99}
+	params.IsSubscriptionBill = true
+	repo := &guardedUsageBillingApplyRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+
+	applied, err := applyUsageBilling(
+		ContextWithBalancePreauthorizationGuard(context.Background(), workerGuard),
+		"request-1", usageLog, params, deps, repo,
+	)
+
+	require.False(t, applied)
+	require.ErrorIs(t, err, topUpErr)
+	require.Nil(t, repo.lastCmd)
+	require.Zero(t, allowance.captureCalls)
+	require.True(t, workerGuard.IsCurrentOwner())
+}
+
+func int64Pointer(value int64) *int64 {
+	return &value
+}
+
 func TestApplyUsageBillingFinalizationPendingRetryUsesDurableActualHold(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	fixture.repo.prepareRecord = &BalancePreauthorizationRecord{

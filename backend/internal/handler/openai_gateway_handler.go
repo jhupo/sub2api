@@ -983,7 +983,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
-					wroteFallback = h.ensureForwardErrorResponse(c, streamStarted)
+					wroteFallback = h.ensureForwardErrorResponseFor(c, err, streamStarted)
 				}
 				fields := []zap.Field{
 					zap.Int64("account_id", account.ID),
@@ -1594,7 +1594,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					return
 				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, result), false, nil, err)
-				wroteFallback := h.ensureAnthropicErrorResponse(c, streamStarted)
+				wroteFallback := h.ensureAnthropicErrorResponseFor(c, err, streamStarted)
 				reqLog.Warn("openai_messages.forward_failed",
 					zap.Int64("account_id", account.ID),
 					zap.Bool("fallback_error_response_written", wroteFallback),
@@ -1725,6 +1725,23 @@ func (h *OpenAIGatewayHandler) ensureAnthropicErrorResponse(c *gin.Context, stre
 	}
 	h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
 	return true
+}
+
+func (h *OpenAIGatewayHandler) ensureAnthropicErrorResponseFor(c *gin.Context, err error, streamStarted bool) bool {
+	if status, errType, code, message, ok := streamOutputHoldClientError(err); ok {
+		if c == nil || c.Writer == nil {
+			return false
+		}
+		if c.Writer.Written() {
+			streamStarted = true
+		}
+		if code != "" {
+			message = code + ": " + message
+		}
+		h.anthropicStreamingAwareError(c, status, errType, message, streamStarted)
+		return true
+	}
+	return h.ensureAnthropicErrorResponse(c, streamStarted)
 }
 
 func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context, body []byte, reqLog *zap.Logger) bool {
@@ -3051,7 +3068,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					return service.NewOpenAIWSRequestScopedClientCloseError(coderws.StatusInternalError, "websocket scheduling state unavailable", nil)
 				}
 				if err := wsFunding.observe(scheduling.ctx, payload); err != nil {
-					return service.NewOpenAIWSRequestScopedClientCloseError(coderws.StatusPolicyViolation, "websocket output reservation failed", err)
+					fundingErr := service.WrapStreamOutputHoldTopUpFailure(err)
+					code, message, _ := service.StreamOutputHoldTopUpFailureDetails(fundingErr)
+					return service.NewOpenAIWSRequestScopedClientCloseError(
+						coderws.StatusPolicyViolation, code+": "+message, fundingErr,
+					)
 				}
 				return nil
 			},
@@ -3204,7 +3225,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 
 		// WebSocket 首包可能很大，hash 必须在 hooks 外算成字符串，避免 AfterTurn 闭包保活请求体。
 		requestPayloadHash = service.HashUsageRequestPayload(wsFirstMessage)
-		if preemptCtx, cleanupPreempt, armed := h.gatewayService.BeginOpenAIWSIngressSessionPreemption(ctx, c, account, wsFirstMessage); armed {
+		if preemptCtx, cleanupPreempt, armed := h.gatewayService.BeginOpenAIWSIngressSessionPreemptionWithClient(ctx, c, account, wsFirstMessage, wsConn); armed {
 			ctx = preemptCtx
 			defer cleanupPreempt()
 		}
@@ -3238,6 +3259,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return
 			}
 			if service.IsOpenAIWSSessionPreemptedError(err) {
+				reqLog.Info("openai.websocket_ingress_preempted", zap.Int64("account_id", account.ID))
 				return
 			}
 			var failoverErr *service.UpstreamFailoverError
@@ -3720,7 +3742,7 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 		// 通用 `event: error` 帧不被识别为终止事件，会导致
 		// "stream closed before response.completed"。
 		if inboundIsResponses(c) {
-			if writeResponsesFailedSSE(c, errType, message) {
+			if writeResponsesFailedSSEWithCode(c, errType, code, message) {
 				return
 			}
 		}
@@ -3799,6 +3821,20 @@ func (h *OpenAIGatewayHandler) ensureForwardErrorResponse(c *gin.Context, stream
 	}
 	h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed", streamStarted)
 	return true
+}
+
+func (h *OpenAIGatewayHandler) ensureForwardErrorResponseFor(c *gin.Context, err error, streamStarted bool) bool {
+	if status, errType, code, message, ok := streamOutputHoldClientError(err); ok {
+		if c == nil || c.Writer == nil {
+			return false
+		}
+		if c.Writer.Written() {
+			streamStarted = true
+		}
+		h.handleStreamingAwareErrorWithCode(c, status, errType, code, message, streamStarted, false)
+		return true
+	}
+	return h.ensureForwardErrorResponse(c, streamStarted)
 }
 
 func shouldLogOpenAIForwardFailureAsWarn(c *gin.Context, wroteFallback bool) bool {

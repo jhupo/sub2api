@@ -169,6 +169,27 @@ func (_u *BillingReservationUpdate) AddCapturedAmount(v float64) *BillingReserva
 	return _u
 }
 
+// SetActualAmount sets the "actual_amount" field.
+func (_u *BillingReservationUpdate) SetActualAmount(v float64) *BillingReservationUpdate {
+	_u.mutation.ResetActualAmount()
+	_u.mutation.SetActualAmount(v)
+	return _u
+}
+
+// SetNillableActualAmount sets the "actual_amount" field if the given value is not nil.
+func (_u *BillingReservationUpdate) SetNillableActualAmount(v *float64) *BillingReservationUpdate {
+	if v != nil {
+		_u.SetActualAmount(*v)
+	}
+	return _u
+}
+
+// AddActualAmount adds value to the "actual_amount" field.
+func (_u *BillingReservationUpdate) AddActualAmount(v float64) *BillingReservationUpdate {
+	_u.mutation.AddActualAmount(v)
+	return _u
+}
+
 // SetStatus sets the "status" field.
 func (_u *BillingReservationUpdate) SetStatus(v string) *BillingReservationUpdate {
 	_u.mutation.SetStatus(v)
@@ -456,6 +477,12 @@ func (_u *BillingReservationUpdate) sqlSave(ctx context.Context) (_node int, err
 	if value, ok := _u.mutation.AddedCapturedAmount(); ok {
 		_spec.AddField(billingreservation.FieldCapturedAmount, field.TypeFloat64, value)
 	}
+	if value, ok := _u.mutation.ActualAmount(); ok {
+		_spec.SetField(billingreservation.FieldActualAmount, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedActualAmount(); ok {
+		_spec.AddField(billingreservation.FieldActualAmount, field.TypeFloat64, value)
+	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(billingreservation.FieldStatus, field.TypeString, value)
 	}
@@ -662,6 +689,27 @@ func (_u *BillingReservationUpdateOne) SetNillableCapturedAmount(v *float64) *Bi
 // AddCapturedAmount adds value to the "captured_amount" field.
 func (_u *BillingReservationUpdateOne) AddCapturedAmount(v float64) *BillingReservationUpdateOne {
 	_u.mutation.AddCapturedAmount(v)
+	return _u
+}
+
+// SetActualAmount sets the "actual_amount" field.
+func (_u *BillingReservationUpdateOne) SetActualAmount(v float64) *BillingReservationUpdateOne {
+	_u.mutation.ResetActualAmount()
+	_u.mutation.SetActualAmount(v)
+	return _u
+}
+
+// SetNillableActualAmount sets the "actual_amount" field if the given value is not nil.
+func (_u *BillingReservationUpdateOne) SetNillableActualAmount(v *float64) *BillingReservationUpdateOne {
+	if v != nil {
+		_u.SetActualAmount(*v)
+	}
+	return _u
+}
+
+// AddActualAmount adds value to the "actual_amount" field.
+func (_u *BillingReservationUpdateOne) AddActualAmount(v float64) *BillingReservationUpdateOne {
+	_u.mutation.AddActualAmount(v)
 	return _u
 }
 
@@ -981,6 +1029,12 @@ func (_u *BillingReservationUpdateOne) sqlSave(ctx context.Context) (_node *Bill
 	}
 	if value, ok := _u.mutation.AddedCapturedAmount(); ok {
 		_spec.AddField(billingreservation.FieldCapturedAmount, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.ActualAmount(); ok {
+		_spec.SetField(billingreservation.FieldActualAmount, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedActualAmount(); ok {
+		_spec.AddField(billingreservation.FieldActualAmount, field.TypeFloat64, value)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(billingreservation.FieldStatus, field.TypeString, value)

@@ -468,6 +468,11 @@ func (s *defaultOpenAIAccountScheduler) Select(
 		}
 	}
 
+	// Ordinary HTTP requests use sticky affinity as an immediate preference: if
+	// the bound account cannot acquire a slot, continue with the full eligible
+	// pool and remove its sticky score for this attempt. WebSocket and
+	// continuation/migration requests retain the bound account because their
+	// upstream state cannot safely move between accounts.
 	if !req.FillScheduling && !req.StickyWeighted {
 		selection, escapedSticky, err := s.selectBySessionHash(ctx, req)
 		if err != nil {
@@ -482,6 +487,12 @@ func (s *defaultOpenAIAccountScheduler) Select(
 		}
 		if escapedSticky {
 			req.PreserveStickyBinding = true
+			// The durable binding remains available for a later request, but a
+			// saturated ordinary HTTP account must not be reintroduced as the
+			// first load-balanced candidate by StickyWeighted scoring.
+			req.StickyAccountID = 0
+			req.StickyPreviousAccountID = 0
+			req.StickyWeighted = false
 		}
 	}
 
@@ -578,14 +589,17 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		return nil, false, nil
 	}
 	escapeCfg := s.service.openAIStickyEscapeConfig()
-	if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyAccount(accountID, escapeCfg); shouldEscape && !req.StickyMigrationTarget {
-		slog.Info("sticky_escape_triggered",
-			"account_id", accountID,
-			"reason", reason,
-			"error_rate", errorRate,
-			"ttft", ttft,
-		)
-		return nil, true, nil
+	stickyRequiresBoundedWait := openAIStickyRequestRequiresBoundedWait(req)
+	if !stickyRequiresBoundedWait {
+		if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyAccount(accountID, escapeCfg); shouldEscape && !req.StickyMigrationTarget {
+			slog.Info("sticky_escape_triggered",
+				"account_id", accountID,
+				"reason", reason,
+				"error_rate", errorRate,
+				"ttft", ttft,
+			)
+			return nil, true, nil
+		}
 	}
 	maxConcurrency := s.effectiveConcurrency(ctx, account, req.RequestedModel)
 	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, maxConcurrency)
@@ -604,6 +618,31 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	// WaitPlan.MaxConcurrency controls the Redis admission limit and therefore
 	// uses the same request-scoped adaptive limit as the immediate acquire.
 	if s.service.concurrencyService != nil {
+		// Codex adaptive scheduling owns a bounded wait so that a saturated
+		// sticky account can probe spare capacity and record a coordinated
+		// migration before the successful response commits the new binding.
+		if codexAdaptiveRequestFromContext(ctx) != nil {
+			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
+				Account: account,
+				WaitPlan: &AccountWaitPlan{
+					AccountID:      accountID,
+					MaxConcurrency: maxConcurrency,
+					Timeout:        cfg.StickySessionWaitTimeout,
+					MaxWaiting:     cfg.StickySessionMaxWaiting,
+				},
+			}), false, nil
+		}
+		if stickyRequiresBoundedWait {
+			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
+				Account: account,
+				WaitPlan: &AccountWaitPlan{
+					AccountID:      accountID,
+					MaxConcurrency: maxConcurrency,
+					Timeout:        cfg.StickySessionWaitTimeout,
+					MaxWaiting:     cfg.StickySessionMaxWaiting,
+				},
+			}), false, nil
+		}
 		if escapeCfg.enabled && !req.StickyMigrationTarget && acquireErr == nil && result != nil && !result.Acquired {
 			errorRate, ttft, _ := s.stats.snapshot(accountID)
 			slog.Info("sticky_escape_triggered",
@@ -614,17 +653,26 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			)
 			return nil, true, nil
 		}
-		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account: account,
-			WaitPlan: &AccountWaitPlan{
-				AccountID:      accountID,
-				MaxConcurrency: maxConcurrency,
-				Timeout:        cfg.StickySessionWaitTimeout,
-				MaxWaiting:     cfg.StickySessionMaxWaiting,
-			},
-		}), false, nil
+		// A saturated ordinary HTTP sticky account is only a preference. Let the
+		// caller run load-aware selection across all eligible accounts instead of
+		// queueing the whole burst behind one account.
+		return nil, true, nil
 	}
 	return nil, false, nil
+}
+
+func openAIStickyRequestRequiresBoundedWait(req OpenAIAccountScheduleRequest) bool {
+	if req.PreserveStickyBinding || req.StickyMigrationTarget || req.PreviousResponseID != "" {
+		return true
+	}
+	switch req.RequiredTransport {
+	case OpenAIUpstreamTransportResponsesWebsocket,
+		OpenAIUpstreamTransportResponsesWebsocketV2,
+		OpenAIUpstreamTransportResponsesWebsocketV2Ingress:
+		return true
+	default:
+		return false
+	}
 }
 
 func openAIStickyAccountMatchesGroup(account *Account, groupID *int64) bool {
@@ -1088,6 +1136,12 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 			return nil
 		}
 		groupTopK := plan.topK
+		// A sticky account that just failed immediate admission is retained in
+		// the spillover walk only as a final wait candidate. Include the full
+		// pool so an idle account outside Top-K can acquire the request first.
+		if req.PreserveStickyBinding {
+			groupTopK = len(pool)
+		}
 		if groupTopK > len(pool) {
 			groupTopK = len(pool)
 		}

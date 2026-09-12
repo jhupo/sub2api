@@ -1323,12 +1323,15 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				// clients can settle the request and reconnect deterministically.
 				if openAIWSPassthroughShouldEmitFailureEvent(exit) && turnLifecycle.hasInFlightTurn() {
 					responseID, _ := activeResponseID.Load().(string)
+					failureCode := "upstream_error"
 					failureMessage := "upstream websocket disconnected before response.completed"
 					var activeTurnTimeoutErr *openAIWSPassthroughActiveTurnTimeoutError
 					if errors.As(exit.Err, &activeTurnTimeoutErr) {
 						failureMessage = "upstream websocket read timeout before response.completed"
+					} else if code, message, ok := StreamOutputHoldTopUpFailureDetails(exit.Err); ok {
+						failureCode, failureMessage = code, message
 					}
-					if eventBytes := buildOpenAIWSFailureEvent(responseID, loadCapturedSessionModel(), failureMessage); eventBytes != nil {
+					if eventBytes := buildOpenAIWSFailureEvent(responseID, loadCapturedSessionModel(), failureCode, failureMessage); eventBytes != nil {
 						writeCtx, cancelWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
 						_ = clientConn.Write(writeCtx, coderws.MessageText, eventBytes)
 						cancelWrite()
@@ -1571,7 +1574,7 @@ func openAIWSPassthroughShouldEmitFailureEvent(exit openaiwsv2.RelayExit) bool {
 		return false
 	}
 	var closeErr *OpenAIWSClientCloseError
-	return !errors.As(exit.Err, &closeErr)
+	return !errors.As(exit.Err, &closeErr) || IsStreamOutputHoldTopUpFailure(exit.Err)
 }
 
 func openAIWSPassthroughResponseID(payload []byte) string {
@@ -1581,7 +1584,7 @@ func openAIWSPassthroughResponseID(payload []byte) string {
 	return strings.TrimSpace(gjson.GetBytes(payload, "response_id").String())
 }
 
-func buildOpenAIWSFailureEvent(responseID, model, message string) []byte {
+func buildOpenAIWSFailureEvent(responseID, model, code, message string) []byte {
 	responseID = strings.TrimSpace(responseID)
 	if responseID == "" {
 		responseID = "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
@@ -1590,13 +1593,16 @@ func buildOpenAIWSFailureEvent(responseID, model, message string) []byte {
 	if errorMessage == "" {
 		errorMessage = "upstream websocket disconnected before response.completed"
 	}
+	if code = strings.TrimSpace(code); code == "" {
+		code = "upstream_error"
+	}
 	response := map[string]any{
 		"id":     responseID,
 		"object": "response",
 		"status": "failed",
 		"output": []any{},
 		"error": map[string]string{
-			"code":    "upstream_error",
+			"code":    code,
 			"message": errorMessage,
 		},
 	}

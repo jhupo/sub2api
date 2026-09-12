@@ -374,7 +374,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
-					wroteFallback = h.ensureForwardErrorResponse(c, streamStarted)
+					wroteFallback = h.ensureForwardErrorResponseFor(c, err, streamStarted)
 				}
 				fields := []zap.Field{
 					zap.Int64("account_id", account.ID),

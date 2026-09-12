@@ -222,20 +222,29 @@ func beginUsageBillingSubscriptionFinalization(ctx context.Context, tx *sql.Tx, 
 	if cmd.SubscriptionID == nil {
 		return service.ErrUsageBillingRequestConflict
 	}
+	captured := cmd.SubscriptionCost
+	if cmd.SubscriptionCaptureCost != nil {
+		captured = *cmd.SubscriptionCaptureCost
+	}
+	if captured < 0 || captured > cmd.SubscriptionCost {
+		return service.ErrInvalidBillingPreauthorizationEstimate
+	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE billing_reservations
 		SET status = $6,
 			captured_amount = CASE WHEN status = $6 THEN captured_amount ELSE $3 END,
+			actual_amount = CASE WHEN status = $6 THEN actual_amount ELSE $8 END,
 			request_fingerprint = CASE WHEN status = $6 THEN request_fingerprint ELSE $4 END,
 			updated_at = CASE WHEN status = $6 THEN updated_at ELSE NOW() END
 		WHERE request_id = $1 AND api_key_id = $2
 			AND funding_source = 'subscription' AND subscription_id = $5
 			AND (
-				(status = $7 AND $3 <= authorized_amount)
-				OR (status = $6 AND captured_amount = $3 AND request_fingerprint = $4)
+				(status = $7 AND $3 <= authorized_amount AND $3 <= $8)
+				OR (status = $6 AND captured_amount = $3 AND actual_amount = $8 AND request_fingerprint = $4)
 			)
-	`, cmd.RequestID, cmd.APIKeyID, cmd.SubscriptionCost, cmd.RequestFingerprint,
-		*cmd.SubscriptionID, service.BillingReservationFinalizing, service.BillingReservationAuthorized)
+	`, cmd.RequestID, cmd.APIKeyID, captured, cmd.RequestFingerprint,
+		*cmd.SubscriptionID, service.BillingReservationFinalizing, service.BillingReservationAuthorized,
+		cmd.SubscriptionCost)
 	if err != nil {
 		return err
 	}
