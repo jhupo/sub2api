@@ -729,6 +729,7 @@ func validateBalancePreauthorizationRequest(request *BalancePreauthorizationRequ
 		strings.TrimSpace(request.AuthorizationFingerprint) == "" ||
 		request.APIKeyID <= 0 || request.UserID <= 0 ||
 		request.BillableInputBytes < 0 || request.EstimatedInputTokens < 0 || request.InitialOutputWindowTokens < 0 ||
+		request.InitialOutputWindowTokens > MaxBalancePreauthorizationOutputTokens ||
 		request.EstimatedImageInputTokens < 0 || request.EstimatedImageOutputTokens < 0 || request.EstimatedAudioInputTokens < 0 ||
 		invalidNonnegativeMoney(request.FixedAmount) || (!request.ExpiresAt.IsZero() && !request.ExpiresAt.After(time.Now())) {
 		return ErrInvalidBillingPreauthorizationEstimate

@@ -509,6 +509,17 @@ func TestBalancePreauthorizationInputOnlyKeepsOutputWindowZero(t *testing.T) {
 	}
 }
 
+func TestBalancePreauthorizationRejectsOversizedOutputWindow(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	request := balancePreauthorizationTestRequest()
+	request.InitialOutputWindowTokens = MaxBalancePreauthorizationOutputTokens + 1
+
+	guard, err := fixture.service.Preauthorize(context.Background(), request)
+	require.Nil(t, guard)
+	require.ErrorIs(t, err, ErrBillingServiceUnavailable)
+	require.ErrorIs(t, err, ErrInvalidBillingPreauthorizationEstimate)
+}
+
 func TestBalancePreauthorizationLifecycleHotWalletSkipsPostgreSQLSnapshot(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	existing := LiveBalanceResult{Outcome: LiveBalanceOutcomeApplied, State: LiveBalanceAttemptAuthorized}
