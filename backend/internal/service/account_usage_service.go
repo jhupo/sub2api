@@ -1,17 +1,21 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
 	"math/rand/v2"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
+	httppool "github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
+	openaipkg "github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
@@ -314,6 +318,7 @@ type AccountUsageService struct {
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
+	agentIdentityTaskMu     sync.Mutex
 	agentIdentityWS         agentIdentityWSConnectionInvalidator
 }
 
@@ -736,8 +741,20 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 	usage.CodexQuotaOverdraft, _ = codexQuotaOverdraftStateFromAccount(account)
 
 	observedSnapshot := false
-	if (force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) && s.shouldQueryOpenAICodexSnapshot(account.ID, now, force) {
-		updates, err := s.queryOpenAICodexSnapshot(ctx, account)
+	if shouldQueryOpenAIQuota(account, now) &&
+		(force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) &&
+		s.shouldQueryOpenAICodexSnapshot(account.ID, now, force) {
+		var updates map[string]any
+		var err error
+		if account.IsShadow() {
+			// Spark shadows share the parent credential and expose their own
+			// window through /wham/usage.
+			updates, err = s.queryOpenAICodexSnapshot(ctx, account)
+		} else {
+			// Normal OAuth accounts expose Codex windows in the response headers
+			// of the same lightweight probe used by the upstream scheduler.
+			updates, err = s.probeOpenAICodexSnapshot(ctx, account)
+		}
 		if err != nil {
 			usage.ErrorCode = "quota_refresh_failed"
 			usage.Error = "Quota snapshot refresh failed; displayed usage may be stale"
@@ -794,6 +811,45 @@ func shouldRefreshOpenAICodexSnapshot(account *Account, usage *UsageInfo, now ti
 		return true
 	}
 	return isOpenAICodexSnapshotStale(account, now)
+}
+
+// shouldQueryOpenAIQuota limits active upstream probes to accounts that can
+// actually participate in the gateway. Admin batch usage requests often carry
+// every visible account, including disabled/error rows; those rows should use
+// their persisted snapshot instead of producing avoidable OAuth failures.
+func shouldQueryOpenAIQuota(account *Account, now time.Time) bool {
+	if account == nil || !account.IsActive() {
+		return false
+	}
+	if account.IsShadow() {
+		// A Spark shadow does not own credentials or participate in the global
+		// scheduler. Its quota request resolves the parent account, so the
+		// shadow's Schedulable flag must not suppress its independent Spark
+		// window refresh.
+		if account.AutoPauseOnExpired && account.ExpiresAt != nil && !now.Before(*account.ExpiresAt) {
+			return false
+		}
+		if account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) {
+			return false
+		}
+		return true
+	}
+	if account.AutoPauseOnExpired && account.ExpiresAt != nil && !now.Before(*account.ExpiresAt) {
+		return false
+	}
+	if account.OverloadUntil != nil && now.Before(*account.OverloadUntil) {
+		return false
+	}
+	if account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) {
+		return false
+	}
+	if account.IsRateLimited() {
+		return true
+	}
+	if !account.Schedulable {
+		return false
+	}
+	return true
 }
 
 // applyCodexQuotaOverdraftUsageCached decorates the two normal Codex window
@@ -856,6 +912,12 @@ func isOpenAICodexSnapshotStale(account *Account, now time.Time) bool {
 	if account == nil || !account.IsOpenAIOAuth() {
 		return false
 	}
+	// Normal OAuth quota refresh uses the lightweight Responses probe only for
+	// accounts that also use the Responses WebSocket v2 transport. Spark shadow
+	// accounts use /wham/usage and therefore remain independent of this flag.
+	if !account.IsShadow() && !account.IsOpenAIResponsesWebSocketV2Enabled() {
+		return false
+	}
 	if account.Extra == nil {
 		return true
 	}
@@ -915,6 +977,95 @@ func (s *AccountUsageService) queryOpenAICodexSnapshot(ctx context.Context, acco
 	s.persistOpenAICodexSnapshot(account.ID, updates)
 	return updates, nil
 }
+
+func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, account *Account) (map[string]any, error) {
+	if account == nil || !account.IsOAuth() {
+		return nil, nil
+	}
+	accessToken := ""
+	if !account.IsOpenAIAgentIdentity() {
+		accessToken = account.GetOpenAIAccessToken()
+	}
+	if accessToken == "" && !account.IsOpenAIAgentIdentity() {
+		return nil, fmt.Errorf("no access token available")
+	}
+	payloadBytes, err := json.Marshal(createOpenAITestPayload(openaipkg.CodexUsageProbeModel, true))
+	if err != nil {
+		return nil, fmt.Errorf("marshal openai probe payload: %w", err)
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, chatgptCodexURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return nil, fmt.Errorf("create openai probe request: %w", err)
+	}
+	req.Host = "chatgpt.com"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("OpenAI-Beta", "responses=experimental")
+	if account.IsOpenAIAgentIdentity() {
+		authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account)
+		if authErr != nil {
+			return nil, fmt.Errorf("build Agent Identity authentication: %w", authErr)
+		}
+		for key, values := range authHeaders {
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+	} else {
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+	}
+	resolveCodexRequestClientIdentity("", account.GetOpenAIUserAgent(), false).applyHeaders(req.Header)
+	if s.identityCache != nil {
+		if fp, fpErr := s.identityCache.GetFingerprint(reqCtx, account.ID); fpErr == nil && fp != nil && strings.TrimSpace(fp.UserAgent) != "" {
+			req.Header.Set("User-Agent", strings.TrimSpace(fp.UserAgent))
+		}
+	}
+	setOpenAIChatGPTAccountHeaders(req.Header, account)
+	account.ApplyHeaderOverrides(req.Header)
+
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+	client, err := httppool.GetClient(httppool.Options{
+		ProxyURL:              proxyURL,
+		Timeout:               15 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build openai probe client: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("openai codex probe request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	updates, err := extractOpenAICodexProbeUpdates(resp)
+	if err != nil {
+		return nil, err
+	}
+	if len(updates) == 0 {
+		return nil, nil
+	}
+	s.persistOpenAICodexSnapshot(account.ID, updates)
+	return updates, nil
+}
+
+func extractOpenAICodexProbeUpdates(resp *http.Response) (map[string]any, error) {
+	if resp == nil {
+		return nil, nil
+	}
+	if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
+		return buildCodexUsageExtraUpdates(snapshot, time.Now()), nil
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("openai codex probe returned status %d", resp.StatusCode)
+	}
+	return nil, nil
+}
+
 func (s *AccountUsageService) persistOpenAICodexSnapshot(accountID int64, updates map[string]any) {
 	if s == nil || s.accountRepo == nil || accountID <= 0 {
 		return

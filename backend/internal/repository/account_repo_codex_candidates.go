@@ -78,18 +78,18 @@ func codexOverdraftRateLimitPredicate() dbpredicate.Account {
 		rateReset := s.C(dbaccount.FieldRateLimitResetAt)
 		extra := s.C(dbaccount.FieldExtra)
 		quotaWindow := func(usedKey, resetAfterKey, resetAtKey string) string {
-			// pg_input_is_valid keeps malformed legacy/string snapshots from
-			// turning candidate discovery into a 500 via an unsafe cast. CASE is
-			// intentional: PostgreSQL may reorder boolean predicates, but it will
-			// not evaluate the cast in the false CASE branch.
+			// The outer CASE is intentional: PostgreSQL may reorder boolean
+			// predicates, but it will not evaluate the cast in the false CASE
+			// branch. This keeps malformed legacy JSON from turning discovery into
+			// a 500 without relying on an extension-specific validation helper.
 			numeric := func(key string, max string) string {
 				value := fmt.Sprintf("%s->>'%s'", extra, key)
-				return fmt.Sprintf("(CASE WHEN pg_input_is_valid(%s, 'double precision') THEN (CASE WHEN %s ~ '^[0-9]+(\\.[0-9]+)?$' THEN (CASE WHEN (%s)::double precision BETWEEN 0 AND %s THEN (%s)::double precision ELSE NULL END) ELSE NULL END) ELSE NULL END)", value, value, value, max, value)
+				return fmt.Sprintf("(CASE WHEN %s ~ '^[0-9]{1,10}([.][0-9]{1,9})?$' THEN (CASE WHEN (%s)::double precision BETWEEN 0 AND %s THEN (%s)::double precision ELSE NULL END) ELSE NULL END)", value, value, max, value)
 			}
 			timestampValue := fmt.Sprintf("%s->>'%s'", extra, resetAtKey)
-			timestamp := fmt.Sprintf("(CASE WHEN pg_input_is_valid(%s, 'timestamptz') THEN (CASE WHEN isfinite((%s)::timestamptz) THEN (%s)::timestamptz ELSE NULL END) ELSE NULL END)", timestampValue, timestampValue, timestampValue)
+			timestamp := safeTimestamptzExpression(timestampValue)
 			updatedValue := fmt.Sprintf("%s->>'codex_usage_updated_at'", extra)
-			updatedAt := fmt.Sprintf("(CASE WHEN pg_input_is_valid(%s, 'timestamptz') THEN (CASE WHEN isfinite((%s)::timestamptz) THEN (%s)::timestamptz ELSE NULL END) ELSE NULL END)", updatedValue, updatedValue, updatedValue)
+			updatedAt := safeTimestamptzExpression(updatedValue)
 			after := numeric(resetAfterKey, "315576000")
 			futureAfter := fmt.Sprintf("(%s IS NOT NULL AND %s + make_interval(secs => %s) > NOW())", updatedAt, updatedAt, after)
 			return fmt.Sprintf("(%s >= 95 AND ((%s IS NOT NULL AND %s > NOW()) OR (%s IS NULL AND %s)))", numeric(usedKey, "1000"), timestamp, timestamp, timestamp, futureAfter)
@@ -110,6 +110,23 @@ func codexOverdraftRateLimitPredicate() dbpredicate.Account {
 			),
 		))
 	})
+}
+
+const codexRFC3339TimestampPattern = `^[1-9][0-9]{3}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{1,9})?(Z|[+-](0[0-9]|1[0-4]):[0-5][0-9])$`
+
+// safeTimestamptzExpression returns a SQL expression that only casts values
+// matching a complete timestamp shape and a real calendar date. The nested
+// CASE keeps substring casts and the timestamptz cast out of the evaluation
+// path for malformed JSON strings.
+func safeTimestamptzExpression(value string) string {
+	year := fmt.Sprintf("substring(%s, 1, 4)::integer", value)
+	month := fmt.Sprintf("substring(%s, 6, 2)::integer", value)
+	day := fmt.Sprintf("substring(%s, 9, 2)::integer", value)
+	date := fmt.Sprintf("make_date(%s, %s, 1) + (%s - 1)", year, month, day)
+	return fmt.Sprintf(
+		"(CASE WHEN %s ~ '%s' THEN (CASE WHEN EXTRACT(YEAR FROM %s) = %s AND EXTRACT(MONTH FROM %s) = %s AND EXTRACT(DAY FROM %s) = %s THEN (CASE WHEN isfinite((%s)::timestamptz) THEN (%s)::timestamptz ELSE NULL END) ELSE NULL END) ELSE NULL END)",
+		value, codexRFC3339TimestampPattern, date, year, date, month, date, day, value, value,
+	)
 }
 
 func codexOverdraftThresholdPausePredicate() dbpredicate.Account {

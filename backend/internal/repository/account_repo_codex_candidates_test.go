@@ -31,7 +31,7 @@ func TestCodexOverdraftRateLimitPredicate(t *testing.T) {
 	// Legacy JSON values must be validated before casts. Keep this assertion
 	// broad enough for Ent/Postgres formatting changes while guarding the
 	// important no-500 property for malformed snapshots.
-	require.GreaterOrEqual(t, strings.Count(normalized, "pg_input_is_valid"), 6)
+	require.NotContains(t, normalized, "pg_input_is_valid")
 	require.GreaterOrEqual(t, strings.Count(normalized, "case when"), 6)
 	require.Contains(t, normalized, "between 0 and 1000")
 	require.Contains(t, normalized, "make_interval")
@@ -40,4 +40,20 @@ func TestCodexOverdraftRateLimitPredicate(t *testing.T) {
 	require.Contains(t, normalized, "rate_limit_reset_at")
 	require.Contains(t, normalized, "codex_usage_updated_at")
 	require.GreaterOrEqual(t, strings.Count(normalized, "isfinite"), 2)
+	require.Contains(t, normalized, "make_date")
+	require.Contains(t, normalized, "extract(year from")
+}
+
+func TestSafeTimestamptzExpressionGuardsInvalidCalendarValues(t *testing.T) {
+	expression := strings.ToLower(safeTimestamptzExpression("extra #>> '{reset_at}'"))
+
+	// The shape and calendar checks must precede every timestamptz cast. This
+	// protects the candidate query when old JSON contains malformed dates.
+	require.Contains(t, expression, "~ '^[1-9][0-9]{3}-")
+	require.Contains(t, expression, `[.][0-9]{1,9}`)
+	require.Contains(t, expression, `1[0-4]`)
+	require.Contains(t, expression, "make_date(")
+	require.Contains(t, expression, "extract(year from")
+	require.Contains(t, expression, "isfinite((extra #>> '{reset_at}')::timestamptz)")
+	require.NotContains(t, expression, "pg_input_is_valid")
 }

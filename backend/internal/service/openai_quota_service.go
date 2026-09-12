@@ -460,6 +460,13 @@ func (s *OpenAIQuotaService) prepareUpstreamCall(ctx context.Context, accountID 
 		if rerr != nil {
 			return "", "", "", false, infraerrors.Newf(http.StatusBadGateway, "OPENAI_QUOTA_SHADOW_RESOLVE_FAILED", "failed to resolve shadow account: %v", rerr)
 		}
+		if !resolved.IsCredentialUsableForShadow() {
+			return "", "", "", false, infraerrors.New(
+				http.StatusServiceUnavailable,
+				"OPENAI_QUOTA_SHADOW_PARENT_UNAVAILABLE",
+				"spark shadow parent credentials are unavailable",
+			)
+		}
 		account = resolved
 	}
 

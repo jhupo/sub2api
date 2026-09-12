@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -29,7 +30,10 @@ func (r *accountRepository) ClaimCodexQuotaOverdraftProbe(
 	if state.RecoverAt != nil {
 		recoverAt = state.RecoverAt.UTC()
 	}
-	result, err := r.sql.ExecContext(ctx, `
+	startedAtExpr := safeTimestamptzExpression("extra #>> '{codex_quota_overdraft_probe,started_at}'")
+	retryAtExpr := safeTimestamptzExpression("extra #>> '{codex_quota_overdraft_probe,retry_at}'")
+	recoverAtExpr := safeTimestamptzExpression("extra #>> '{codex_quota_overdraft_probe,recover_at}'")
+	query := fmt.Sprintf(`
 		UPDATE accounts
 		SET extra = COALESCE(extra, '{}'::jsonb) || jsonb_build_object($1::text, $2::jsonb),
 			updated_at = NOW()
@@ -42,16 +46,11 @@ func (r *accountRepository) ClaimCodexQuotaOverdraftProbe(
 				AND (
 					(
 						extra #>> '{codex_quota_overdraft_probe,status}' = 'pending'
-						AND CASE
-							WHEN pg_input_is_valid(COALESCE(extra #>> '{codex_quota_overdraft_probe,started_at}', ''), 'timestamptz'::regtype)
-							THEN (extra #>> '{codex_quota_overdraft_probe,started_at}')::timestamptz
-							ELSE '1970-01-01'::timestamptz
-						END <= NOW() - INTERVAL '2 minutes'
+						AND COALESCE(%s, '1970-01-01'::timestamptz) <= NOW() - INTERVAL '2 minutes'
 					)
 					OR (
 						extra #>> '{codex_quota_overdraft_probe,status}' = 'inconclusive'
-						AND pg_input_is_valid(COALESCE(extra #>> '{codex_quota_overdraft_probe,retry_at}', ''), 'timestamptz'::regtype)
-						AND (extra #>> '{codex_quota_overdraft_probe,retry_at}')::timestamptz <= NOW()
+						AND %s <= NOW()
 					)
 				)
 			)
@@ -61,22 +60,19 @@ func (r *accountRepository) ClaimCodexQuotaOverdraftProbe(
 					-- This prevents an active terminal failure from being overwritten
 					-- by a later-looking stale snapshot.
 					COALESCE(extra #>> '{codex_quota_overdraft_probe,cycle_key}', '') <> $4
-					AND $5::timestamptz > CASE
-						WHEN pg_input_is_valid(COALESCE(extra #>> '{codex_quota_overdraft_probe,recover_at}', ''), 'timestamptz'::regtype)
-						THEN (extra #>> '{codex_quota_overdraft_probe,recover_at}')::timestamptz
-						ELSE '1970-01-01'::timestamptz
-					END
+					AND $5::timestamptz > COALESCE(%s, '1970-01-01'::timestamptz)
 					AND (
 						extra #>> '{codex_quota_overdraft_probe,status}' = 'recovered'
 						OR (
 							extra #>> '{codex_quota_overdraft_probe,status}' IN ('failed', 'inconclusive', 'pending')
-							AND pg_input_is_valid(COALESCE(extra #>> '{codex_quota_overdraft_probe,recover_at}', ''), 'timestamptz'::regtype)
-							AND (extra #>> '{codex_quota_overdraft_probe,recover_at}')::timestamptz <= NOW()
+							AND %s <= NOW()
 						)
 					)
 				)
 			)
-	`, service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, state.CycleKey, recoverAt)
+	`, startedAtExpr, retryAtExpr, recoverAtExpr, recoverAtExpr)
+	result, err := r.sql.ExecContext(ctx, query,
+		service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, state.CycleKey, recoverAt)
 	if err != nil {
 		return false, err
 	}
@@ -106,7 +102,8 @@ func (r *accountRepository) PersistCodexQuotaOverdraftProbeUnlessFailed(
 	if state.RecoverAt != nil {
 		recoverAt = state.RecoverAt.UTC()
 	}
-	result, err := r.sql.ExecContext(ctx, `
+	recoverAtExpr := safeTimestamptzExpression("extra #>> '{codex_quota_overdraft_probe,recover_at}'")
+	query := fmt.Sprintf(`
 		UPDATE accounts
 		SET extra = COALESCE(extra, '{}'::jsonb) || jsonb_build_object($1::text, $2::jsonb),
 			updated_at = NOW()
@@ -120,22 +117,19 @@ func (r *accountRepository) PersistCodexQuotaOverdraftProbeUnlessFailed(
 				)
 				OR (
 					COALESCE(extra #>> '{codex_quota_overdraft_probe,cycle_key}', '') <> $4
-					AND $5::timestamptz > CASE
-						WHEN pg_input_is_valid(COALESCE(extra #>> '{codex_quota_overdraft_probe,recover_at}', ''), 'timestamptz'::regtype)
-						THEN (extra #>> '{codex_quota_overdraft_probe,recover_at}')::timestamptz
-						ELSE '1970-01-01'::timestamptz
-					END
+					AND $5::timestamptz > COALESCE(%s, '1970-01-01'::timestamptz)
 					AND (
 						extra #>> '{codex_quota_overdraft_probe,status}' = 'recovered'
 						OR (
 							extra #>> '{codex_quota_overdraft_probe,status}' IN ('failed', 'inconclusive', 'pending')
-							AND pg_input_is_valid(COALESCE(extra #>> '{codex_quota_overdraft_probe,recover_at}', ''), 'timestamptz'::regtype)
-							AND (extra #>> '{codex_quota_overdraft_probe,recover_at}')::timestamptz <= NOW()
+							AND %s <= NOW()
 						)
 					)
 				)
 			)
-	`, service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, state.CycleKey, recoverAt)
+	`, recoverAtExpr, recoverAtExpr)
+	result, err := r.sql.ExecContext(ctx, query,
+		service.CodexQuotaOverdraftProbeExtraKey, string(payload), id, state.CycleKey, recoverAt)
 	if err != nil {
 		return false, err
 	}

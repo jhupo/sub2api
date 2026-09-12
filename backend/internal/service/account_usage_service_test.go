@@ -66,6 +66,35 @@ func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 	}
 }
 
+func TestShouldQueryOpenAIQuotaFiltersUnavailableAccounts(t *testing.T) {
+	now := time.Now()
+	limitedUntil := now.Add(time.Minute)
+	tempUntil := now.Add(time.Minute)
+	expired := now.Add(-time.Minute)
+	shadowParentID := int64(42)
+	tests := []struct {
+		name    string
+		account *Account
+		want    bool
+	}{
+		{name: "active schedulable", account: &Account{Status: StatusActive, Schedulable: true}, want: true},
+		{name: "active rate limited", account: &Account{Status: StatusActive, RateLimitResetAt: &limitedUntil}, want: true},
+		{name: "active rate limited but quarantined", account: &Account{Status: StatusActive, RateLimitResetAt: &limitedUntil, TempUnschedulableUntil: &tempUntil}, want: false},
+		{name: "active spark shadow", account: &Account{Status: StatusActive, ParentAccountID: &shadowParentID, Schedulable: false}, want: true},
+		{name: "error status", account: &Account{Status: StatusError, Schedulable: true}, want: false},
+		{name: "manually unschedulable", account: &Account{Status: StatusActive, Schedulable: false}, want: false},
+		{name: "temporary quarantine", account: &Account{Status: StatusActive, Schedulable: true, TempUnschedulableUntil: &tempUntil}, want: false},
+		{name: "expired account", account: &Account{Status: StatusActive, Schedulable: true, AutoPauseOnExpired: true, ExpiresAt: &expired}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldQueryOpenAIQuota(tt.account, now); got != tt.want {
+				t.Fatalf("shouldQueryOpenAIQuota() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2 外审第9轮 P1:spark 影子用量走
 // QueryUsage(/wham/usage,与 WSv2 无关),staleness 不得被 WSv2 门控,否则首刷后窗口永久冻结。
 func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
@@ -104,14 +133,15 @@ func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 		t.Fatal("expected fresh spark shadow to skip refresh (TTL not elapsed)")
 	}
 
-	// Both normal and shadow OAuth accounts use GET /wham/usage, independent of WS.
+	// Spark shadows use GET /wham/usage; normal OAuth accounts use the
+	// /responses probe only when Responses WSv2 is enabled.
 	normalNoWS := &Account{
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Extra:    map[string]any{"codex_usage_updated_at": staleAt},
 	}
-	if !shouldRefreshOpenAICodexSnapshot(normalNoWS, usage, now) {
-		t.Fatal("expected stale non-WSv2 account to refresh its quota")
+	if shouldRefreshOpenAICodexSnapshot(normalNoWS, usage, now) {
+		t.Fatal("expected non-WSv2 account to skip automatic codex probe refresh")
 	}
 }
 
@@ -126,7 +156,13 @@ func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) 
 	headers.Set("x-codex-secondary-reset-after-seconds", "18000")
 	headers.Set("x-codex-secondary-window-minutes", "300")
 
-	updates := buildCodexUsageExtraUpdates(ParseCodexRateLimitHeaders(headers), time.Now())
+	updates, err := extractOpenAICodexProbeUpdates(&http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     headers,
+	})
+	if err != nil {
+		t.Fatalf("extractOpenAICodexProbeUpdates() error = %v", err)
+	}
 	if len(updates) == 0 {
 		t.Fatal("expected codex probe updates from 429 headers")
 	}

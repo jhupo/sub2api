@@ -345,6 +345,7 @@ func TestResetCreditAgentIdentityReusesConcurrentlyRecoveredTask(t *testing.T) {
 func TestPrepareUpstreamCallShadowResolve(t *testing.T) {
 	ctx := context.Background()
 	pid := int64(100)
+	rateLimitResetAt := time.Now().Add(time.Hour)
 
 	// 影子账号：无 chatgpt_account_id credentials
 	shadow := &Account{
@@ -361,6 +362,9 @@ func TestPrepareUpstreamCallShadowResolve(t *testing.T) {
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Status:   StatusActive,
+		// The parent's global Codex limit is independent from the shadow's
+		// Spark quota and must not block the query.
+		RateLimitResetAt: &rateLimitResetAt,
 		Credentials: map[string]any{
 			"chatgpt_account_id": "org-parent123",
 		},
@@ -382,6 +386,81 @@ func TestPrepareUpstreamCallShadowResolve(t *testing.T) {
 	require.NoError(t, err, "shadow resolve should succeed; got error: %v", err)
 	require.Equal(t, "org-parent123", chatGPTAccountID,
 		"prepareUpstreamCall should use parent's chatgpt_account_id after shadow resolve")
+}
+
+func TestQueryUsageShadowRejectsUnavailableParentBeforeUpstream(t *testing.T) {
+	pid := int64(100)
+	now := time.Now()
+
+	tests := []struct {
+		name      string
+		configure func(*Account)
+	}{
+		{
+			name: "error status",
+			configure: func(parent *Account) {
+				parent.Status = StatusError
+			},
+		},
+		{
+			name: "expired credentials",
+			configure: func(parent *Account) {
+				expiredAt := now.Add(-time.Minute)
+				parent.AutoPauseOnExpired = true
+				parent.ExpiresAt = &expiredAt
+			},
+		},
+		{
+			name: "temporary quarantine",
+			configure: func(parent *Account) {
+				until := now.Add(time.Minute)
+				parent.TempUnschedulableUntil = &until
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shadow := &Account{
+				ID:              200,
+				ParentAccountID: &pid,
+				Platform:        PlatformOpenAI,
+				Type:            AccountTypeOAuth,
+				Status:          StatusActive,
+				QuotaDimension:  QuotaDimensionSpark,
+			}
+			parent := &Account{
+				ID:       pid,
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+				Status:   StatusActive,
+				Credentials: map[string]any{
+					"chatgpt_account_id": "org-parent123",
+				},
+			}
+			tt.configure(parent)
+
+			repo := &stubQuotaAccountRepo{accounts: map[int64]*Account{shadow.ID: shadow, parent.ID: parent}}
+			tokenCache := &stubQuotaTokenCache{tokens: map[string]string{
+				OpenAITokenCacheKey(parent): "fake-access-token",
+			}}
+			clientFactoryCalls := 0
+			svc := NewOpenAIQuotaService(
+				repo,
+				nil,
+				NewOpenAITokenProvider(repo, tokenCache, nil),
+				func(_ string) (*req.Client, error) {
+					clientFactoryCalls++
+					return nil, errors.New("unexpected upstream client creation")
+				},
+			)
+
+			_, err := svc.QueryUsage(context.Background(), shadow.ID)
+			require.Error(t, err)
+			require.Equal(t, "OPENAI_QUOTA_SHADOW_PARENT_UNAVAILABLE", infraerrors.Reason(err))
+			require.Zero(t, clientFactoryCalls, "unavailable parent must be rejected before creating an upstream client")
+		})
+	}
 }
 
 func TestQueryUsageAgentIdentityUsesAssertionWithoutOAuthToken(t *testing.T) {
