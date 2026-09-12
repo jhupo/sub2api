@@ -2509,6 +2509,9 @@ func extractQuotaResetSeconds(err error) int {
 }
 
 func billingErrorDetails(err error) (status int, code, message string, retryAfter int) {
+	if errors.Is(err, service.ErrBalancePreauthorizationEstimateUnavailable) {
+		return http.StatusBadRequest, "invalid_request_error", pkgerrors.Message(err), 0
+	}
 	if errors.Is(err, service.ErrDailyLimitExceeded) {
 		return http.StatusTooManyRequests, "DAILY_LIMIT_EXCEEDED", "Daily subscription usage limit exceeded", 0
 	}

@@ -53,6 +53,28 @@ func TestEstimateBalancePreauthorizationTokensFallsBackWithoutIO(t *testing.T) {
 	require.Equal(t, DefaultBalancePreauthorizationNonStreamingOutputWindow, got.OutputTokens)
 }
 
+func TestEstimateBalancePreauthorizationTokensStrictRejectsUnknownShape(t *testing.T) {
+	_, err := EstimateBalancePreauthorizationTokensStrict([]byte(`{"model":"custom","unknown_payload":"value"}`), false)
+	require.Error(t, err)
+}
+
+func TestEstimateBalancePreauthorizationTokensStrictAcceptsResponsesInstructionsOnly(t *testing.T) {
+	estimate, err := EstimateBalancePreauthorizationTokensStrict([]byte(`{"model":"gpt-5","instructions":"Answer briefly."}`), false)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, estimate.InputTokens, 3)
+}
+
+func TestEstimateBalancePreauthorizationTokensStrictKeepsChatToolsOnMessagesEstimator(t *testing.T) {
+	estimate, err := EstimateBalancePreauthorizationTokensStrict([]byte(`{"model":"claude-3-5-sonnet-20241022","messages":[{"role":"user","content":"List files."}],"tools":[{"type":"function","function":{"name":"ls","parameters":{"type":"object"}}}]}`), false)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, estimate.InputTokens, DefaultBalancePreauthorizationInputTokens)
+}
+
+func TestEstimateBalancePreauthorizationTokensCapsClientOutputLimit(t *testing.T) {
+	got := EstimateBalancePreauthorizationTokens([]byte(`{"model":"gpt-5","input":"hello","max_output_tokens":999999}`))
+	require.Equal(t, MaxBalancePreauthorizationOutputTokens, got.OutputTokens)
+}
+
 func TestEstimateBalancePreauthorizationTokensIgnoresInvalidOutputLimit(t *testing.T) {
 	body := []byte(`{"model":"gpt-5","input":"hello","max_output_tokens":-1}`)
 	got := EstimateBalancePreauthorizationTokens(body)

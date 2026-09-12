@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
 
@@ -98,7 +99,10 @@ func preauthorizeTokenGatewayRequest(
 		userID = apiKey.User.ID
 	}
 	payloadHash := service.HashUsageRequestPayload(body)
-	tokenEstimate := service.EstimateBalancePreauthorizationTokens(body)
+	tokenEstimate, estimateErr := service.EstimateBalancePreauthorizationTokensStrict(body, gjson.GetBytes(body, "stream").Bool())
+	if estimateErr != nil {
+		return nil, service.ErrBalancePreauthorizationEstimateUnavailable.WithCause(estimateErr)
+	}
 	if imageTokens := service.GeminiImageReservationTokens(billingModel, body); imageTokens > 0 {
 		tokenEstimate.ImageOutputTokens = imageTokens
 	}
@@ -158,22 +162,19 @@ func preauthorizePerRequestGatewayRequest(
 		userID = apiKey.User.ID
 	}
 	payloadHash := service.HashUsageRequestPayload(body)
-	tokenEstimate := service.EstimateBalancePreauthorizationTokens(body)
 	return preauthorizer.Preauthorize(ctx, service.BalancePreauthorizationRequest{
-		RequestID:                  service.ResolveBalancePreauthorizationRequestID(ctx),
-		APIKeyID:                   apiKey.ID,
-		UserID:                     userID,
-		SubscriptionID:             subscriptionPreauthorizationID(apiKey, subscription),
-		AuthorizationFingerprint:   payloadHash,
-		BillingType:                billingType,
-		BillableInputBytes:         len(body),
-		EstimatedInputTokens:       tokenEstimate.InputTokens,
-		EstimatedImageInputTokens:  tokenEstimate.ImageInputTokens,
-		EstimatedImageOutputTokens: tokenEstimate.ImageOutputTokens,
-		EstimatedAudioInputTokens:  tokenEstimate.AudioInputTokens,
-		InitialOutputWindowTokens:  tokenEstimate.OutputTokens,
-		EstimateKind:               service.PreauthorizationEstimatePerRequest,
-		PerRequestEstimate:         estimate,
+		RequestID:                service.ResolveBalancePreauthorizationRequestID(ctx),
+		APIKeyID:                 apiKey.ID,
+		UserID:                   userID,
+		SubscriptionID:           subscriptionPreauthorizationID(apiKey, subscription),
+		AuthorizationFingerprint: payloadHash,
+		BillingType:              billingType,
+		BillableInputBytes:       len(body),
+		// Per-request endpoints use explicit count/size/duration units. Do not
+		// derive a token hold from the serialized request body here.
+		DisableOutputReservation: true,
+		EstimateKind:             service.PreauthorizationEstimatePerRequest,
+		PerRequestEstimate:       estimate,
 		CostInput: pricing.BalancePreauthorizationCostInput(
 			ctx, apiKey, billingModel, pricingAt, "", rateKind,
 		),

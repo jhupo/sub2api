@@ -1553,11 +1553,11 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	if req.Stream {
 		streamRes, err := s.handleStreamingResponse(c, resp, startTime, originalModel, includeImages)
 		if err != nil {
-			// 流式补扣失败主动中止（ErrBalanceWithholdingFailed）时保留一个
+			// 流式补扣失败主动中止时保留一个
 			// 零 usage 的 ForwardResult（携 err），让统一计费任务完成幂等结算。
 			// 上游未返回 usage 时 actual=0，整笔预扣必须释放，不得记为消费。
 			// 其余错误（含 failover）仍返回 nil，不暴露部分结果。
-			if !errors.Is(err, ErrBalanceWithholdingFailed) {
+			if !IsStreamOutputHoldTopUpFailure(err) {
 				return nil, err
 			}
 			streamTopUpAbortErr = err

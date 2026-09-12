@@ -30,6 +30,10 @@ const (
 // passthrough:1787)两条路径；两处返回前均已执行 compensateAuthorizationFailure/退款，
 // 不会漏扣或残留 hold——修改状态码不得改变这一补偿前置。
 var (
+	ErrBalancePreauthorizationEstimateUnavailable = infraerrors.BadRequest(
+		"PREAUTHORIZATION_ESTIMATE_UNAVAILABLE",
+		"Unable to estimate request tokens before forwarding",
+	)
 	ErrBalanceWithholdingFailed = infraerrors.Forbidden(
 		"BALANCE_WITHHOLDING_FAILED",
 		"Insufficient balance, withholding failed",
@@ -157,9 +161,10 @@ func NewBalancePreauthorizationService(
 type PreauthorizationEstimateKind uint8
 
 const (
-	// PreauthorizationEstimateTokenUpperBound treats BillableInputBytes as a
-	// conservative token upper bound and holds the largest of the input,
-	// cache-read, and cache-creation pricing scenarios plus an output window.
+	// PreauthorizationEstimateTokenUpperBound prices the request-local token
+	// estimate and holds the largest of the input, cache-read, and cache-creation
+	// pricing scenarios plus an output window. BillableInputBytes is retained as
+	// metadata for compatibility and is never converted to tokens.
 	PreauthorizationEstimateTokenUpperBound PreauthorizationEstimateKind = iota
 	// PreauthorizationEstimatePerRequest prices the request once from explicit
 	// per-request billing units (image count, size tier, video seconds) using
@@ -186,11 +191,10 @@ type PerRequestPreauthorizationEstimate struct {
 }
 
 // BalancePreauthorizationRequest carries the exact pricing context frozen for
-// the request. For the token upper-bound estimate kind, Tokens in CostInput are
-// ignored and the service prices the request-local input upper bound plus its
-// bounded output window. Cache disposition is reconciled during final usage
-// settlement. For the per-request estimate kind, PerRequestEstimate supplies
-// the billing units and the output window is unused.
+// the request. For the token upper-bound estimate kind, the service prices the
+// request-local input estimate plus its bounded output window. Cache disposition
+// is reconciled during final usage settlement. For the per-request estimate kind,
+// PerRequestEstimate supplies the billing units and the output window is unused.
 type BalancePreauthorizationRequest struct {
 	RequestID                  string
 	APIKeyID                   int64
@@ -232,10 +236,10 @@ func (s *BalancePreauthorizationService) RequiresPreauthorization(ctx context.Co
 	}
 	switch billingType {
 	case BillingTypeSubscription:
-		// The same runtime switch gates the monetary hold for both funding
-		// sources. Subscription allowance admission remains atomic inside the
-		// subscription preauthorization transaction.
-		return s.balancePreauthorizationEnabled(ctx)
+		// Subscription preauthorization is also the atomic allowance admission
+		// gate. The wallet monetary switch must not let concurrent requests skip
+		// this transaction and oversell a subscription.
+		return true
 	case BillingTypeBalance:
 		return s.balancePreauthorizationEnabled(ctx)
 	default:
@@ -250,12 +254,15 @@ func (s *BalancePreauthorizationService) balancePreauthorizationEnabled(ctx cont
 	if s.settingService != nil {
 		return s.settingService.IsBalancePreauthorizationEnabled(ctx)
 	}
+	if s.cfg != nil {
+		return s.cfg.Billing.BalancePreauthorizationEnabled
+	}
 	return true
 }
 
 // Preauthorize returns a request-owned guard for the selected funding source.
-// Subscription allowance reservations remain atomic when enabled; the feature
-// switch controls whether the monetary preauthorization path is entered.
+// Subscription allowance reservations are always enforced; the feature switch
+// controls only wallet monetary preauthorization.
 func (s *BalancePreauthorizationService) Preauthorize(
 	ctx context.Context,
 	request BalancePreauthorizationRequest,
@@ -562,9 +569,6 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 		return balancePreauthorizationEstimate{}, err
 	}
 	inputTokens := request.EstimatedInputTokens
-	if inputTokens <= 0 {
-		inputTokens = request.BillableInputBytes
-	}
 	imageInput, imageOutput := request.EstimatedImageInputTokens, request.EstimatedImageOutputTokens
 	if tokens := request.PerRequestEstimate.Tokens; tokens.ImageOutputTokens > 0 {
 		inputTokens, outputWindow = tokens.InputTokens, tokens.OutputTokens
@@ -572,6 +576,9 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 		outputWindow -= imageOutput
 	} else if imageOutput > 0 && IsGPTImageGenerationModel(base.Model) {
 		outputWindow = 0
+	}
+	if inputTokens <= 0 {
+		return balancePreauthorizationEstimate{}, ErrBalancePreauthorizationEstimateUnavailable
 	}
 	if imageInput > 0 || imageOutput > 0 {
 		if outputWindow < 0 || outputWindow > math.MaxInt-imageOutput {

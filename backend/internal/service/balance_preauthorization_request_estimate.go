@@ -1,6 +1,8 @@
 package service
 
 import (
+	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 
@@ -10,6 +12,7 @@ import (
 const (
 	DefaultBalancePreauthorizationInputTokens              = 500
 	DefaultBalancePreauthorizationNonStreamingOutputWindow = 4096
+	MaxBalancePreauthorizationOutputTokens                 = 8192
 )
 
 // BalancePreauthorizationTokenEstimate is derived entirely from the current
@@ -29,16 +32,57 @@ type BalancePreauthorizationTokenEstimate struct {
 // reserve against authoritative provider usage after the request completes.
 //
 // Protocol-specific estimators already used by the count_tokens endpoints are
-// preferred. Unknown request shapes use a bounded character heuristic rather
-// than treating serialized JSON bytes as tokens (which can over-reserve by
-// orders of magnitude for escaped keys and structural syntax).
+// preferred. The strict gateway entry point rejects unknown shapes; the legacy
+// no-error helper keeps a bounded compatibility result for non-gateway callers.
 func EstimateBalancePreauthorizationTokens(body []byte) BalancePreauthorizationTokenEstimate {
-	return estimateBalancePreauthorizationTokens(body, gjson.GetBytes(body, "stream").Bool())
+	estimate, err := EstimateBalancePreauthorizationTokensStrict(body, gjson.GetBytes(body, "stream").Bool())
+	if err != nil {
+		// Keep the legacy helper total for non-gateway callers. Gateway admission
+		// uses the strict variant below and fails before selecting an account.
+		return estimateBalancePreauthorizationTokensFallback(body, gjson.GetBytes(body, "stream").Bool())
+	}
+	return estimate
 }
 
 // Responses WebSocket streams even when its payload omits the HTTP stream flag.
 func EstimateStreamingPreauthorizationTokens(body []byte) BalancePreauthorizationTokenEstimate {
-	return estimateBalancePreauthorizationTokens(body, true)
+	estimate, err := EstimateBalancePreauthorizationTokensStrict(body, true)
+	if err != nil {
+		return estimateBalancePreauthorizationTokensFallback(body, true)
+	}
+	return estimate
+}
+
+// EstimateBalancePreauthorizationTokensStrict only accepts request shapes for
+// which the local protocol estimator has a defined meaning. Callers on the
+// request path must use this method: guessing from serialized JSON size can
+// reserve hundreds of times the actual usage.
+func EstimateBalancePreauthorizationTokensStrict(body []byte, streaming bool) (BalancePreauthorizationTokenEstimate, error) {
+	if len(body) == 0 || !json.Valid(body) {
+		return BalancePreauthorizationTokenEstimate{}, fmt.Errorf("preauthorization token estimate: invalid JSON request")
+	}
+	root := gjson.ParseBytes(body)
+	switch {
+	case root.Get("contents").Exists() || root.Get("systemInstruction").Exists():
+	case root.Get("input").Exists() || root.Get("instructions").Exists():
+		if _, err := EstimateOpenAIResponsesInputTokens(body); err != nil {
+			return BalancePreauthorizationTokenEstimate{}, err
+		}
+	case root.Get("messages").Exists():
+		if _, err := EstimateAnthropicCountTokens(body); err != nil {
+			return BalancePreauthorizationTokenEstimate{}, err
+		}
+	case root.Get("prompt").Exists():
+		if root.Get("prompt").Type != gjson.String {
+			return BalancePreauthorizationTokenEstimate{}, fmt.Errorf("preauthorization token estimate: prompt must be a string")
+		}
+	case root.Get("type").String() == "response.create" || root.Get("max_output_tokens").Exists() || root.Get("max_completion_tokens").Exists():
+		// Responses WebSocket turns may intentionally omit input when they
+		// continue a previous response or send an empty turn.
+	default:
+		return BalancePreauthorizationTokenEstimate{}, fmt.Errorf("preauthorization token estimate: unsupported request shape")
+	}
+	return estimateBalancePreauthorizationTokens(body, streaming), nil
 }
 
 func estimateBalancePreauthorizationTokens(body []byte, streaming bool) BalancePreauthorizationTokenEstimate {
@@ -53,6 +97,9 @@ func estimateBalancePreauthorizationTokens(body []byte, streaming bool) BalanceP
 		if streaming {
 			outputTokens = DefaultBalancePreauthorizationOutputWindow
 		}
+	}
+	if outputTokens > MaxBalancePreauthorizationOutputTokens {
+		outputTokens = MaxBalancePreauthorizationOutputTokens
 	}
 
 	estimate := BalancePreauthorizationTokenEstimate{
@@ -151,25 +198,29 @@ func estimateBalancePreauthorizationInputTokens(body []byte) int {
 	switch {
 	case root.Get("contents").Exists() || root.Get("systemInstruction").Exists():
 		estimated = estimateGeminiCountTokens(body)
-	case root.Get("input").Exists():
+	case root.Get("input").Exists() || root.Get("instructions").Exists():
 		estimated, err = EstimateOpenAIResponsesInputTokens(body)
 	case root.Get("messages").Exists():
 		estimated, err = EstimateAnthropicCountTokens(body)
+	case root.Get("prompt").Exists():
+		estimated = estimateTokensForText(root.Get("prompt").String())
 	}
 	if err == nil && estimated > 0 {
 		return estimated
 	}
 
-	// A rough 4-byte/token heuristic is only a last-resort admission estimate;
-	// provider usage remains authoritative at settlement.
-	return maxIntPreauth(1, (len(body)+3)/4)
+	// Unknown shapes are handled by the strict gateway path. Keep the helper's
+	// compatibility result bounded for internal callers that cannot return an
+	// error, without deriving tokens from the serialized JSON envelope.
+	return DefaultBalancePreauthorizationInputTokens
 }
 
-func maxIntPreauth(a, b int) int {
-	if a > b {
-		return a
+func estimateBalancePreauthorizationTokensFallback(body []byte, streaming bool) BalancePreauthorizationTokenEstimate {
+	output := DefaultBalancePreauthorizationNonStreamingOutputWindow
+	if streaming {
+		output = DefaultBalancePreauthorizationOutputWindow
 	}
-	return b
+	return BalancePreauthorizationTokenEstimate{InputTokens: DefaultBalancePreauthorizationInputTokens, OutputTokens: output}
 }
 
 func requestedBalancePreauthorizationOutputTokens(body []byte) int {

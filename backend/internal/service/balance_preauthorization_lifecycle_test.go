@@ -347,6 +347,20 @@ type preauthorizationFixture struct {
 	repo       *preauthorizationRepositoryStub
 }
 
+type subscriptionAdmissionStub struct {
+	SubscriptionAllowanceRepository
+	calls int
+}
+
+func (s *subscriptionAdmissionStub) AuthorizeSubscriptionAllowance(_ context.Context, cmd *SubscriptionAllowanceCommand) (*SubscriptionAllowanceReservation, error) {
+	s.calls++
+	return &SubscriptionAllowanceReservation{
+		RequestID: cmd.RequestID, APIKeyID: cmd.APIKeyID, UserID: cmd.UserID,
+		SubscriptionID: cmd.SubscriptionID, AuthorizedAmount: cmd.Amount,
+		Status: BillingReservationAuthorized, ExpiresAt: time.Now().Add(time.Hour),
+	}, nil
+}
+
 func newPreauthorizationFixture() *preauthorizationFixture {
 	recorder := &preauthorizationCallRecorder{}
 	calculator := &preauthorizationCostCalculatorStub{recorder: recorder}
@@ -390,6 +404,7 @@ func balancePreauthorizationTestRequest() BalancePreauthorizationRequest {
 		AuthorizationFingerprint: " auth-fingerprint ",
 		BillingType:              BillingTypeBalance,
 		BillableInputBytes:       100,
+		EstimatedInputTokens:     100,
 		CostInput: CostInput{
 			Model:          "gpt-test",
 			GroupID:        &groupID,
@@ -655,20 +670,40 @@ func TestBalancePreauthorizationLifecycleSkipsSimpleMode(t *testing.T) {
 func TestBalancePreauthorizationRequirementMatchesLifecycleModes(t *testing.T) {
 	fixture := newPreauthorizationFixture()
 	require.True(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeBalance))
-	// Subscription allowances are the atomic quota gate and remain mandatory;
-	// the setting only controls wallet preauthorization.
+	// The runtime switch controls whether the monetary preauthorization path is
+	// entered for either funding source; subscription admission remains atomic
+	// whenever the path is enabled.
 	require.True(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeSubscription))
 
 	fixture.service.cfg.Billing.BalancePreauthorizationEnabled = false
-	require.True(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeBalance))
+	require.False(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeBalance))
+	// Subscription allowance admission remains mandatory even when wallet
+	// monetary preauthorization is disabled.
+	require.True(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeSubscription))
+	fixture.service.cfg.Billing.BalancePreauthorizationEnabled = true
 	guard, err := fixture.service.Preauthorize(context.Background(), balancePreauthorizationTestRequest())
 	require.NoError(t, err)
 	require.NotNil(t, guard)
 	require.NotEmpty(t, fixture.recorder.snapshot())
 
-	fixture.service.cfg.Billing.BalancePreauthorizationEnabled = true
 	fixture.service.cfg.RunMode = config.RunModeSimple
 	require.False(t, fixture.service.RequiresPreauthorization(context.Background(), BillingTypeBalance))
+}
+
+func TestBalancePreauthorizationSubscriptionAdmissionIgnoresWalletSwitch(t *testing.T) {
+	fixture := newPreauthorizationFixture()
+	admission := &subscriptionAdmissionStub{}
+	fixture.service.subscriptionRepo = admission
+	fixture.service.cfg.Billing.BalancePreauthorizationEnabled = false
+
+	request := balancePreauthorizationTestRequest()
+	request.BillingType = BillingTypeSubscription
+	request.SubscriptionID = 99
+	guard, err := fixture.service.Preauthorize(context.Background(), request)
+
+	require.NoError(t, err)
+	require.NotNil(t, guard)
+	require.Equal(t, 1, admission.calls)
 }
 
 func TestBalancePreauthorizationGuardTransferInvalidatesHandlerOwnership(t *testing.T) {

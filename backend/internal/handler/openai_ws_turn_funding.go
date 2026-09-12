@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -76,7 +77,17 @@ func (f *openAIWSTurnFunding) prepare(ctx context.Context, h *OpenAIGatewayHandl
 	if h.balancePreauthorizer == nil {
 		return errors.New("websocket preauthorization service unavailable")
 	}
-	estimate := service.EstimateStreamingPreauthorizationTokens(payload)
+	if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(payload, "type").String()), "response.cancel") {
+		return nil
+	}
+	estimate, estimateErr := service.EstimateBalancePreauthorizationTokensStrict(payload, true)
+	if estimateErr != nil {
+		return service.NewOpenAIWSRequestScopedClientCloseError(
+			coderws.StatusPolicyViolation,
+			"unable to estimate request tokens before forwarding",
+			service.ErrBalancePreauthorizationEstimateUnavailable.WithCause(estimateErr),
+		)
+	}
 	if previous := gjson.GetBytes(payload, "previous_response_id").String(); previous != "" {
 		bound, found := f.contextBounds[previous]
 		if !found {
