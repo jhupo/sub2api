@@ -151,7 +151,15 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 
 	started := time.Now()
 	var reserve func(context.Context, time.Duration) error
-	if balanceGuard != nil {
+	historicalPreauthorization := false
+	if marker, ok := h.balancePreauthorizer.(historicalBalancePreauthorizer); ok {
+		historicalPreauthorization = marker.UsesHistoricalPreauthorization()
+	}
+	// Historical preauthorization uses the previous completed amount as the
+	// next request's hold. Do not reintroduce duration-based relay top-ups for
+	// realtime sessions; the final provider-reported usage still reconciles the
+	// current request and becomes the next baseline.
+	if balanceGuard != nil && !historicalPreauthorization {
 		reserve = func(ctx context.Context, elapsed time.Duration) error {
 			cost, err := h.gatewayService.BalancePreauthorizationAudioCost(
 				ctx, apiKey, model, "realtime", (elapsed + service.GrokRealtimeReservationForwardWindow).Minutes(), pricingAt,

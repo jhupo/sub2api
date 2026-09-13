@@ -287,6 +287,15 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 		AccountType:        p.Account.Type,
 		RequestPayloadHash: strings.TrimSpace(p.RequestPayloadHash),
 	}
+	subscriptionID := int64(0)
+	if p.IsSubscriptionBill && p.Subscription != nil {
+		subscriptionID = p.Subscription.ID
+	}
+	source := FundingSourceWallet
+	if p.IsSubscriptionBill {
+		source = FundingSourceSubscription
+	}
+	cmd.BaselineKey = BuildBalancePreauthorizationBaselineKey(p.User.ID, p.APIKey.ID, source, subscriptionID, "")
 	if usageLog != nil {
 		cmd.Model = usageLog.Model
 		cmd.BillingType = usageLog.BillingType
@@ -361,6 +370,9 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	guardedCaptureCost := 0.0
 	walletPreauthorized := false
 	if preauthorized && cmd != nil {
+		if baselineKey := guard.BaselineKey(); baselineKey != "" {
+			cmd.BaselineKey = baselineKey
+		}
 		switch guard.FundingSource() {
 		case FundingSourceWallet:
 			cmd.BalancePreauthorized = true
@@ -438,6 +450,14 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
 		return false, nil
 	}
+	if store, ok := repo.(BalancePreauthorizationBaselineStore); ok && cmd.BaselineKey != "" {
+		if err := store.RecordPreauthorizationBaseline(billingCtx, cmd.BaselineKey, actualUsageBillingAmount(cmd)); err != nil {
+			// Usage is already durable. Keep the response successful while making
+			// the baseline persistence failure visible for operational repair.
+			slog.WarnContext(billingCtx, "billing.preauthorization_baseline_update_failed",
+				"request_id", cmd.RequestID, "baseline_key", cmd.BaselineKey, "error", err)
+		}
+	}
 
 	if result.APIKeyQuotaExhausted {
 		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey != nil && p.APIKey.Key != "" {
@@ -447,6 +467,13 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	finalizePostUsageBilling(billingCtx, p, deps, result, walletPreauthorized)
 	return true, nil
+}
+
+func actualUsageBillingAmount(cmd *UsageBillingCommand) float64 {
+	if cmd == nil {
+		return 0
+	}
+	return cmd.BalanceCost + cmd.SubscriptionCost
 }
 
 func isSubscriptionAllowanceLimitError(err error) bool {

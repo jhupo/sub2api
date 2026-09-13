@@ -14,12 +14,17 @@ func (s *BalancePreauthorizationService) RepriceBeforeSend(ctx context.Context, 
 	if guard == nil || guard.core == nil {
 		return ErrInvalidBillingPreauthorizationEstimate
 	}
-	if err := validateBalancePreauthorizationRequest(&request); err != nil {
-		return err
-	}
-	estimate, err := s.estimateHold(ctx, request)
-	if err != nil {
-		return err
+	_, historical := s.repo.(balancePreauthorizationBaselineStore)
+	estimate := balancePreauthorizationEstimate{}
+	if !historical {
+		if err := validateBalancePreauthorizationRequest(&request); err != nil {
+			return err
+		}
+		var err error
+		estimate, err = s.estimateHold(ctx, request)
+		if err != nil {
+			return err
+		}
 	}
 	core := guard.core
 	core.mu.Lock()
@@ -33,11 +38,18 @@ func (s *BalancePreauthorizationService) RepriceBeforeSend(ctx context.Context, 
 	if core.requestID != request.RequestID || core.apiKeyID != request.APIKeyID {
 		return ErrInvalidBillingPreauthorizationEstimate
 	}
+	if historical {
+		// The initial hold is the previous actual amount. Repricing a retry must
+		// not parse the payload or create a second token-based hold.
+		return nil
+	}
 	if err := guard.topUpToLocked(ctx, estimate.HoldAmount); err != nil {
 		return err
 	}
 	core.outputWindow = estimate.OutputWindow
-	core.outputHoldTracker = NewBillingOutputHoldTracker(estimate.OutputWindow, estimate.OutputWindow, core.holdAmount, estimate.OutputUnitPrice, 1)
+	core.outputHoldTracker = NewBillingOutputHoldTracker(
+		estimate.OutputWindow, estimate.OutputWindow, core.holdAmount, estimate.OutputUnitPrice, 1,
+	)
 	return nil
 }
 

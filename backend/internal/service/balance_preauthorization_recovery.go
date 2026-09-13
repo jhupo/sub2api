@@ -27,6 +27,10 @@ func (s *BalancePreauthorizationService) RecoverBalancePreauthorization(
 		return balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
 	}
 	ctx = nonNilContext(ctx)
+	if record.BaselineKey == "" {
+		record.BaselineKey = BuildBalancePreauthorizationBaselineKey(record.UserID, record.APIKeyID,
+			FundingSourceWallet, 0, "")
+	}
 	switch record.Status {
 	case BalanceSettlementPrepared:
 		if err := s.repo.BeginBalancePreauthorizationRefund(ctx, record.RequestID, record.APIKeyID); err != nil {
@@ -67,7 +71,12 @@ func (s *BalancePreauthorizationService) RecoverSubscriptionAllowance(
 	cmd := &SubscriptionAllowanceCommand{
 		RequestID: record.RequestID, APIKeyID: record.APIKeyID, UserID: record.UserID,
 		SubscriptionID: record.SubscriptionID, AuthorizationFingerprint: record.AuthorizationFingerprint,
-		Amount: record.AuthorizedAmount, AuthorizedAt: record.UpdatedAt, ExpiresAt: record.ExpiresAt,
+		BaselineKey: record.BaselineKey,
+		Amount:      record.AuthorizedAmount, AuthorizedAt: record.UpdatedAt, ExpiresAt: record.ExpiresAt,
+	}
+	if cmd.BaselineKey == "" {
+		cmd.BaselineKey = BuildBalancePreauthorizationBaselineKey(record.UserID, record.APIKeyID,
+			FundingSourceSubscription, record.SubscriptionID, "")
 	}
 	switch record.Status {
 	case BillingReservationAuthorized:
@@ -86,7 +95,16 @@ func (s *BalancePreauthorizationService) RecoverSubscriptionAllowance(
 		cmd.Amount = record.CapturedAmount
 		cmd.ActualAmount = &record.ActualAmount
 		_, err := s.subscriptionRepo.CaptureSubscriptionAllowance(ctx, cmd, record.RequestFingerprint)
-		return err
+		if err != nil {
+			return err
+		}
+		if store, ok := s.repo.(balancePreauthorizationBaselineStore); ok && cmd.BaselineKey != "" {
+			if err := store.RecordPreauthorizationBaseline(ctx, cmd.BaselineKey, record.ActualAmount); err != nil {
+				slog.WarnContext(ctx, "billing.preauthorization_baseline_update_failed",
+					"request_id", record.RequestID, "baseline_key", cmd.BaselineKey, "error", err)
+			}
+		}
+		return nil
 	default:
 		return balancePreauthorizationUnavailable(fmt.Errorf("unsupported recoverable subscription reservation status %s", record.Status))
 	}
@@ -139,6 +157,14 @@ func (s *BalancePreauthorizationService) recoverBalancePreauthorizationSettlemen
 	}
 	if err := s.repo.CompleteBalancePreauthorizationSettlement(ctx, record.RequestID, record.APIKeyID); err != nil {
 		return balancePreauthorizationUnavailable(err)
+	}
+	if record.BaselineKey != "" {
+		if store, ok := s.repo.(balancePreauthorizationBaselineStore); ok {
+			if err := store.RecordPreauthorizationBaseline(ctx, record.BaselineKey, actual); err != nil {
+				slog.WarnContext(ctx, "billing.preauthorization_baseline_update_failed",
+					"request_id", record.RequestID, "baseline_key", record.BaselineKey, "error", err)
+			}
+		}
 	}
 	s.cleanupLiveBalanceAttempt(ctx, record.UserID, BalancePreauthorizationAttemptID(record.RequestID, record.APIKeyID))
 	return nil

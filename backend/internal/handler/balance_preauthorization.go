@@ -32,6 +32,10 @@ type balancePreauthorizationRequirement interface {
 	RequiresPreauthorization(context.Context, int8) bool
 }
 
+type historicalBalancePreauthorizer interface {
+	UsesHistoricalPreauthorization() bool
+}
+
 type balancePreauthorizationWebSearchPricingProvider interface {
 	BalancePreauthorizationWebSearchCost(context.Context, *service.APIKey, time.Time) (float64, error)
 }
@@ -86,7 +90,7 @@ func preauthorizeTokenGatewayRequest(
 	serviceTier string,
 	disableOutputReservation bool,
 ) (*service.BalancePreauthorizationGuard, error) {
-	if preauthorizer == nil || pricing == nil || apiKey == nil {
+	if preauthorizer == nil || apiKey == nil {
 		return nil, nil
 	}
 	billingType := service.BalancePreauthorizationBillingType(apiKey, subscription)
@@ -99,15 +103,35 @@ func preauthorizeTokenGatewayRequest(
 		userID = apiKey.User.ID
 	}
 	payloadHash := service.HashUsageRequestPayload(body)
-	tokenEstimate, estimateErr := service.EstimateBalancePreauthorizationTokensStrict(body, gjson.GetBytes(body, "stream").Bool())
-	if estimateErr != nil {
-		return nil, service.ErrBalancePreauthorizationEstimateUnavailable.WithCause(estimateErr)
+	historical := false
+	if marker, ok := preauthorizer.(historicalBalancePreauthorizer); ok {
+		historical = marker.UsesHistoricalPreauthorization()
 	}
-	if imageTokens := service.GeminiImageReservationTokens(billingModel, body); imageTokens > 0 {
-		tokenEstimate.ImageOutputTokens = imageTokens
+	if !historical && pricing == nil {
+		return nil, nil
 	}
-	if disableOutputReservation {
-		tokenEstimate.OutputTokens = 0
+	inputTokens, imageInputTokens, imageOutputTokens, audioInputTokens, outputTokens := 0, 0, 0, 0, 0
+	if !historical {
+		tokenEstimate, estimateErr := service.EstimateBalancePreauthorizationTokensStrict(body, gjson.GetBytes(body, "stream").Bool())
+		if estimateErr != nil {
+			return nil, service.ErrBalancePreauthorizationEstimateUnavailable.WithCause(estimateErr)
+		}
+		if imageTokens := service.GeminiImageReservationTokens(billingModel, body); imageTokens > 0 {
+			tokenEstimate.ImageOutputTokens = imageTokens
+		}
+		if disableOutputReservation {
+			tokenEstimate.OutputTokens = 0
+		}
+		inputTokens, imageInputTokens, imageOutputTokens = tokenEstimate.InputTokens, tokenEstimate.ImageInputTokens, tokenEstimate.ImageOutputTokens
+		audioInputTokens, outputTokens = tokenEstimate.AudioInputTokens, tokenEstimate.OutputTokens
+	}
+	costInput := service.CostInput{}
+	if !historical {
+		costInput = pricing.BalancePreauthorizationCostInput(
+			ctx, apiKey, billingModel, pricingAt,
+			service.BalancePreauthorizationServiceTier(ctx, apiKey, serviceTier),
+			service.BalancePreauthorizationRateText,
+		)
 	}
 	return preauthorizer.Preauthorize(ctx, service.BalancePreauthorizationRequest{
 		RequestID:                  service.ResolveBalancePreauthorizationRequestID(ctx),
@@ -117,18 +141,14 @@ func preauthorizeTokenGatewayRequest(
 		AuthorizationFingerprint:   payloadHash,
 		BillingType:                billingType,
 		BillableInputBytes:         len(body),
-		EstimatedInputTokens:       tokenEstimate.InputTokens,
-		EstimatedImageInputTokens:  tokenEstimate.ImageInputTokens,
-		EstimatedImageOutputTokens: tokenEstimate.ImageOutputTokens,
-		EstimatedAudioInputTokens:  tokenEstimate.AudioInputTokens,
-		InitialOutputWindowTokens:  tokenEstimate.OutputTokens,
+		EstimatedInputTokens:       inputTokens,
+		EstimatedImageInputTokens:  imageInputTokens,
+		EstimatedImageOutputTokens: imageOutputTokens,
+		EstimatedAudioInputTokens:  audioInputTokens,
+		InitialOutputWindowTokens:  outputTokens,
 		DisableOutputReservation:   disableOutputReservation,
 		PerRequestEstimate:         service.PerRequestPreauthorizationEstimate{RequestCount: 1},
-		CostInput: pricing.BalancePreauthorizationCostInput(
-			ctx, apiKey, billingModel, pricingAt,
-			service.BalancePreauthorizationServiceTier(ctx, apiKey, serviceTier),
-			service.BalancePreauthorizationRateText,
-		),
+		CostInput:                  costInput,
 	})
 }
 
@@ -149,7 +169,7 @@ func preauthorizePerRequestGatewayRequest(
 	estimate service.PerRequestPreauthorizationEstimate,
 	rateKind service.BalancePreauthorizationRateKind,
 ) (*service.BalancePreauthorizationGuard, error) {
-	if preauthorizer == nil || pricing == nil || apiKey == nil {
+	if preauthorizer == nil || apiKey == nil {
 		return nil, nil
 	}
 	billingType := service.BalancePreauthorizationBillingType(apiKey, subscription)
@@ -162,6 +182,19 @@ func preauthorizePerRequestGatewayRequest(
 		userID = apiKey.User.ID
 	}
 	payloadHash := service.HashUsageRequestPayload(body)
+	historical := false
+	if marker, ok := preauthorizer.(historicalBalancePreauthorizer); ok {
+		historical = marker.UsesHistoricalPreauthorization()
+	}
+	if !historical && pricing == nil {
+		return nil, nil
+	}
+	costInput := service.CostInput{}
+	if !historical {
+		costInput = pricing.BalancePreauthorizationCostInput(
+			ctx, apiKey, billingModel, pricingAt, "", rateKind,
+		)
+	}
 	return preauthorizer.Preauthorize(ctx, service.BalancePreauthorizationRequest{
 		RequestID:                service.ResolveBalancePreauthorizationRequestID(ctx),
 		APIKeyID:                 apiKey.ID,
@@ -175,9 +208,7 @@ func preauthorizePerRequestGatewayRequest(
 		DisableOutputReservation: true,
 		EstimateKind:             service.PreauthorizationEstimatePerRequest,
 		PerRequestEstimate:       estimate,
-		CostInput: pricing.BalancePreauthorizationCostInput(
-			ctx, apiKey, billingModel, pricingAt, "", rateKind,
-		),
+		CostInput:                costInput,
 	})
 }
 
@@ -191,7 +222,7 @@ func preauthorizeWebSearchGatewayRequest(
 	pricingAt time.Time,
 	requestID string,
 ) (*service.BalancePreauthorizationGuard, error) {
-	if preauthorizer == nil || pricing == nil || apiKey == nil {
+	if preauthorizer == nil || apiKey == nil {
 		return nil, nil
 	}
 	billingType := service.BalancePreauthorizationBillingType(apiKey, subscription)
@@ -199,9 +230,20 @@ func preauthorizeWebSearchGatewayRequest(
 		!requirement.RequiresPreauthorization(ctx, billingType) {
 		return nil, nil
 	}
-	fixedAmount, err := pricing.BalancePreauthorizationWebSearchCost(ctx, apiKey, pricingAt)
-	if err != nil {
-		return nil, err
+	fixedAmount := 0.0
+	historical := false
+	if marker, ok := preauthorizer.(historicalBalancePreauthorizer); ok {
+		historical = marker.UsesHistoricalPreauthorization()
+	}
+	if !historical && pricing == nil {
+		return nil, nil
+	}
+	if !historical {
+		var err error
+		fixedAmount, err = pricing.BalancePreauthorizationWebSearchCost(ctx, apiKey, pricingAt)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return preauthorizeFixedGatewayRequest(ctx, preauthorizer, apiKey, subscription, body, requestID, fixedAmount)
 }
@@ -216,7 +258,7 @@ func preauthorizeSearchGatewayRequest(
 	pricingAt time.Time,
 	requestID string,
 ) (*service.BalancePreauthorizationGuard, error) {
-	if preauthorizer == nil || pricing == nil || apiKey == nil {
+	if preauthorizer == nil || apiKey == nil {
 		return nil, nil
 	}
 	billingType := service.BalancePreauthorizationBillingType(apiKey, subscription)
@@ -224,9 +266,20 @@ func preauthorizeSearchGatewayRequest(
 		!requirement.RequiresPreauthorization(ctx, billingType) {
 		return nil, nil
 	}
-	fixedAmount, err := pricing.BalancePreauthorizationSearchCost(ctx, apiKey, pricingAt)
-	if err != nil {
-		return nil, err
+	fixedAmount := 0.0
+	historical := false
+	if marker, ok := preauthorizer.(historicalBalancePreauthorizer); ok {
+		historical = marker.UsesHistoricalPreauthorization()
+	}
+	if !historical && pricing == nil {
+		return nil, nil
+	}
+	if !historical {
+		var err error
+		fixedAmount, err = pricing.BalancePreauthorizationSearchCost(ctx, apiKey, pricingAt)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return preauthorizeFixedGatewayRequest(ctx, preauthorizer, apiKey, subscription, body, requestID, fixedAmount)
 }
@@ -272,7 +325,7 @@ func preauthorizeGrokVideoGatewayRequest(
 	durationSeconds int,
 	resolution string,
 ) (*service.BalancePreauthorizationGuard, error) {
-	if preauthorizer == nil || pricing == nil || apiKey == nil {
+	if preauthorizer == nil || apiKey == nil {
 		return nil, nil
 	}
 	billingType := service.BalancePreauthorizationBillingType(apiKey, subscription)
@@ -282,6 +335,19 @@ func preauthorizeGrokVideoGatewayRequest(
 	userID := apiKey.UserID
 	if userID <= 0 && apiKey.User != nil {
 		userID = apiKey.User.ID
+	}
+	costInput := service.CostInput{}
+	historical := false
+	if marker, ok := preauthorizer.(historicalBalancePreauthorizer); ok {
+		historical = marker.UsesHistoricalPreauthorization()
+	}
+	if !historical && pricing == nil {
+		return nil, nil
+	}
+	if !historical {
+		costInput = pricing.BalancePreauthorizationCostInput(
+			ctx, apiKey, billingModel, pricingAt, "", service.BalancePreauthorizationRateVideo,
+		)
 	}
 	return preauthorizer.Preauthorize(ctx, service.BalancePreauthorizationRequest{
 		RequestID:                service.NewGrokVideoHoldRequestID(),
@@ -295,9 +361,7 @@ func preauthorizeGrokVideoGatewayRequest(
 			UsageUnits: float64(durationSeconds),
 			SizeTier:   service.NormalizeVideoBillingResolutionOrDefault(resolution),
 		},
-		CostInput: pricing.BalancePreauthorizationCostInput(
-			ctx, apiKey, billingModel, pricingAt, "", service.BalancePreauthorizationRateVideo,
-		),
+		CostInput: costInput,
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 }
@@ -312,7 +376,7 @@ func preauthorizeGrokAudioGatewayRequest(
 	endpoint string,
 	pricingAt time.Time,
 ) (*service.BalancePreauthorizationGuard, error) {
-	if preauthorizer == nil || pricing == nil || apiKey == nil {
+	if preauthorizer == nil || apiKey == nil {
 		return nil, nil
 	}
 	billingType := service.BalancePreauthorizationBillingType(apiKey, subscription)
@@ -323,9 +387,20 @@ func preauthorizeGrokAudioGatewayRequest(
 	if usage == nil {
 		return nil, nil
 	}
-	fixedAmount, err := pricing.BalancePreauthorizationAudioCost(ctx, apiKey, endpoint, usage.Mode, usage.DurationOrUnits, pricingAt)
-	if err != nil {
-		return nil, err
+	fixedAmount := 0.0
+	historical := false
+	if marker, ok := preauthorizer.(historicalBalancePreauthorizer); ok {
+		historical = marker.UsesHistoricalPreauthorization()
+	}
+	if !historical && pricing == nil {
+		return nil, nil
+	}
+	if !historical {
+		var err error
+		fixedAmount, err = pricing.BalancePreauthorizationAudioCost(ctx, apiKey, endpoint, usage.Mode, usage.DurationOrUnits, pricingAt)
+		if err != nil {
+			return nil, err
+		}
 	}
 	userID := apiKey.UserID
 	if userID <= 0 && apiKey.User != nil {
@@ -353,27 +428,44 @@ func preauthorizeGrokRealtimeGatewayRequest(
 	sessionID string,
 	pricingAt time.Time,
 ) (*service.BalancePreauthorizationGuard, error) {
-	if preauthorizer == nil || pricing == nil || apiKey == nil {
+	if preauthorizer == nil || apiKey == nil {
 		return nil, nil
 	}
 	billingType := service.BalancePreauthorizationBillingType(apiKey, subscription)
 	if requirement, ok := preauthorizer.(balancePreauthorizationRequirement); ok && !requirement.RequiresPreauthorization(ctx, billingType) {
 		return nil, nil
 	}
-	fixedAmount, err := pricing.BalancePreauthorizationAudioCost(ctx, apiKey, model, "realtime", 1, pricingAt)
-	if err != nil {
-		return nil, err
+	fixedAmount := 0.0
+	historical := false
+	if marker, ok := preauthorizer.(historicalBalancePreauthorizer); ok {
+		historical = marker.UsesHistoricalPreauthorization()
+	}
+	if !historical && pricing == nil {
+		return nil, nil
+	}
+	if !historical {
+		var err error
+		fixedAmount, err = pricing.BalancePreauthorizationAudioCost(ctx, apiKey, model, "realtime", 1, pricingAt)
+		if err != nil {
+			return nil, err
+		}
 	}
 	userID := apiKey.UserID
 	if userID <= 0 && apiKey.User != nil {
 		userID = apiKey.User.ID
 	}
 	fingerprint := service.HashUsageRequestPayload([]byte("grok_realtime:" + strings.TrimSpace(model) + ":" + strings.TrimSpace(sessionID)))
+	source := service.FundingSourceWallet
+	subscriptionID := subscriptionPreauthorizationID(apiKey, subscription)
+	if apiKey.UsesSubscription() && subscription != nil {
+		source = service.FundingSourceSubscription
+	}
 	return preauthorizer.Preauthorize(ctx, service.BalancePreauthorizationRequest{
 		RequestID:                service.StableGrokRealtimeBillingRequestID(""),
 		APIKeyID:                 apiKey.ID,
 		UserID:                   userID,
-		SubscriptionID:           subscriptionPreauthorizationID(apiKey, subscription),
+		SubscriptionID:           subscriptionID,
+		BaselineKey:              service.BuildBalancePreauthorizationBaselineKey(userID, apiKey.ID, source, subscriptionID, sessionID),
 		AuthorizationFingerprint: fingerprint,
 		BillingType:              billingType,
 		EstimateKind:             service.PreauthorizationEstimateFixed,

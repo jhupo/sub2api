@@ -78,11 +78,11 @@ func TestCaptureSubscriptionAllowanceZeroAmountSurvivesWindowAdvance(t *testing.
 	expiresAt := time.Now().UTC().Add(time.Hour)
 	updatedAt := time.Now().UTC()
 	rows := sqlmock.NewRows([]string{
-		"request_id", "api_key_id", "user_id", "subscription_id", "authorization_fingerprint",
+		"request_id", "api_key_id", "user_id", "subscription_id", "baseline_key", "authorization_fingerprint",
 		"request_fingerprint", "authorized_amount", "captured_amount", "actual_amount", "status",
 		"daily_window_start", "weekly_window_start", "monthly_window_start", "expires_at",
 		"updated_at", "async_task_id",
-	}).AddRow("request", 7, 42, 99, "authorization", "", 0.0, 0.0, 0.0,
+	}).AddRow("request", 7, 42, 99, "", "authorization", "", 0.0, 0.0, 0.0,
 		service.BillingReservationAuthorized, time.Now().UTC().Add(-24*time.Hour),
 		time.Now().UTC().Add(-7*24*time.Hour), time.Now().UTC().Add(-30*24*time.Hour), expiresAt, updatedAt, "")
 	// The first read is deliberately stale: after this zero-cost request was
@@ -97,22 +97,22 @@ func TestCaptureSubscriptionAllowanceZeroAmountSurvivesWindowAdvance(t *testing.
 	mock.ExpectQuery(`(?s)SELECT .*FROM billing_reservations.*FOR UPDATE`).
 		WithArgs("request", int64(7), service.FundingSourceSubscription).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"request_id", "api_key_id", "user_id", "subscription_id", "authorization_fingerprint",
+			"request_id", "api_key_id", "user_id", "subscription_id", "baseline_key", "authorization_fingerprint",
 			"request_fingerprint", "authorized_amount", "captured_amount", "actual_amount", "status",
 			"daily_window_start", "weekly_window_start", "monthly_window_start", "expires_at",
 			"updated_at", "async_task_id",
-		}).AddRow("request", 7, 42, 99, "authorization", "", 0.0, 0.0, 0.0,
+		}).AddRow("request", 7, 42, 99, "", "authorization", "", 0.0, 0.0, 0.0,
 			service.BillingReservationAuthorized, time.Now().UTC().Add(-24*time.Hour),
 			time.Now().UTC().Add(-7*24*time.Hour), time.Now().UTC().Add(-30*24*time.Hour), expiresAt, updatedAt, ""))
 	mock.ExpectQuery(`(?s)UPDATE billing_reservations\s+SET captured_amount = \$3, actual_amount = \$4, status = \$5`).
 		WithArgs("request", int64(7), 0.0, 0.0, service.BillingReservationCaptured, "capture-fingerprint",
 			service.FundingSourceSubscription, service.BillingReservationAuthorized, service.BillingReservationFinalizing).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"request_id", "api_key_id", "user_id", "subscription_id", "authorization_fingerprint",
+			"request_id", "api_key_id", "user_id", "subscription_id", "baseline_key", "authorization_fingerprint",
 			"request_fingerprint", "authorized_amount", "captured_amount", "actual_amount", "status",
 			"daily_window_start", "weekly_window_start", "monthly_window_start", "expires_at",
 			"updated_at", "async_task_id",
-		}).AddRow("request", 7, 42, 99, "authorization", "capture-fingerprint", 0.0, 0.0, 0.0,
+		}).AddRow("request", 7, 42, 99, "", "authorization", "capture-fingerprint", 0.0, 0.0, 0.0,
 			service.BillingReservationCaptured, nil, nil, nil, expiresAt, updatedAt, ""))
 	mock.ExpectCommit()
 
@@ -135,14 +135,14 @@ func TestCaptureSubscriptionAllowancePersistsPartialDeliveryTerminalState(t *tes
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	expiresAt := now.Add(time.Hour)
 	columns := []string{
-		"request_id", "api_key_id", "user_id", "subscription_id", "authorization_fingerprint",
+		"request_id", "api_key_id", "user_id", "subscription_id", "baseline_key", "authorization_fingerprint",
 		"request_fingerprint", "authorized_amount", "captured_amount", "actual_amount", "status",
 		"daily_window_start", "weekly_window_start", "monthly_window_start", "expires_at",
 		"updated_at", "async_task_id",
 	}
 	reservation := func(status, fingerprint string, captured, actual float64) *sqlmock.Rows {
 		return sqlmock.NewRows(columns).AddRow(
-			"request", 7, 42, 99, "authorization", fingerprint,
+			"request", 7, 42, 99, "", "authorization", fingerprint,
 			0.5, captured, actual, status, nil, nil, nil, expiresAt, now, "",
 		)
 	}
@@ -191,14 +191,14 @@ func TestTopUpSubscriptionAllowanceZeroAmountRebindsAdvancedWindow(t *testing.T)
 	oldWeekly := now.Add(-8 * 24 * time.Hour)
 	oldMonthly := now.Add(-31 * 24 * time.Hour)
 	reservationColumns := []string{
-		"request_id", "api_key_id", "user_id", "subscription_id", "authorization_fingerprint",
+		"request_id", "api_key_id", "user_id", "subscription_id", "baseline_key", "authorization_fingerprint",
 		"request_fingerprint", "authorized_amount", "captured_amount", "actual_amount", "status",
 		"daily_window_start", "weekly_window_start", "monthly_window_start", "expires_at",
 		"updated_at", "async_task_id",
 	}
 	addReservation := func(amount float64, daily, weekly, monthly any) *sqlmock.Rows {
 		return sqlmock.NewRows(reservationColumns).AddRow(
-			"request", 7, 42, 99, "authorization", "", amount, 0.0, 0.0,
+			"request", 7, 42, 99, "", "authorization", "", amount, 0.0, 0.0,
 			service.BillingReservationAuthorized, daily, weekly, monthly, expiresAt, now, "",
 		)
 	}
@@ -259,11 +259,11 @@ func TestListRecoverableSubscriptionAllowancesLeasesSubscriptionRows(t *testing.
 		WithArgs(service.FundingSourceSubscription, service.BillingReservationAuthorized, authorizationCutoff,
 			service.BillingReservationFinalizing, finalizationCutoff, int64(60), 500).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"request_id", "api_key_id", "user_id", "subscription_id", "authorization_fingerprint",
+			"request_id", "api_key_id", "user_id", "subscription_id", "baseline_key", "authorization_fingerprint",
 			"request_fingerprint", "authorized_amount", "captured_amount", "actual_amount", "status",
 			"daily_window_start", "weekly_window_start", "monthly_window_start", "expires_at",
 			"updated_at", "async_task_id",
-		}).AddRow("request", 7, 42, 99, "authorization", "", "0.50", "0", "0", service.BillingReservationAuthorized,
+		}).AddRow("request", 7, 42, 99, "", "authorization", "", "0.50", "0", "0", service.BillingReservationAuthorized,
 			nil, nil, nil, expiresAt, updatedAt, ""))
 
 	repo := &usageBillingRepository{db: db}

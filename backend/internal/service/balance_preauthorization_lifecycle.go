@@ -107,6 +107,11 @@ type balancePreauthorizationRepository interface {
 	CompleteBalancePreauthorizationRefund(ctx context.Context, requestID string, apiKeyID int64) error
 }
 
+type balancePreauthorizationBaselineStore interface {
+	LoadPreauthorizationBaseline(context.Context, string) (float64, error)
+	RecordPreauthorizationBaseline(context.Context, string, float64) error
+}
+
 // BalancePreauthorizationService owns the durable request hold lifecycle.
 // Pricing and validation happen before any mutation. Once prepare succeeds,
 // every uncertain dependency result is fail-closed and left recoverable in PG.
@@ -199,6 +204,7 @@ type BalancePreauthorizationRequest struct {
 	RequestID                  string
 	APIKeyID                   int64
 	UserID                     int64
+	BaselineKey                string
 	AuthorizationFingerprint   string
 	BillingType                int8
 	SubscriptionID             int64
@@ -222,6 +228,7 @@ type BalancePreauthorizationResumeRequest struct {
 	RequestID                string
 	APIKeyID                 int64
 	UserID                   int64
+	BaselineKey              string
 	BillingType              int8
 	SubscriptionID           int64
 	AuthorizationFingerprint string
@@ -257,6 +264,16 @@ func (s *BalancePreauthorizationService) balancePreauthorizationEnabled(ctx cont
 	return true
 }
 
+// UsesHistoricalPreauthorization identifies the production lifecycle that
+// reads the previous actual amount instead of estimating this payload.
+func (s *BalancePreauthorizationService) UsesHistoricalPreauthorization() bool {
+	if s == nil || s.repo == nil {
+		return false
+	}
+	_, ok := s.repo.(balancePreauthorizationBaselineStore)
+	return ok
+}
+
 // Preauthorize returns a request-owned guard for the selected funding source.
 // When the runtime switch is disabled, both wallet and subscription requests
 // skip the guard and settle only their provider-reported usage later.
@@ -277,21 +294,38 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	if err := validateBalancePreauthorizationRequest(&request); err != nil {
 		return nil, balancePreauthorizationUnavailable(err)
 	}
-	if s.costCalculator == nil {
+	baselineStore, hasBaselineStore := s.repo.(balancePreauthorizationBaselineStore)
+	if s.costCalculator == nil && !hasBaselineStore {
 		return nil, balancePreauthorizationUnavailable(errors.New("billing preauthorization pricing is unavailable"))
 	}
 	ctx = nonNilContext(ctx)
-
-	estimate, err := s.estimateHold(ctx, request)
-	if err != nil {
-		return nil, balancePreauthorizationUnavailable(err)
+	baselineKey := strings.TrimSpace(request.BaselineKey)
+	if baselineKey == "" {
+		baselineKey = BuildBalancePreauthorizationBaselineKey(request.UserID, request.APIKeyID,
+			preauthorizationFundingSource(request.BillingType), request.SubscriptionID, "")
 	}
-	holdAmount := estimate.HoldAmount
-	outputWindow := estimate.OutputWindow
+	estimate := balancePreauthorizationEstimate{}
+	if hasBaselineStore {
+		var err error
+		estimate.HoldAmount, err = baselineStore.LoadPreauthorizationBaseline(ctx, baselineKey)
+		if err != nil {
+			return nil, balancePreauthorizationUnavailable(fmt.Errorf("load preauthorization baseline: %w", err))
+		}
+		if invalidNonnegativeMoney(estimate.HoldAmount) {
+			return nil, balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
+		}
+		estimate.HoldAmount = QuantizeUsageBillingAmount(estimate.HoldAmount)
+	} else {
+		var err error
+		estimate, err = s.estimateHold(ctx, request)
+		if err != nil {
+			return nil, balancePreauthorizationUnavailable(err)
+		}
+	}
 	requestID := strings.TrimSpace(request.RequestID)
 	fingerprint := strings.TrimSpace(request.AuthorizationFingerprint)
 	if request.BillingType == BillingTypeSubscription {
-		return s.preauthorizeSubscription(ctx, request, estimate)
+		return s.preauthorizeSubscription(ctx, request, estimate, baselineKey)
 	}
 	if s.snapshotReader == nil || s.wallet == nil || s.watermarkWallet == nil || s.repo == nil {
 		return nil, balancePreauthorizationUnavailable(errors.New("balance preauthorization dependency is unavailable"))
@@ -300,15 +334,16 @@ func (s *BalancePreauthorizationService) Preauthorize(
 		RequestID:                requestID,
 		APIKeyID:                 request.APIKeyID,
 		UserID:                   request.UserID,
+		BaselineKey:              baselineKey,
 		AuthorizationFingerprint: fingerprint,
-		HoldAmount:               holdAmount,
+		HoldAmount:               estimate.HoldAmount,
 		ExpiresAt:                request.ExpiresAt,
 	})
 	if err != nil {
 		return nil, balancePreauthorizationUnavailable(err)
 	}
 	if record == nil || record.RequestID != requestID || record.APIKeyID != request.APIKeyID ||
-		record.UserID != request.UserID || record.HoldAmount != holdAmount ||
+		record.UserID != request.UserID || record.HoldAmount != estimate.HoldAmount ||
 		(record.Status != BalanceSettlementPrepared && record.Status != BalanceSettlementAuthorized) {
 		return nil, balancePreauthorizationUnavailable(fmt.Errorf("unexpected balance preauthorization state: %v", balancePreauthorizationRecordStatus(record)))
 	}
@@ -348,25 +383,18 @@ func (s *BalancePreauthorizationService) Preauthorize(
 	core := &balancePreauthorizationGuardCore{
 		reservation: &walletPreauthorizationReservation{
 			service: s, requestID: requestID, apiKeyID: request.APIKeyID,
-			userID: request.UserID, attemptID: attemptID,
+			userID: request.UserID, attemptID: attemptID, baselineKey: baselineKey,
 		},
 		requestID:     requestID,
 		apiKeyID:      request.APIKeyID,
 		holdAmount:    record.HoldAmount,
-		outputWindow:  outputWindow,
+		outputWindow:  estimate.OutputWindow,
 		ownerToken:    1,
 		terminalState: balancePreauthorizationGuardActive,
 	}
-	// Streaming top-up tracker: only for token-metered requests with a positive
-	// output window and non-free output. NewBillingOutputHoldTracker returns nil
-	// otherwise, so the hot path stays a no-op for per-request and free traffic.
-	core.outputHoldTracker = NewBillingOutputHoldTracker(
-		outputWindow,
-		outputWindow,
-		record.HoldAmount,
-		estimate.OutputUnitPrice,
-		1,
-	)
+	if !hasBaselineStore {
+		core.outputHoldTracker = NewBillingOutputHoldTracker(estimate.OutputWindow, estimate.OutputWindow, record.HoldAmount, estimate.OutputUnitPrice, 1)
+	}
 	return &BalancePreauthorizationGuard{core: core, ownerToken: 1}, nil
 }
 
@@ -374,6 +402,7 @@ func (s *BalancePreauthorizationService) preauthorizeSubscription(
 	ctx context.Context,
 	request BalancePreauthorizationRequest,
 	estimate balancePreauthorizationEstimate,
+	baselineKey string,
 ) (*BalancePreauthorizationGuard, error) {
 	if s.subscriptionRepo == nil {
 		return nil, balancePreauthorizationUnavailable(errors.New("subscription allowance repository is unavailable"))
@@ -381,6 +410,7 @@ func (s *BalancePreauthorizationService) preauthorizeSubscription(
 	cmd := SubscriptionAllowanceCommand{
 		RequestID: strings.TrimSpace(request.RequestID), APIKeyID: request.APIKeyID,
 		UserID: request.UserID, SubscriptionID: request.SubscriptionID,
+		BaselineKey:              baselineKey,
 		AuthorizationFingerprint: strings.TrimSpace(request.AuthorizationFingerprint),
 		Amount:                   estimate.HoldAmount, AuthorizedAt: time.Now(), ExpiresAt: request.ExpiresAt,
 	}
@@ -396,14 +426,21 @@ func (s *BalancePreauthorizationService) preauthorizeSubscription(
 	reservation := &subscriptionPreauthorizationReservation{repo: s.subscriptionRepo, cmd: cmd}
 	core := &balancePreauthorizationGuardCore{
 		reservation: reservation, requestID: cmd.RequestID, apiKeyID: cmd.APIKeyID,
-		holdAmount: record.AuthorizedAmount, outputWindow: estimate.OutputWindow,
+		holdAmount: record.AuthorizedAmount, outputWindow: 0,
 		ownerToken: 1, terminalState: balancePreauthorizationGuardActive,
 	}
-	core.outputHoldTracker = NewBillingOutputHoldTracker(
-		estimate.OutputWindow, estimate.OutputWindow, record.AuthorizedAmount,
-		estimate.OutputUnitPrice, 1,
-	)
+	if _, ok := s.repo.(balancePreauthorizationBaselineStore); !ok {
+		core.outputWindow = estimate.OutputWindow
+		core.outputHoldTracker = NewBillingOutputHoldTracker(estimate.OutputWindow, estimate.OutputWindow, record.AuthorizedAmount, estimate.OutputUnitPrice, 1)
+	}
 	return &BalancePreauthorizationGuard{core: core, ownerToken: 1}, nil
+}
+
+func preauthorizationFundingSource(billingType int8) string {
+	if billingType == BillingTypeSubscription {
+		return FundingSourceSubscription
+	}
+	return FundingSourceWallet
 }
 
 // Resume reconstructs a guard for an exact active authorization or an identical
@@ -415,19 +452,29 @@ func (s *BalancePreauthorizationService) Resume(ctx context.Context, request Bal
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
 	request.AuthorizationFingerprint = strings.TrimSpace(request.AuthorizationFingerprint)
+	request.BaselineKey = strings.TrimSpace(request.BaselineKey)
 	if request.RequestID == "" || request.AuthorizationFingerprint == "" || request.APIKeyID <= 0 || request.UserID <= 0 || invalidNonnegativeMoney(request.HoldAmount) {
 		return nil, balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
 	}
 	request.HoldAmount = QuantizeUsageBillingAmount(request.HoldAmount)
 	ctx = nonNilContext(ctx)
 	if request.BillingType == BillingTypeSubscription {
+		if request.BaselineKey == "" {
+			request.BaselineKey = BuildBalancePreauthorizationBaselineKey(request.UserID, request.APIKeyID,
+				preauthorizationFundingSource(request.BillingType), request.SubscriptionID, "")
+		}
 		return s.resumeSubscription(ctx, request)
+	}
+	if request.BaselineKey == "" {
+		request.BaselineKey = BuildBalancePreauthorizationBaselineKey(request.UserID, request.APIKeyID,
+			preauthorizationFundingSource(request.BillingType), request.SubscriptionID, "")
 	}
 	if s.wallet == nil || s.repo == nil {
 		return nil, balancePreauthorizationUnavailable(errors.New("balance preauthorization resume dependency is unavailable"))
 	}
 	record, err := s.repo.PrepareBalancePreauthorization(ctx, &BalancePreauthorizationCommand{
 		RequestID: request.RequestID, APIKeyID: request.APIKeyID, UserID: request.UserID,
+		BaselineKey:              request.BaselineKey,
 		AuthorizationFingerprint: request.AuthorizationFingerprint, HoldAmount: request.HoldAmount,
 	})
 	if err != nil || record == nil || record.RequestID != request.RequestID || record.APIKeyID != request.APIKeyID ||
@@ -464,7 +511,8 @@ func (s *BalancePreauthorizationService) Resume(ctx context.Context, request Bal
 	return &BalancePreauthorizationGuard{core: &balancePreauthorizationGuardCore{
 		reservation: &walletPreauthorizationReservation{
 			service: s, requestID: request.RequestID, apiKeyID: request.APIKeyID, userID: request.UserID,
-			attemptID: BalancePreauthorizationAttemptID(request.RequestID, request.APIKeyID),
+			attemptID:   BalancePreauthorizationAttemptID(request.RequestID, request.APIKeyID),
+			baselineKey: request.BaselineKey,
 		},
 		requestID: request.RequestID, apiKeyID: request.APIKeyID, holdAmount: resumedHoldAmount,
 		ownerToken: 1, terminalState: balancePreauthorizationGuardActive,
@@ -478,7 +526,8 @@ func (s *BalancePreauthorizationService) resumeSubscription(ctx context.Context,
 	cmd := SubscriptionAllowanceCommand{
 		RequestID: request.RequestID, APIKeyID: request.APIKeyID, UserID: request.UserID,
 		SubscriptionID: request.SubscriptionID, AuthorizationFingerprint: request.AuthorizationFingerprint,
-		Amount: request.HoldAmount, AuthorizedAt: time.Now(),
+		BaselineKey: request.BaselineKey,
+		Amount:      request.HoldAmount, AuthorizedAt: time.Now(),
 	}
 	record, err := s.subscriptionRepo.ResumeSubscriptionAllowance(ctx, &cmd)
 	if err != nil {

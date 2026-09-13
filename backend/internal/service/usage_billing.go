@@ -30,6 +30,7 @@ const (
 type UsageBillingCommand struct {
 	RequestID          string
 	APIKeyID           int64
+	BaselineKey        string
 	RequestFingerprint string
 	RequestPayloadHash string
 
@@ -85,6 +86,10 @@ func (c *UsageBillingCommand) Normalize() {
 // UsageBillingMonetaryScale 是所有计费金额的规范小数位数，
 // 对齐 users.balance / api_keys.quota_used 的 NUMERIC(20,8)。
 const UsageBillingMonetaryScale = 8
+
+// BalancePreauthorizationBaselineIdleTTL resets a stale previous-actual
+// baseline after one hour without a request for the same funding identity.
+const BalancePreauthorizationBaselineIdleTTL = time.Hour
 
 // quantizeMonetaryFields 把命令中的金额统一量化到 NUMERIC(20,8)。
 //
@@ -213,6 +218,7 @@ type BalancePreauthorizationCommand struct {
 	RequestID                string
 	APIKeyID                 int64
 	UserID                   int64
+	BaselineKey              string
 	AuthorizationFingerprint string
 	HoldAmount               float64
 	ExpiresAt                time.Time
@@ -222,6 +228,7 @@ type BalancePreauthorizationRecord struct {
 	RequestID                string
 	APIKeyID                 int64
 	UserID                   int64
+	BaselineKey              string
 	RequestFingerprint       string
 	AuthorizationFingerprint string
 	HoldAmount               float64
@@ -245,6 +252,7 @@ type SubscriptionAllowanceCommand struct {
 	APIKeyID                 int64
 	UserID                   int64
 	SubscriptionID           int64
+	BaselineKey              string
 	AuthorizationFingerprint string
 	Amount                   float64
 	// ActualAmount is the complete delivered cost. It is nil for authorization
@@ -260,6 +268,7 @@ type SubscriptionAllowanceReservation struct {
 	APIKeyID                 int64
 	UserID                   int64
 	SubscriptionID           int64
+	BaselineKey              string
 	AuthorizationFingerprint string
 	RequestFingerprint       string
 	AuthorizedAmount         float64
@@ -272,6 +281,28 @@ type SubscriptionAllowanceReservation struct {
 	ExpiresAt                time.Time
 	UpdatedAt                time.Time
 	AsyncTaskID              string
+}
+
+// BalancePreauthorizationBaselineStore persists the last provider-reported
+// amount used as the next request's admission hold. Implementations must make
+// reads and writes idempotent; the key is a stable funding/session identity,
+// never a request payload hash.
+type BalancePreauthorizationBaselineStore interface {
+	LoadPreauthorizationBaseline(context.Context, string) (float64, error)
+	RecordPreauthorizationBaseline(context.Context, string, float64) error
+}
+
+// BuildBalancePreauthorizationBaselineKey returns a bounded, deterministic key
+// for one funding identity. A supplied session identity separates concurrent
+// conversations; an empty session intentionally falls back to the API key and
+// funding source so stateless clients still get the previous actual amount.
+func BuildBalancePreauthorizationBaselineKey(userID, apiKeyID int64, fundingSource string, subscriptionID int64, sessionID string) string {
+	identity := fmt.Sprintf("v1:%d:%d:%s:%d", userID, apiKeyID, strings.TrimSpace(fundingSource), subscriptionID)
+	if sessionID = strings.TrimSpace(sessionID); sessionID != "" {
+		sum := sha256.Sum256([]byte(sessionID))
+		identity += ":session:" + hex.EncodeToString(sum[:])
+	}
+	return identity
 }
 
 // SubscriptionAllowanceRepository owns the atomic PostgreSQL allowance

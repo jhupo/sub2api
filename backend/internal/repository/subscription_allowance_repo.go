@@ -27,6 +27,7 @@ func scanSubscriptionAllowance(scanner subscriptionAllowanceScanner) (*service.S
 	var (
 		record                                service.SubscriptionAllowanceReservation
 		dailyStart, weeklyStart, monthlyStart sql.NullTime
+		baselineKey                           sql.NullString
 		requestFingerprint, asyncTaskID       sql.NullString
 	)
 	err := scanner.Scan(
@@ -34,6 +35,7 @@ func scanSubscriptionAllowance(scanner subscriptionAllowanceScanner) (*service.S
 		&record.APIKeyID,
 		&record.UserID,
 		&record.SubscriptionID,
+		&baselineKey,
 		&record.AuthorizationFingerprint,
 		&requestFingerprint,
 		&record.AuthorizedAmount,
@@ -51,6 +53,7 @@ func scanSubscriptionAllowance(scanner subscriptionAllowanceScanner) (*service.S
 		return nil, err
 	}
 	record.RequestFingerprint = requestFingerprint.String
+	record.BaselineKey = baselineKey.String
 	record.AsyncTaskID = asyncTaskID.String
 	if dailyStart.Valid {
 		record.DailyWindowStart = &dailyStart.Time
@@ -69,6 +72,7 @@ const subscriptionAllowanceReturning = `
 	api_key_id,
 	user_id,
 	subscription_id,
+	baseline_key,
 	authorization_fingerprint,
 	request_fingerprint,
 	authorized_amount,
@@ -89,6 +93,7 @@ func normalizeSubscriptionAllowanceCommand(cmd *service.SubscriptionAllowanceCom
 	}
 	cmd.RequestID = strings.TrimSpace(cmd.RequestID)
 	cmd.AuthorizationFingerprint = strings.TrimSpace(cmd.AuthorizationFingerprint)
+	cmd.BaselineKey = strings.TrimSpace(cmd.BaselineKey)
 	cmd.Amount = service.QuantizeUsageBillingAmount(cmd.Amount)
 	if cmd.ActualAmount != nil {
 		actual := service.QuantizeUsageBillingAmount(*cmd.ActualAmount)
@@ -215,15 +220,15 @@ func (r *usageBillingRepository) AuthorizeSubscriptionAllowance(
 	record, err := scanSubscriptionAllowance(tx.QueryRowContext(ctx, `
 		INSERT INTO billing_reservations (
 			request_id, api_key_id, user_id, funding_source, subscription_id,
-			authorized_amount, captured_amount, actual_amount, status,
+			baseline_key, authorized_amount, captured_amount, actual_amount, status,
 			authorization_fingerprint, request_fingerprint,
 			daily_window_start, weekly_window_start, monthly_window_start,
 			expires_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 0, 0, $7, $8, '', $9, $10, $11, $12)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, $8, $9, '', $10, $11, $12, $13)
 		RETURNING `+subscriptionAllowanceReturning,
 		cmd.RequestID, cmd.APIKeyID, cmd.UserID, service.FundingSourceSubscription,
-		cmd.SubscriptionID, cmd.Amount, service.BillingReservationAuthorized,
+		cmd.SubscriptionID, cmd.BaselineKey, cmd.Amount, service.BillingReservationAuthorized,
 		cmd.AuthorizationFingerprint, transition.DailyStart, transition.WeeklyStart,
 		transition.MonthlyStart, cmd.ExpiresAt,
 	))
@@ -434,6 +439,9 @@ func (r *usageBillingRepository) TopUpSubscriptionAllowance(ctx context.Context,
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	if cmd.BaselineKey != "" {
+		record.BaselineKey = cmd.BaselineKey
+	}
 	return record, nil
 }
 
@@ -628,6 +636,9 @@ func (r *usageBillingRepository) finishSubscriptionAllowance(
 			!subscriptionAllowanceAmountEqual(candidate.ActualAmount, actual) || candidate.RequestFingerprint != requestFingerprint) {
 			return nil, service.ErrUsageBillingRequestConflict
 		}
+		if cmd.BaselineKey != "" {
+			candidate.BaselineKey = cmd.BaselineKey
+		}
 		return candidate, nil
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -649,6 +660,9 @@ func (r *usageBillingRepository) finishSubscriptionAllowance(
 		if capture && (!subscriptionAllowanceAmountEqual(record.CapturedAmount, cmd.Amount) ||
 			!subscriptionAllowanceAmountEqual(record.ActualAmount, actual) || record.RequestFingerprint != requestFingerprint) {
 			return nil, service.ErrUsageBillingRequestConflict
+		}
+		if cmd.BaselineKey != "" {
+			record.BaselineKey = cmd.BaselineKey
 		}
 		return record, nil
 	}
@@ -714,6 +728,9 @@ func (r *usageBillingRepository) finishSubscriptionAllowance(
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	if cmd.BaselineKey != "" {
+		record.BaselineKey = cmd.BaselineKey
+	}
 	return record, nil
 }
 
@@ -754,6 +771,7 @@ func (r *usageBillingRepository) ListRecoverableSubscriptionAllowances(ctx conte
 				reservation.api_key_id,
 				reservation.user_id,
 				reservation.subscription_id,
+				reservation.baseline_key,
 				reservation.authorization_fingerprint,
 				reservation.request_fingerprint,
 				reservation.authorized_amount,

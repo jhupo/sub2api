@@ -53,11 +53,12 @@ type billingPreauthorizationReservation interface {
 }
 
 type walletPreauthorizationReservation struct {
-	service   *BalancePreauthorizationService
-	requestID string
-	apiKeyID  int64
-	userID    int64
-	attemptID string
+	service     *BalancePreauthorizationService
+	requestID   string
+	apiKeyID    int64
+	userID      int64
+	attemptID   string
+	baselineKey string
 }
 
 func (r *walletPreauthorizationReservation) FundingSource() string  { return FundingSourceWallet }
@@ -128,6 +129,20 @@ func (g *BalancePreauthorizationGuard) RequestID() string {
 	g.core.mu.Lock()
 	defer g.core.mu.Unlock()
 	return g.core.requestID
+}
+
+// BaselineKey returns the stable funding/session identity used for the hold.
+func (g *BalancePreauthorizationGuard) BaselineKey() string {
+	if g == nil || g.core == nil || g.core.reservation == nil {
+		return ""
+	}
+	if wallet, ok := g.core.reservation.(*walletPreauthorizationReservation); ok {
+		return wallet.baselineKey
+	}
+	if subscription, ok := g.core.reservation.(*subscriptionPreauthorizationReservation); ok {
+		return subscription.cmd.BaselineKey
+	}
+	return ""
 }
 
 func (g *BalancePreauthorizationGuard) ReservedOutputTokens() int {

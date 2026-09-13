@@ -33,10 +33,12 @@ func (h *OpenAIGatewayHandler) validateOpenAIWSFundingFrame(ctx context.Context,
 type openAIWSTurnFundingSnapshot struct {
 	turn                 int
 	id                   string
+	userID               int64
 	guard                *service.BalancePreauthorizationGuard
 	key                  *service.APIKey
 	subscription         *service.UserSubscription
 	fingerprint          string
+	baselineKey          string
 	pricingAt            time.Time
 	outputObserved       bool
 	outputBytes          int
@@ -51,6 +53,7 @@ type openAIWSTurnFunding struct {
 	mu            sync.Mutex
 	active        *openAIWSTurnFundingSnapshot
 	contextBounds map[string]int
+	connectionID  string
 }
 
 func (f *openAIWSTurnFunding) prepare(ctx context.Context, h *OpenAIGatewayHandler, turn int, key *service.APIKey, subscription *service.UserSubscription, payload []byte, model string, pricingAt time.Time) error {
@@ -60,7 +63,21 @@ func (f *openAIWSTurnFunding) prepare(ctx context.Context, h *OpenAIGatewayHandl
 		if f.active != nil && !f.active.finished {
 			return errors.New("previous websocket funding turn is still active")
 		}
-		f.active = &openAIWSTurnFundingSnapshot{turn: turn, id: "ws-turn:" + uuid.NewString(), key: key, subscription: subscription, pricingAt: pricingAt, fingerprint: service.HashUsageRequestPayload(payload)}
+		if f.connectionID == "" {
+			f.connectionID = "ws-connection:" + uuid.NewString()
+		}
+		connectionID := f.connectionID
+		fundingSource := service.FundingSourceWallet
+		if key.UsesSubscription() && subscription != nil {
+			fundingSource = service.FundingSourceSubscription
+		}
+		userID := key.UserID
+		if userID <= 0 && key.User != nil {
+			userID = key.User.ID
+		}
+		baselineKey := service.BuildBalancePreauthorizationBaselineKey(userID, key.ID,
+			fundingSource, subscriptionPreauthorizationID(key, subscription), connectionID)
+		f.active = &openAIWSTurnFundingSnapshot{turn: turn, id: "ws-turn:" + uuid.NewString(), userID: userID, key: key, subscription: subscription, pricingAt: pricingAt, fingerprint: service.HashUsageRequestPayload(payload), baselineKey: baselineKey}
 		f.active.skipPreauthorization = h.openAIWSSimpleMode()
 		if requirement, ok := h.balancePreauthorizer.(balancePreauthorizationRequirement); ok {
 			f.active.skipPreauthorization = !requirement.RequiresPreauthorization(ctx, service.BalancePreauthorizationBillingType(key, subscription))
@@ -80,39 +97,41 @@ func (f *openAIWSTurnFunding) prepare(ctx context.Context, h *OpenAIGatewayHandl
 	if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(payload, "type").String()), "response.cancel") {
 		return nil
 	}
-	estimate, estimateErr := service.EstimateBalancePreauthorizationTokensStrict(payload, true)
-	if estimateErr != nil {
-		return service.NewOpenAIWSRequestScopedClientCloseError(
-			coderws.StatusPolicyViolation,
-			"unable to estimate request tokens before forwarding",
-			service.ErrBalancePreauthorizationEstimateUnavailable.WithCause(estimateErr),
-		)
-	}
-	if previous := gjson.GetBytes(payload, "previous_response_id").String(); previous != "" {
-		bound, found := f.contextBounds[previous]
-		if !found {
-			var err error
-			bound, found, err = h.gatewayService.OpenAIContinuationInputBound(ctx, key, previous)
-			if err != nil {
-				return err
-			}
+	inputTokens, imageInputTokens, imageOutputTokens, audioInputTokens, outputTokens := 0, 0, 0, 0, 0
+	if historical, ok := h.balancePreauthorizer.(historicalBalancePreauthorizer); !ok || !historical.UsesHistoricalPreauthorization() {
+		estimate, estimateErr := service.EstimateBalancePreauthorizationTokensStrict(payload, true)
+		if estimateErr != nil {
+			return service.NewOpenAIWSRequestScopedClientCloseError(coderws.StatusPolicyViolation, "unable to estimate request tokens before forwarding", service.ErrBalancePreauthorizationEstimateUnavailable.WithCause(estimateErr))
+		}
+		if previous := gjson.GetBytes(payload, "previous_response_id").String(); previous != "" {
+			bound, found := f.contextBounds[previous]
 			if !found {
-				return service.NewOpenAIWSRequestScopedClientCloseError(coderws.StatusPolicyViolation, "previous response billing context unavailable; reconnect with full input and no previous_response_id", nil)
+				var err error
+				bound, found, err = h.gatewayService.OpenAIContinuationInputBound(ctx, key, previous)
+				if err != nil {
+					return err
+				}
+				if !found {
+					return service.NewOpenAIWSRequestScopedClientCloseError(coderws.StatusPolicyViolation, "previous response billing context unavailable; reconnect with full input and no previous_response_id", nil)
+				}
 			}
+			if bound > math.MaxInt-estimate.InputTokens {
+				return service.ErrInvalidBillingPreauthorizationEstimate
+			}
+			estimate.InputTokens += bound
 		}
-		if bound > math.MaxInt-estimate.InputTokens {
-			return service.ErrInvalidBillingPreauthorizationEstimate
-		}
-		estimate.InputTokens += bound
+		inputTokens, imageInputTokens, imageOutputTokens = estimate.InputTokens, estimate.ImageInputTokens, estimate.ImageOutputTokens
+		audioInputTokens, outputTokens = estimate.AudioInputTokens, estimate.OutputTokens
 	}
 	request := service.BalancePreauthorizationRequest{
-		RequestID: a.id, APIKeyID: a.key.ID, UserID: a.key.UserID,
+		RequestID: a.id, APIKeyID: a.key.ID, UserID: a.userID,
+		BaselineKey:              a.baselineKey,
 		SubscriptionID:           subscriptionPreauthorizationID(a.key, a.subscription),
 		BillingType:              service.BalancePreauthorizationBillingType(a.key, a.subscription),
 		AuthorizationFingerprint: a.fingerprint, BillableInputBytes: len(payload),
-		EstimatedInputTokens: estimate.InputTokens, EstimatedImageInputTokens: estimate.ImageInputTokens,
-		EstimatedAudioInputTokens: estimate.AudioInputTokens, EstimatedImageOutputTokens: estimate.ImageOutputTokens,
-		InitialOutputWindowTokens: estimate.OutputTokens,
+		EstimatedInputTokens: inputTokens, EstimatedImageInputTokens: imageInputTokens,
+		EstimatedAudioInputTokens: audioInputTokens, EstimatedImageOutputTokens: imageOutputTokens,
+		InitialOutputWindowTokens: outputTokens,
 		PerRequestEstimate:        service.PerRequestPreauthorizationEstimate{RequestCount: 1},
 		CostInput: h.gatewayService.BalancePreauthorizationCostInput(ctx, a.key, model, a.pricingAt,
 			service.BalancePreauthorizationServiceTier(ctx, a.key, gjson.GetBytes(payload, "service_tier").String()), service.BalancePreauthorizationRateText),
