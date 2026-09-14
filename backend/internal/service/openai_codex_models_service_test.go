@@ -490,7 +490,9 @@ func TestBuildCodexModelsManifestUsesGPT6AstraContract(t *testing.T) {
 	levels, ok := model["supported_reasoning_levels"].([]any)
 	require.True(t, ok)
 	require.Len(t, levels, 6)
-	require.Equal(t, "ultra", levels[5].(map[string]any)["effort"])
+	level, ok := levels[5].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "ultra", level["effort"])
 	require.Equal(t, "xhigh", model["multi_agent_reasoning_effort"])
 	require.Equal(t, "v2", model["multi_agent_version"])
 }
