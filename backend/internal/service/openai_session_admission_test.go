@@ -19,10 +19,6 @@ type sessionAdmissionCache struct {
 	waiters int
 }
 
-func (c *sessionAdmissionCache) AcquireAdaptiveAccountSlot(ctx context.Context, id int64, policy AccountSlotAdmission, requestID string) (bool, error) {
-	return c.AcquireAccountSlot(ctx, id, AccountSoftConcurrencyLimit(policy.MaxConcurrency, policy.SoftLimitPercent), requestID)
-}
-
 func (c *sessionAdmissionCache) AcquireAccountSlot(ctx context.Context, id int64, limit int, _ string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -110,7 +106,6 @@ func TestNewSessionAdmissionProtectsAffinityAndContinuation(t *testing.T) {
 		{Platform: PlatformOpenAI, StickyPreviousAccountID: 1},
 		{Platform: PlatformOpenAI, PreviousResponseID: "response"},
 		{Platform: PlatformOpenAI, GuardianParentAccountID: 1},
-		{Platform: PlatformOpenAI, StickyMigrationTarget: true},
 		{Platform: PlatformOpenAI, PreserveStickyBinding: true},
 		{Platform: PlatformGrok},
 	} {
@@ -235,60 +230,4 @@ func TestOpenAIPoolWaitExhaustsOneBudget(t *testing.T) {
 	require.Same(t, selection, result)
 	require.Equal(t, time.Nanosecond, result.WaitPlan.Timeout)
 	require.Zero(t, cache.waiters)
-}
-
-func TestNewSessionAdmissionDoesNotMutateResolvedPolicy(t *testing.T) {
-	cache := &sessionAdmissionCache{slots: map[int64]int{1: 14}}
-	svc := NewConcurrencyService(cache)
-	policy := &AccountSlotAdmission{MaxConcurrency: 20, PressureModel: "model", PressureWindow: time.Minute}
-	ctx := context.WithValue(context.Background(), accountSlotAdmissionKey{}, accountSlotAdmissionResolver(func(context.Context, int64) (*AccountSlotAdmission, error) { return policy, nil }))
-	softCtx := context.WithValue(ctx, accountSoftAdmissionKey{}, 70)
-	result, err := svc.AcquireAccountSlot(softCtx, 1, 20)
-	require.NoError(t, err)
-	require.False(t, result.Acquired)
-	require.Zero(t, policy.SoftLimitPercent)
-	result, err = svc.AcquireAccountSlot(ctx, 1, 20)
-	require.NoError(t, err)
-	require.True(t, result.Acquired)
-	result.ReleaseFunc()
-}
-
-func TestOpenAIPoolCapacityMigrationCommitsAfterSuccess(t *testing.T) {
-	for _, advanced := range []string{"false", "true"} {
-		t.Run(advanced, func(t *testing.T) {
-			scheduler, slots := newSessionAdmissionScheduler(map[int64]int{1: 10})
-			svc := scheduler.service
-			svc.cfg.Gateway.Scheduling.StickySessionWaitTimeout = 3 * time.Second
-			svc.cfg.Gateway.Scheduling.StickySessionMaxWaiting = 3
-			accounts := sessionAdmissionAccounts(2, 10)
-			for _, account := range accounts {
-				account.Type = AccountTypeOAuth
-			}
-			svc.accountRepo = schedulerTestOpenAIAccountRepo{accounts: []Account{*accounts[0], *accounts[1]}}
-			cache := newCodexMigrationTestCache("capacity-session", 1)
-			svc.cache = cache
-			svc.rateLimitService = newOpenAIAdvancedSchedulerRateLimitService(advanced)
-			ctx := codexAdaptivePolicyContext()
-			codexAdaptiveRequestFromContext(ctx).sessionHash = "capacity-session"
-			ctx = context.WithValue(ctx, accountSlotAdmissionKey{}, accountSlotAdmissionResolver(svc.resolveCodexAccountSlotAdmission))
-			defer FinishCodexAdaptiveSchedulingRequest(ctx)
-			selection, _, err := svc.SelectAccountWithScheduler(ctx, nil, "", "capacity-session", "gpt-5.6-sol", nil, OpenAIUpstreamTransportAny, false)
-			require.NoError(t, err)
-			require.NotNil(t, selection)
-			require.True(t, selection.Acquired)
-			require.Equal(t, int64(2), selection.Account.ID)
-			require.True(t, codexAdaptiveStickyMigrationPending(ctx))
-			require.Equal(t, int64(1), cache.sessionBindings["openai:capacity-session"])
-			require.Zero(t, slots.waiters)
-			require.NoError(t, svc.CommitCodexAdaptiveStickyOnSuccess(ctx, nil, selection.Account, false))
-			selection.ReleaseFunc()
-			require.Equal(t, int64(2), cache.sessionBindings["openai:capacity-session"])
-			// A becoming idle must not pull the session back after a successful migration.
-			slots.slots[1] = 0
-			next, _, err := svc.SelectAccountWithScheduler(ctx, nil, "", "capacity-session", "gpt-5.6-sol", nil, OpenAIUpstreamTransportAny, false)
-			require.NoError(t, err)
-			require.Equal(t, int64(2), next.Account.ID)
-			next.ReleaseFunc()
-		})
-	}
 }

@@ -77,7 +77,6 @@ type OpenAIAccountScheduleRequest struct {
 	StickyWeighted          bool
 	SubscriptionPriority    bool
 	PreserveStickyBinding   bool
-	StickyMigrationTarget   bool
 	RequirePrivacySet       bool
 	PreviousResponseID      string
 	PreviousResponseCanMove bool
@@ -306,16 +305,14 @@ func (s *defaultOpenAIAccountScheduler) effectiveConcurrency(ctx context.Context
 	if s == nil || s.service == nil || account == nil {
 		return 0
 	}
-	model := canonicalOpenAIAccountSchedulingModel(account, requestedModel)
-	return s.service.codexAdaptiveEffectiveConcurrency(ctx, account, model, account.Concurrency)
+	return account.Concurrency
 }
 
 func (s *defaultOpenAIAccountScheduler) effectiveLoadFactor(ctx context.Context, account *Account, requestedModel string) int {
 	if s == nil || s.service == nil || account == nil {
 		return 0
 	}
-	model := canonicalOpenAIAccountSchedulingModel(account, requestedModel)
-	return s.service.codexAdaptiveEffectiveLoadFactor(ctx, account, model)
+	return account.EffectiveLoadFactor()
 }
 
 type openAISelectionProbeBudget struct {
@@ -591,7 +588,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	escapeCfg := s.service.openAIStickyEscapeConfig()
 	stickyRequiresBoundedWait := openAIStickyRequestRequiresBoundedWait(req)
 	if !stickyRequiresBoundedWait {
-		if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyAccount(accountID, escapeCfg); shouldEscape && !req.StickyMigrationTarget {
+		if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyAccount(accountID, escapeCfg); shouldEscape {
 			slog.Info("sticky_escape_triggered",
 				"account_id", accountID,
 				"reason", reason,
@@ -615,23 +612,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	}
 
 	cfg := s.service.schedulingConfig()
-	// WaitPlan.MaxConcurrency controls the Redis admission limit and therefore
-	// uses the same request-scoped adaptive limit as the immediate acquire.
 	if s.service.concurrencyService != nil {
-		// Codex adaptive scheduling owns a bounded wait so that a saturated
-		// sticky account can probe spare capacity and record a coordinated
-		// migration before the successful response commits the new binding.
-		if codexAdaptiveRequestFromContext(ctx) != nil {
-			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-				Account: account,
-				WaitPlan: &AccountWaitPlan{
-					AccountID:      accountID,
-					MaxConcurrency: maxConcurrency,
-					Timeout:        cfg.StickySessionWaitTimeout,
-					MaxWaiting:     cfg.StickySessionMaxWaiting,
-				},
-			}), false, nil
-		}
 		if stickyRequiresBoundedWait {
 			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 				Account: account,
@@ -643,7 +624,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 				},
 			}), false, nil
 		}
-		if escapeCfg.enabled && !req.StickyMigrationTarget && acquireErr == nil && result != nil && !result.Acquired {
+		if escapeCfg.enabled && acquireErr == nil && result != nil && !result.Acquired {
 			errorRate, ttft, _ := s.stats.snapshot(accountID)
 			slog.Info("sticky_escape_triggered",
 				"account_id", accountID,
@@ -662,7 +643,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 }
 
 func openAIStickyRequestRequiresBoundedWait(req OpenAIAccountScheduleRequest) bool {
-	if req.PreserveStickyBinding || req.StickyMigrationTarget || req.PreviousResponseID != "" {
+	if req.PreserveStickyBinding || req.PreviousResponseID != "" {
 		return true
 	}
 	switch req.RequiredTransport {
@@ -1633,7 +1614,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	filterStats := openAISelectionFilterStats{pool: len(accounts)}
 	filtered := make([]*Account, 0, len(accounts))
 	for i := range accounts {
-		account := normalizeCodexQuotaOverdraftAccountForScheduling(ctx, &accounts[i])
+		account := &accounts[i]
 		if req.ExcludedIDs != nil {
 			if _, excluded := req.ExcludedIDs[account.ID]; excluded {
 				filterStats.exclude("excluded")
@@ -1672,7 +1653,6 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	if len(filtered) == 0 {
 		return nil, 0, 0, 0, noAvailableOpenAISelectionError(req.RequestedModel, false, filterStats.summary(""))
 	}
-	s.service.prefetchCodexAdaptivePressures(ctx, filtered, req.RequestedModel)
 	loadReq := s.buildOpenAIAccountLoadRequest(ctx, filtered, req.RequestedModel)
 
 	loadMap := map[int64]*AccountLoadInfo{}
@@ -2327,6 +2307,7 @@ func (s *OpenAIGatewayService) PrepareSchedulerRequestContext(ctx context.Contex
 	if s == nil || ctx == nil {
 		return ctx
 	}
+	ctx = withOpenAIRequestAttemptBudget(ctx)
 	return withSchedulerFreshness(ctx, s.accountRepo, s.schedulerSnapshot)
 }
 
@@ -2519,8 +2500,6 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	if previousResponseID != "" {
 		ctx = context.WithValue(ctx, openAIContinuationSelectionKey{}, true)
 	}
-	var queueDeadline time.Time
-	completedCapacityWait := false
 	defer func() {
 		if err != nil {
 			return
@@ -2536,46 +2515,6 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 			// request lifetime, not this short capacity probe's deadline.
 			return
 		}
-		if selection != nil && selection.Account != nil && selection.WaitPlan != nil &&
-			codexAdaptiveRequestFromContext(ctx) != nil && codexAdaptiveAccountEligible(selection.Account) {
-			selection.WaitPlan.Timeout = boundCodexAdaptiveQueueTimeout(selection.WaitPlan.Timeout)
-			// Briefly wait for the cache-affine account, then try spare capacity.
-			// A migration lease and response-ID ownership take priority over spillover.
-			if previousResponseID == "" && len(excludedIDs) == 0 && !codexAdaptiveStickyMigrationPending(ctx) && !preserveOpenAIGuardianParentBinding(ctx, sessionHash) {
-				completedCapacityWait = true
-				if s.cfg != nil && s.cfg.Gateway.Scheduling.NewSessionSoftLimitPercent > 0 && s.concurrencyService != nil {
-					queueDeadline = time.Now().Add(selection.WaitPlan.Timeout)
-					waitingID := selection.Account.ID
-					selection, err = s.waitForOpenAIPoolCapacity(ctx, selection, func(probeCtx context.Context) (*AccountSelectionResult, error) {
-						spare, spareDecision, spareErr := s.selectAccountWithSchedulerOnce(probeCtx, groupID, "", sessionHash, requestedModel, map[int64]struct{}{waitingID: {}}, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
-						if spare != nil && spare.Acquired {
-							decision = spareDecision
-						}
-						return spare, spareErr
-					})
-					if err != nil {
-						return
-					}
-				} else {
-					waitCtx, cancel := context.WithTimeout(ctx, min(750*time.Millisecond, selection.WaitPlan.Timeout))
-					release, acquired, waitErr := s.waitForCodexAffinitySlot(waitCtx, selection)
-					cancel()
-					if waitErr != nil {
-						err = waitErr
-						return
-					}
-					if acquired {
-						selection.Acquired, selection.ReleaseFunc, selection.WaitPlan = true, release, nil
-					} else if ctx.Err() == nil {
-						spilloverExcluded := map[int64]struct{}{selection.Account.ID: {}}
-						spare, spareDecision, spareErr := s.selectAccountWithSchedulerOnce(ctx, groupID, "", sessionHash, requestedModel, spilloverExcluded, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, false, useUpstreamTokenCost)
-						if spareErr == nil && spare != nil && spare.Acquired {
-							selection, decision = spare, spareDecision
-						}
-					}
-				}
-			}
-		}
 		if ctx.Err() != nil {
 			if selection != nil && selection.ReleaseFunc != nil {
 				selection.ReleaseFunc()
@@ -2583,57 +2522,11 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 			selection, err = nil, ctx.Err()
 			return
 		}
-		selection, err = s.coordinateCodexStickySelection(ctx, OpenAIAccountScheduleRequest{
-			GroupID: groupID, PreviousResponseID: previousResponseID, SessionHash: sessionHash,
-			RequestedModel: requestedModel, ExcludedIDs: excludedIDs, Platform: platform,
-			RequiredTransport: requiredTransport, RequiredCapability: requiredCapability,
-			RequiredImageCapability: requiredImageCapability, RequireCompact: requireCompact,
-			RequirePrivacySet: s.openAIGroupRequiresPrivacySet(ctx, groupID), UseUpstreamTokenCost: useUpstreamTokenCost,
-		}, selection)
-		if selection != nil && selection.WaitPlan != nil && !queueDeadline.IsZero() {
-			selection.WaitPlan.Timeout = min(selection.WaitPlan.Timeout, time.Until(queueDeadline))
-			if selection.WaitPlan.Timeout <= 0 {
-				selection.WaitPlan.Timeout = time.Nanosecond
-			}
-		}
 		if selection != nil && selection.Account != nil {
-			// A wait plan was not admitted by the inner scheduler, so its eager
-			// binding never ran. Publish only after the wait and migration gate;
-			// profit-controlled and migrating sessions keep their existing rules.
-			if err == nil && completedCapacityWait && selection.Acquired {
-				if bindErr := s.bindOpenAIStickySessionDuringSelection(ctx, groupID, sessionHash, selection.Account.ID); bindErr != nil {
-					slog.Warn("openai_sticky_binding_after_wait_failed", "account_id", selection.Account.ID, "error", bindErr)
-				}
-			}
 			decision.SelectedAccountID = selection.Account.ID
 			decision.SelectedAccountType = selection.Account.Type
 		}
 	}()
-	if state := codexAdaptiveRequestFromContext(ctx); state != nil {
-		state.mu.Lock()
-		state.legacyCompact = requireCompact
-		state.admissionRequest = &OpenAIAccountScheduleRequest{
-			GroupID: groupID, Platform: platform,
-			RequiredTransport: requiredTransport, RequiredCapability: requiredCapability,
-			RequiredImageCapability: requiredImageCapability,
-			RequirePrivacySet:       s.openAIGroupRequiresPrivacySet(ctx, groupID),
-		}
-		state.mu.Unlock()
-		if sessionHash != "" && previousResponseID == "" && platform == PlatformOpenAI {
-			if s.cache == nil {
-				return nil, decision, fmt.Errorf("OpenAI sticky migration store unavailable")
-			}
-			stickyID, stickyErr := s.getStickySessionAccountID(ctx, groupID, sessionHash)
-			if stickyErr != nil {
-				return nil, decision, stickyErr
-			}
-			// Publish once per selection. Every scheduler branch sees the same
-			// migration owner, and store failures cannot degrade into random routing.
-			ctx = context.WithValue(ctx, codexStickySelectionSnapshotKey{}, codexStickySelectionSnapshot{
-				groupID: derefGroupID(groupID), session: sessionHash, accountID: stickyID,
-			})
-		}
-	}
 	preserveGuardianParentBinding := preserveOpenAIGuardianParentBinding(ctx, sessionHash)
 	guardianParentAccountID := int64(0)
 	if strings.TrimSpace(previousResponseID) == "" {

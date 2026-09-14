@@ -617,8 +617,7 @@ func TestWSIngress_ProgressFramesAllowLongFirstOutput(t *testing.T) {
 			serverErrCh <- readErr
 			return
 		}
-		adaptiveCtx := withCodexAdaptiveTestPolicy(r.Context())
-		proxyErr := svc.ProxyResponsesWebSocketFromClient(adaptiveCtx, ginCtx, conn, account, "sk-test", firstMessage, nil)
+		proxyErr := svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, account, "sk-test", firstMessage, nil)
 		var closeErr *OpenAIWSClientCloseError
 		if errors.As(proxyErr, &closeErr) {
 			_ = conn.Close(closeErr.StatusCode(), closeErr.Reason())

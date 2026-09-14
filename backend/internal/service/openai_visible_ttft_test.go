@@ -102,7 +102,7 @@ func TestOpenAINativeMetadataWaitsForTerminalWithoutFirstOutputDeadline(t *testi
 			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
 			account := &Account{ID: 1, Name: "account_test", Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 
-			ctx := withCodexAdaptiveTestPolicy(context.Background())
+			ctx := context.Background()
 			started := time.Now()
 			result, err := svc.handleStreamingResponse(ctx, resp, c, account, started, "test-model", "test-model")
 			require.GreaterOrEqual(t, time.Since(started), time.Second)

@@ -1,7 +1,6 @@
 package service
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -242,8 +241,8 @@ type SystemSettings struct {
 	EnableClientDatelineNormalization      bool   // 是否对 Anthropic OAuth/SetupToken 请求体做客户端 dateline 归一化（默认 true）
 	RewriteMessageCacheControl             bool   // 是否改写 messages[*].content[*].cache_control（默认 false）
 	AntigravityUserAgentVersion            string // Antigravity 上游 User-Agent 版本号；空值使用配置/默认值
-	OpenAICodexUserAgent                   string // OpenAI Codex 上游完整 User-Agent；空值由 Codex 客户端版本号拼出标准 TUI UA
-	OpenAICodexClientVersion               string // 出站声明的 Codex 客户端版本号（管理员覆写）；空值跟随自动同步值
+	OpenAICodexUserAgent                   string // OpenAI Codex 上游完整 User-Agent；空值按版本号拼出标准 TUI UA
+	OpenAICodexClientVersion               string // 默认 CLI 的 Core 版本；仅在自定义 UA 为空时生效
 	OpenAICodexClientVersionSynced         string // 自动同步到的官方最新稳定版版本号（只读展示）
 	OpenAICodexVersionAutoSyncEnabled      bool   // 是否启用 Codex 客户端版本号自动同步（默认 true）
 	MinCodexVersion                        string // codex_cli_only 最低 Codex 引擎版本；空=不检查
@@ -263,12 +262,8 @@ type SystemSettings struct {
 	PaymentVisibleMethodWxpayEnabled  bool
 
 	// OpenAI 账号调度
-	OpenAILowUpstreamRatePriorityEnabled bool
-	OpenAIOAuthSchedulingRateMultiplier  float64
-	// Codex quota overdraft controls. These are persisted admin settings;
-	// deployment config remains the process-level master gate.
-	CodexQuotaOverdraftEnabled                             bool
-	CodexQuotaOverdraftBusinessInjectionEnabled            bool
+	OpenAILowUpstreamRatePriorityEnabled                   bool
+	OpenAIOAuthSchedulingRateMultiplier                    float64
 	OpenAIAdvancedSchedulerEnabled                         bool
 	OpenAIAdvancedSchedulerStickyWeightedEnabled           bool
 	OpenAIAdvancedSchedulerSubscriptionPriorityEnabled     bool
@@ -510,25 +505,6 @@ func DefaultStreamTimeoutSettings() *StreamTimeoutSettings {
 	}
 }
 
-// CodexAdaptiveSchedulingSettings controls Codex overload protection. The
-// feature is opt-in so an upgrade never changes account admission by itself.
-type CodexAdaptiveSchedulingSettings struct {
-	Enabled bool `json:"enabled"`
-}
-
-func DefaultCodexAdaptiveSchedulingSettings() *CodexAdaptiveSchedulingSettings {
-	return &CodexAdaptiveSchedulingSettings{
-		Enabled: false,
-	}
-}
-
-func validateCodexAdaptiveSchedulingSettings(settings *CodexAdaptiveSchedulingSettings) error {
-	if settings == nil {
-		return fmt.Errorf("settings cannot be nil")
-	}
-	return nil
-}
-
 // RectifierSettings 请求整流器配置
 type RectifierSettings struct {
 	Enabled                  bool     `json:"enabled"`                    // 总开关
@@ -591,6 +567,16 @@ type RateLimit429CooldownSettings struct {
 	CooldownSeconds int `json:"cooldown_seconds"`
 }
 
+// OpenAI503RetrySettings controls account-local retries for explicit OpenAI
+// capacity-shed responses (server_is_overloaded / slow_down). It is separate
+// from quota rate limiting: a 503 does not prove that an account exhausted a
+// usage window.
+type OpenAI503RetrySettings struct {
+	Enabled               bool `json:"enabled"`
+	RetryDelaySeconds     int  `json:"retry_delay_seconds"`
+	MaxSameAccountRetries int  `json:"max_same_account_retries"`
+}
+
 // OpenAIAPIKeyHealthBreakerSettings controls cross-instance failure counting for OpenAI pool API keys.
 type OpenAIAPIKeyHealthBreakerSettings struct {
 	Enabled          bool `json:"enabled"`
@@ -621,6 +607,14 @@ func DefaultRateLimit429CooldownSettings() *RateLimit429CooldownSettings {
 	return &RateLimit429CooldownSettings{
 		Enabled:         true,
 		CooldownSeconds: 5,
+	}
+}
+
+func DefaultOpenAI503RetrySettings() *OpenAI503RetrySettings {
+	return &OpenAI503RetrySettings{
+		Enabled:               true,
+		RetryDelaySeconds:     2,
+		MaxSameAccountRetries: 1,
 	}
 }
 

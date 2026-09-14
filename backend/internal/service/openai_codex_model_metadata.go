@@ -9,6 +9,7 @@ import (
 
 var codexToolCapabilityFields = []string{
 	"supports_search_tool", "apply_patch_tool_type", "comp_hash", "tool_mode", "use_responses_lite",
+	"multi_agent_reasoning_effort", "multi_agent_version",
 }
 
 func applyCodexToolCapabilities(dst, src map[string]json.RawMessage, overwrite bool) bool {
@@ -18,7 +19,7 @@ func applyCodexToolCapabilities(dst, src map[string]json.RawMessage, overwrite b
 		if len(value) == 0 {
 			continue
 		}
-		// These five Codex fields are nullable booleans or strings, never arbitrary objects.
+		// These Codex fields are nullable booleans or strings, never arbitrary objects.
 		if !bytes.Equal(value, []byte("null")) {
 			if field == "supports_search_tool" || field == "use_responses_lite" {
 				if !bytes.Equal(value, []byte("true")) && !bytes.Equal(value, []byte("false")) {
@@ -333,6 +334,21 @@ func intersectUpstreamModelMetadata(modelID string, candidates []UpstreamModelMe
 	if !contextKnown {
 		result.ContextWindow = 0
 	}
+	for i, candidate := range candidates {
+		maxContextWindow := candidate.MaxContextWindow
+		if maxContextWindow <= 0 {
+			// Older snapshots only stored the default window. Keep that bound
+			// until a sync supplies the upstream's explicit maximum.
+			maxContextWindow = candidate.ContextWindow
+		}
+		if maxContextWindow <= 0 {
+			result.MaxContextWindow = 0
+			break
+		}
+		if i == 0 || maxContextWindow < result.MaxContextWindow {
+			result.MaxContextWindow = maxContextWindow
+		}
+	}
 	return result
 }
 
@@ -388,6 +404,10 @@ func applyUpstreamModelMetadataToCodexDescriptor(
 		descriptor.ContextWindow = metadata.ContextWindow
 		descriptor.MaxContextWindow = metadata.ContextWindow
 	}
+	if metadata.MaxContextWindow > 0 {
+		descriptor.MaxContextWindow = metadata.MaxContextWindow
+		descriptor.ContextWindow = min(descriptor.ContextWindow, metadata.MaxContextWindow)
+	}
 }
 
 func configuredCodexReasoningLevelDescription(level string) string {
@@ -406,6 +426,8 @@ func configuredCodexReasoningLevelDescription(level string) string {
 		return "Extra-high reasoning depth for difficult tasks"
 	case "max":
 		return "Maximum reasoning depth for complex tasks"
+	case "ultra":
+		return "Maximum reasoning with automatic task delegation"
 	default:
 		return "Reasoning effort supported by the upstream model"
 	}

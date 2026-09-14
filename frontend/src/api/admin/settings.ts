@@ -674,8 +674,6 @@ export interface SystemSettings {
   payment_visible_method_wxpay_enabled?: boolean;
   openai_low_upstream_rate_priority_enabled?: boolean;
   openai_oauth_scheduling_rate_multiplier?: number;
-  codex_quota_overdraft_enabled?: boolean;
-  codex_quota_overdraft_business_injection_enabled?: boolean;
   openai_advanced_scheduler_enabled?: boolean;
   openai_advanced_scheduler_sticky_weighted_enabled?: boolean;
   openai_advanced_scheduler_subscription_priority_enabled?: boolean;
@@ -991,8 +989,6 @@ export interface UpdateSettingsRequest {
   payment_visible_method_wxpay_enabled?: boolean;
   openai_low_upstream_rate_priority_enabled?: boolean;
   openai_oauth_scheduling_rate_multiplier?: number;
-  codex_quota_overdraft_enabled?: boolean;
-  codex_quota_overdraft_business_injection_enabled?: boolean;
   openai_advanced_scheduler_enabled?: boolean;
   openai_advanced_scheduler_sticky_weighted_enabled?: boolean;
   openai_advanced_scheduler_subscription_priority_enabled?: boolean;
@@ -1315,6 +1311,31 @@ export async function updateRateLimit429CooldownSettings(
   return data;
 }
 
+// ==================== OpenAI 503 Retry Settings ====================
+
+export interface OpenAI503RetrySettings {
+  enabled: boolean;
+  retry_delay_seconds: number;
+  max_same_account_retries: number;
+}
+
+export async function getOpenAI503RetrySettings(): Promise<OpenAI503RetrySettings> {
+  const { data } = await apiClient.get<OpenAI503RetrySettings>(
+    "/admin/settings/openai-503-retry",
+  );
+  return data;
+}
+
+export async function updateOpenAI503RetrySettings(
+  settings: OpenAI503RetrySettings,
+): Promise<OpenAI503RetrySettings> {
+  const { data } = await apiClient.put<OpenAI503RetrySettings>(
+    "/admin/settings/openai-503-retry",
+    settings,
+  );
+  return data;
+}
+
 // ==================== Panel Rate Limit Settings ====================
 
 /**
@@ -1381,29 +1402,6 @@ export async function updateStreamTimeoutSettings(
 ): Promise<StreamTimeoutSettings> {
   const { data } = await apiClient.put<StreamTimeoutSettings>(
     "/admin/settings/stream-timeout",
-    settings,
-  );
-  return data;
-}
-
-// ==================== Codex Adaptive Scheduling ====================
-
-export interface CodexAdaptiveSchedulingSettings {
-  enabled: boolean;
-}
-
-export async function getCodexAdaptiveSchedulingSettings(): Promise<CodexAdaptiveSchedulingSettings> {
-  const { data } = await apiClient.get<CodexAdaptiveSchedulingSettings>(
-    "/admin/settings/codex-adaptive-scheduling",
-  );
-  return data;
-}
-
-export async function updateCodexAdaptiveSchedulingSettings(
-  settings: CodexAdaptiveSchedulingSettings,
-): Promise<CodexAdaptiveSchedulingSettings> {
-  const { data } = await apiClient.put<CodexAdaptiveSchedulingSettings>(
-    "/admin/settings/codex-adaptive-scheduling",
     settings,
   );
   return data;
@@ -1597,12 +1595,12 @@ export const settingsAPI = {
   updateOverloadCooldownSettings,
   getRateLimit429CooldownSettings,
   updateRateLimit429CooldownSettings,
+  getOpenAI503RetrySettings,
+  updateOpenAI503RetrySettings,
   getPanelRateLimitSettings,
   updatePanelRateLimitSettings,
   getStreamTimeoutSettings,
   updateStreamTimeoutSettings,
-  getCodexAdaptiveSchedulingSettings,
-  updateCodexAdaptiveSchedulingSettings,
   getRectifierSettings,
   updateRectifierSettings,
   getBetaPolicySettings,

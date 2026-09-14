@@ -236,8 +236,6 @@ type SystemSettings struct {
 	// OpenAI account scheduling
 	OpenAILowUpstreamRatePriorityEnabled                   bool    `json:"openai_low_upstream_rate_priority_enabled"`
 	OpenAIOAuthSchedulingRateMultiplier                    float64 `json:"openai_oauth_scheduling_rate_multiplier"`
-	CodexQuotaOverdraftEnabled                             bool    `json:"codex_quota_overdraft_enabled"`
-	CodexQuotaOverdraftBusinessInjectionEnabled            bool    `json:"codex_quota_overdraft_business_injection_enabled"`
 	OpenAIAdvancedSchedulerEnabled                         bool    `json:"openai_advanced_scheduler_enabled"`
 	OpenAIAdvancedSchedulerStickyWeightedEnabled           bool    `json:"openai_advanced_scheduler_sticky_weighted_enabled"`
 	OpenAIAdvancedSchedulerSubscriptionPriorityEnabled     bool    `json:"openai_advanced_scheduler_subscription_priority_enabled"`
@@ -451,6 +449,13 @@ type RateLimit429CooldownSettings struct {
 	CooldownSeconds int  `json:"cooldown_seconds"`
 }
 
+// OpenAI503RetrySettings OpenAI 503 显式过载的账号内重试配置 DTO
+type OpenAI503RetrySettings struct {
+	Enabled               bool `json:"enabled"`
+	RetryDelaySeconds     int  `json:"retry_delay_seconds"`
+	MaxSameAccountRetries int  `json:"max_same_account_retries"`
+}
+
 // PanelRateLimitSettings 面板 API 限流配置 DTO
 type PanelRateLimitSettings struct {
 	Enabled     bool `json:"enabled"`
@@ -467,10 +472,6 @@ type StreamTimeoutSettings struct {
 	TempUnschedMinutes     int    `json:"temp_unsched_minutes"`
 	ThresholdCount         int    `json:"threshold_count"`
 	ThresholdWindowMinutes int    `json:"threshold_window_minutes"`
-}
-
-type CodexAdaptiveSchedulingSettings struct {
-	Enabled bool `json:"enabled"`
 }
 
 // RectifierSettings 请求整流器配置 DTO

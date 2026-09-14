@@ -959,10 +959,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				return nil, err
 			}
 		}
-		if codexAdaptiveAccountEligible(account) {
-			if err := consumeOpenAIRequestAttempt(ctx); err != nil {
-				return nil, err
-			}
+		if err := consumeOpenAIRequestAttempt(ctx); err != nil {
+			return nil, err
 		}
 		if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(payload), s.openAIWSWriteTimeout()); err != nil {
 			return nil, wrapOpenAIWSIngressTurnError(

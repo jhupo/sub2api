@@ -525,17 +525,14 @@ export default {
         antigravityUserAgentVersionHint: 'Leave empty to use ANTIGRAVITY_USER_AGENT_VERSION or the built-in default 2.8.0; when set, the admin setting takes precedence.',
         openaiCodexUserAgent: 'OpenAI Codex UA',
         openaiCodexUserAgentPlaceholder: 'codex-tui/0.146.1 (Ubuntu 22.4.0; x86_64) WindowsTerminal (codex-tui; 0.146.1)',
-        openaiCodexUserAgentHint: 'The full Codex User-Agent used for all outbound requests, for customizing the OS / arch / terminal fingerprint. Leave empty to build the standard codex-tui identity from the version below (recommended). If set, both the leading and trailing version declarations are synchronized to the version below, so the UA never stays pinned to the release entered here — under capacity pressure the upstream sheds load by client identity and drops stale or non-official identities first with server_is_overloaded.',
+        openaiCodexUserAgentHint: 'Leave empty for the default CLI identity. A complete CLI or Desktop UA retains both its Core and trailing client versions. The originator, version, and models client_version are derived from that UA.',
+        openaiCodexCustomUserAgentActive: 'Custom UA active; its versions take precedence. Version preferences are retained and take effect again when the UA is cleared.',
         openaiCodexClientVersion: 'Codex client version',
         openaiCodexClientVersionPlaceholder: 'Leave empty to follow auto-sync',
-        openaiCodexClientVersionHint: 'The Codex client version this gateway declares upstream, shared by the User-Agent and the version header. Leave empty to use the auto-synced latest stable release; setting a value pins it and stops following auto-sync.',
+        openaiCodexClientVersionHint: 'Applies only when UA is empty. Set a value to pin the default CLI Core version. If empty, uses the latest stable release when sync is enabled, otherwise the built-in version.',
         openaiCodexVersionAutoSync: 'Auto-sync Codex version',
-        openaiCodexVersionAutoSyncHint: 'Fetches the latest stable client version from the official repository every 6 hours, so you never need to upgrade this service just to keep the version current. When disabled, only the version above or the built-in default is used.',
+        openaiCodexVersionAutoSyncHint: 'Syncs the latest stable Core release from the official repository every 6 hours. Used only when both UA and manual version are empty. When disabled, uses the manual or built-in version.',
         openaiCodexVersionSyncedValue: 'Currently synced: {version}',
-        codexOverdraftTitle: 'Codex 5h / 7d quota-overdraft detection and scheduling',
-        codexOverdraftDescription: 'Enabled by default. Records quota cycles, runs bounded probes, and automatically releases scheduling blocks after recovery without changing real business requests.',
-        codexOverdraftBusinessInjection: 'CPAProxy-compatible real-request hidden injection',
-        codexOverdraftBusinessInjectionHint: 'High-risk switch: adds a no-op tool pair to real requests, which upstream may count as input tokens. Enable only after accepting the billing and cost impact; off by default.',
         codexHardeningTitle: "Codex Settings",
         codexClientRestrictionTitle: "Codex client restriction",
         codexHardeningDesc:
@@ -1021,6 +1018,18 @@ export default {
         saved: '429 default cooldown settings saved',
         saveFailed: 'Failed to save 429 default cooldown settings'
       },
+      openai503Retry: {
+        title: 'OpenAI 503 Account Retry',
+        description: 'Queue explicit server_is_overloaded or slow_down responses within the account without changing quota state',
+        enabled: 'Enable 503 account retry',
+        enabledHint: 'Keep the account slot and retry explicit OpenAI capacity 503 responses in FIFO order',
+        retryDelaySeconds: 'Retry delay (seconds)',
+        retryDelaySecondsHint: 'Wait before each 503 retry (1-120 seconds)',
+        maxSameAccountRetries: 'Maximum same-account retries',
+        maxSameAccountRetriesHint: 'After this count fail over to another account; 0 disables same-account retries',
+        saved: 'OpenAI 503 retry settings saved',
+        saveFailed: 'Failed to save OpenAI 503 retry settings'
+      },
       streamTimeout: {
         title: 'Account Handling After Stream Timeout',
         description: 'Configure account actions after an idle stream timeout; timeout detection remains controlled by the gateway stream timeout',
@@ -1041,14 +1050,6 @@ export default {
         thresholdWindowMinutesHint: 'Time window for counting timeouts (1-60 minutes)',
         saved: 'Stream timeout account handling settings saved',
         saveFailed: 'Failed to save stream timeout account handling settings'
-      },
-      codexAdaptiveScheduling: {
-        title: 'Codex Adaptive Overload Scheduling',
-        description: 'Applies to OpenAI OAuth, Setup Token, and official API keys, including compaction; only explicit overload errors reduce concurrency, while custom relays are excluded',
-        enabled: 'Enable Codex Adaptive Overload Scheduling',
-        enabledHint: 'Tracks real overload pressure by account, model, and independent session to reduce concurrency dynamically; TTFT remains observational and never aborts or reroutes a request',
-        saved: 'Codex adaptive overload scheduling settings saved',
-        saveFailed: 'Failed to save Codex adaptive overload scheduling settings'
       },
       rectifier: {
         title: 'Request Rectifier',

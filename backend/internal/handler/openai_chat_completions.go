@@ -148,10 +148,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	sessionHash := h.gatewayService.GenerateScopedSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
-	c.Request = c.Request.WithContext(h.gatewayService.PrepareCodexAdaptiveSchedulingRequest(
-		c.Request.Context(), apiKey.ID, sessionHash, reqModel,
-	))
-	defer service.FinishCodexAdaptiveSchedulingRequest(c.Request.Context())
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
@@ -162,9 +158,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 
 	// 分组利润控制：chat completions 文本入口请求级装门并固定 pricingAt。
-	ccPricingCtx := c.Request.Context()
-	ccPricingCtx = h.gatewayService.WithCodexQuotaOverdraftScheduling(ccPricingCtx)
-	ccPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(ccPricingCtx, apiKey.GroupID)
+	ccPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(ccPricingCtx)
 	preauthorizationBody := openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
 	balanceGuard, err := preauthorizeTextGatewayRequest(
@@ -361,11 +355,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
-					adaptiveFailover := h.gatewayService.ApplyCodexAdaptiveFailoverPolicy(
-						c.Request.Context(), account,
-						openAIAccountScheduleModel(c, account, reqModel, false, nil),
-						failoverErr,
-					)
 					if failoverClientGone(c) {
 						submitChatUsage(result)
 						reqLog.Info("openai_chat_completions.failover_aborted_client_disconnected",
@@ -384,9 +373,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					// Pool mode: retry on the same account
 					if shouldRetryNext && failoverErr.RetryableOnSameAccount {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
-						if adaptiveFailover {
-							retryLimit = 1
-						}
 						if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
 							sameAccountRetryCount[account.ID]++
 							retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
@@ -457,22 +443,8 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			}
 		}
 		forwardSucceeded := openAIForwardSucceededForScheduling(result)
-		if forwardSucceeded {
-			if err := h.gatewayService.CommitCodexAdaptiveStickyOnSuccess(
-				c.Request.Context(), apiKey.GroupID, account, false,
-			); err != nil {
-				reqLog.Warn("openai_chat_completions.codex_adaptive_sticky_migration_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-			}
-			h.gatewayService.ObserveCodexAdaptiveSuccess(
-				c.Request.Context(), account,
-				openAIAccountScheduleModel(c, account, reqModel, false, result),
-			)
-		}
 		if result != nil {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), forwardSucceeded, result.FirstTokenMs)
-			if forwardSucceeded {
-				h.gatewayService.ObserveCodexQuotaOverdraftScheduleSuccess(c.Request.Context(), account, reqModel)
-			}
 		} else {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), forwardSucceeded, nil)
 		}

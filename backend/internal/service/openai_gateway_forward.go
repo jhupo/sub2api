@@ -970,26 +970,27 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	compactModelFallbackRetried := false
 	agentTaskRecoveryTried := false
 	rejectedFieldRetryState := openAIResponsesRejectedFieldRetryStateForRequest(c, body)
+	openAI503State, err := s.newOpenAI503RetryState(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	defer openAI503State.complete()
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
 	for {
-		// Build upstream request
-		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
-		releaseUpstreamCtx()
+		resp, err := openAI503State.do(c, func() (*http.Request, error) {
+			upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+			upstreamReq, buildErr := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
+			releaseUpstreamCtx()
+			return upstreamReq, buildErr
+		}, proxyURL)
 		if err != nil {
-			return nil, err
-		}
-
-		// Get proxy URL
-		proxyURL := ""
-		if account.ProxyID != nil && account.Proxy != nil {
-			proxyURL = account.Proxy.URL()
-		}
-
-		// Send request
-		upstreamStart := time.Now()
-		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
-		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
-		if err != nil {
+			var failoverErr *UpstreamFailoverError
+			if errors.As(err, &failoverErr) {
+				return nil, err
+			}
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
@@ -1272,7 +1273,6 @@ func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
 	identity := s.codexAttemptIdentity(c, account)
-	body = s.prepareCodexQuotaOverdraftBody(ctx, account, isOpenAIResponsesCompactPath(c), body)
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {

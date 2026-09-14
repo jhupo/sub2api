@@ -242,9 +242,6 @@ func ProvideAccountUsageService(
 		tlsFPProfileService,
 	)
 	service.agentIdentityWS = openAIGatewayService
-	if openAIGatewayService != nil {
-		service.SetCodexQuotaOverdraftCoordinator(openAIGatewayService.codexQuotaOverdraftCoordinator(tlsFPProfileService))
-	}
 	return service
 }
 
@@ -273,9 +270,6 @@ func ProvideAccountTestService(
 	)
 	service.agentIdentityWS = openAIGatewayService
 	service.SetSettingService(settingService)
-	if openAIGatewayService != nil {
-		service.SetCodexQuotaOverdraftCoordinator(openAIGatewayService.codexQuotaOverdraftCoordinator(tlsFPProfileService))
-	}
 	service.SetPluginManager(pluginManager)
 	return service
 }
@@ -761,7 +755,6 @@ func ProvideOpsService(
 		// Optional warm-up so the first scheduled request after process start observes
 		// a populated cache rather than zero defaults. Best-effort, sync-bounded.
 		settingService.WarmOpenAIQuotaAutoPauseSettings(context.Background())
-		settingService.WarmCodexAdaptiveSchedulingSettings(context.Background())
 	}
 	svc.authCacheInvalidationWorker = authCacheInvalidationWorker
 	svc.liveBalanceOutboxWorker = liveBalanceOutboxWorker

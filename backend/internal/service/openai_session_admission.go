@@ -12,13 +12,10 @@ type openAIImmediateSelectionKey struct{}
 func (s *OpenAIGatewayService) newSessionSoftLimitPercent(ctx context.Context, req OpenAIAccountScheduleRequest) int {
 	if s.cfg == nil || s.concurrencyService == nil || NormalizeOpenAICompatiblePlatform(req.Platform) != PlatformOpenAI ||
 		req.StickyAccountID != 0 || req.StickyPreviousAccountID != 0 || req.GuardianParentAccountID != 0 ||
-		req.PreviousResponseID != "" || req.PreserveStickyBinding || req.StickyMigrationTarget {
+		req.PreviousResponseID != "" || req.PreserveStickyBinding {
 		return 0
 	}
 	if continuation, _ := ctx.Value(openAIContinuationSelectionKey{}).(bool); continuation {
-		return 0
-	}
-	if codexAdaptiveStickyMigrationPending(ctx) {
 		return 0
 	}
 	percent := s.cfg.Gateway.Scheduling.NewSessionSoftLimitPercent
@@ -77,13 +74,6 @@ func (s *OpenAIGatewayService) waitForOpenAIPoolCapacity(
 		if spare == nil || !spare.Acquired {
 			return nil, nil
 		}
-		if state := codexAdaptiveRequestFromContext(ctx); state != nil {
-			state.mu.Lock()
-			if state.stickySourceID > 0 && spare.Account.ID != state.stickySourceID {
-				state.stickyMigrationPending = true
-			}
-			state.mu.Unlock()
-		}
 		return spare, nil
 	}
 	canWait, err := s.concurrencyService.IncrementAccountWaitCount(ctx, plan.AccountID, plan.MaxWaiting)
@@ -106,7 +96,7 @@ func (s *OpenAIGatewayService) waitForOpenAIPoolCapacity(
 			return selection, nil
 		}
 		waitCtx, cancel := context.WithTimeout(ctx, min(750*time.Millisecond, remaining))
-		release, acquired, waitErr := s.waitForCodexAffinitySlot(waitCtx, selection)
+		release, acquired, waitErr := s.waitForAccountSlot(waitCtx, selection)
 		cancel()
 		if waitErr != nil && !errors.Is(waitErr, ErrNoAvailableAccounts) {
 			return nil, waitErr
@@ -123,6 +113,31 @@ func (s *OpenAIGatewayService) waitForOpenAIPoolCapacity(
 		}
 		if spare, err := probeSpare(); err != nil || spare != nil {
 			return spare, err
+		}
+	}
+}
+
+func (s *OpenAIGatewayService) waitForAccountSlot(ctx context.Context, selection *AccountSelectionResult) (func(), bool, error) {
+	if s == nil || s.concurrencyService == nil || selection == nil || selection.Account == nil {
+		return nil, false, nil
+	}
+	ticker := time.NewTicker(75 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, false, nil
+		case <-ticker.C:
+			result, err := s.tryAcquireAccountSlot(ctx, selection.Account.ID, selection.WaitPlan.MaxConcurrency)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, false, nil
+				}
+				return nil, false, err
+			}
+			if result != nil && result.Acquired {
+				return result.ReleaseFunc, true, nil
+			}
 		}
 	}
 }

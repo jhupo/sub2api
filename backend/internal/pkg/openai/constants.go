@@ -58,9 +58,8 @@ const CodexUsageProbeModel = "codex-auto-review"
 //go:embed instructions.txt
 var DefaultInstructions string
 
-// instructionsGPT51 / instructionsGPT52 / instructionsGPT55 为 gpt-5.1 / gpt-5.2 / gpt-5.5
-// 非 codex 模型对应的真实 Codex 编码 agent base prompt，用于模型感知的 instructions 选择。
-// GPT-5.5 同时作为最新版本的 fallback（覆盖 5.3 / 5.4 等未单独维护 prompt 的版本）。
+// 各模型专用 instructions 均逐字同步自官方 Codex models.json。
+// GPT-5.5 同时作为 fallback，覆盖尚未单独维护 prompt 的模型。
 //
 //go:embed instructions_gpt5_1.txt
 var instructionsGPT51 string
@@ -71,38 +70,64 @@ var instructionsGPT52 string
 //go:embed instructions_gpt5_5.txt
 var instructionsGPT55 string
 
-// latestCodexInstructions 返回当前已知最新版本的 Codex base instructions，
-// 当前为 GPT-5.5；若 5.5 prompt 意外为空则回退到 DefaultInstructions 保证非空。
-func latestCodexInstructions() string {
+//go:embed instructions_gpt5_6.txt
+var instructionsGPT56 string
+
+//go:embed instructions_gpt6_astra.txt
+var instructionsGPT6Astra string
+
+// fallbackCodexInstructions 返回未知模型使用的 GPT-5.5 base instructions；
+// 若内嵌 prompt 意外为空则回退到 DefaultInstructions 保证非空。
+func fallbackCodexInstructions() string {
 	if v := strings.TrimSpace(instructionsGPT55); v != "" {
 		return instructionsGPT55
 	}
 	return DefaultInstructions
 }
 
-// CodexBaseInstructionsForModel 按模型返回最匹配的真实 Codex base instructions：
-//   - 含 "codex" 的模型（gpt-5-codex / gpt-5.x-codex / codex-max / spark 等）→ GPT-5-Codex prompt
-//   - gpt-5.5 系非 codex 模型 → GPT-5.5 prompt
-//   - gpt-5.2 系非 codex 模型 → GPT-5.2 prompt
-//   - gpt-5.1 系非 codex 模型 → GPT-5.1 prompt
-//   - 其它（含 gpt-5.3 / gpt-5.4 / 裸 gpt-5 / 未知模型）→ 回退到最新版本（当前 GPT-5.5）
+// CodexBaseInstructionsForModel 按模型返回最匹配的官方 Codex base instructions。
+// 模型名可以包含 openai/、models/ 或 global.openai. 等提供商前缀。
+// 含 "codex" 的专用模型优先使用 GPT-5-Codex prompt；未知模型回退到 GPT-5.5。
 //
 // 任一专用 prompt 意外为空时回退链最终落到 DefaultInstructions，保证返回非空。
 func CodexBaseInstructionsForModel(model string) string {
-	m := strings.ToLower(strings.TrimSpace(model))
+	m := normalizeCodexInstructionsModel(model)
 	switch {
 	case strings.Contains(m, "codex"):
 		return DefaultInstructions
-	case strings.HasPrefix(m, "gpt-5.5"):
-		return latestCodexInstructions()
-	case strings.HasPrefix(m, "gpt-5.2"):
+	case m == "gpt-6" || modelBelongsToInstructionsFamily(m, "gpt-6-astra"):
+		if v := strings.TrimSpace(instructionsGPT6Astra); v != "" {
+			return instructionsGPT6Astra
+		}
+	case modelBelongsToInstructionsFamily(m, "gpt-5.6"):
+		if v := strings.TrimSpace(instructionsGPT56); v != "" {
+			return instructionsGPT56
+		}
+	case modelBelongsToInstructionsFamily(m, "gpt-5.5"):
+		return fallbackCodexInstructions()
+	case modelBelongsToInstructionsFamily(m, "gpt-5.2"):
 		if v := strings.TrimSpace(instructionsGPT52); v != "" {
 			return instructionsGPT52
 		}
-	case strings.HasPrefix(m, "gpt-5.1"):
+	case modelBelongsToInstructionsFamily(m, "gpt-5.1"):
 		if v := strings.TrimSpace(instructionsGPT51); v != "" {
 			return instructionsGPT51
 		}
 	}
-	return latestCodexInstructions()
+	return fallbackCodexInstructions()
+}
+
+func normalizeCodexInstructionsModel(model string) string {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if slash := strings.LastIndexByte(m, '/'); slash >= 0 {
+		m = strings.TrimSpace(m[slash+1:])
+	}
+	if providerPrefix := strings.LastIndex(m, ".gpt-"); providerPrefix >= 0 {
+		m = m[providerPrefix+1:]
+	}
+	return m
+}
+
+func modelBelongsToInstructionsFamily(model, family string) bool {
+	return model == family || strings.HasPrefix(model, family+"-")
 }

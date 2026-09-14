@@ -19,12 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func withCodexAdaptiveTestPolicy(ctx context.Context) context.Context {
-	return context.WithValue(ctx, codexAdaptiveRequestContextKey{}, &codexAdaptiveRequestState{
-		pressures: make(map[codexAdaptivePressureScope]int),
-	})
-}
-
 func openAIFirstOutputTestAccount(id int64) *Account {
 	return &Account{ID: id, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 }
@@ -71,7 +65,7 @@ func TestOpenAICompatTTFTStartsAtVisibleOutput(t *testing.T) {
 			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
 			started := time.Now()
 
-			result, err := tc.call(svcForCompatFirstOutputTests(), withCodexAdaptiveTestPolicy(c.Request.Context()), resp, c, openAIFirstOutputTestAccount(5), started)
+			result, err := tc.call(svcForCompatFirstOutputTests(), c.Request.Context(), resp, c, openAIFirstOutputTestAccount(5), started)
 
 			require.NoError(t, err)
 			require.NotNil(t, result)
@@ -117,7 +111,7 @@ func TestOpenAICompatCapacityShedDoesNotCommitProtocolPreamble(t *testing.T) {
 			c.Request = httptest.NewRequest(http.MethodPost, tc.path, nil)
 			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(stream))}
 
-			result, err := tc.call(svcForCompatFirstOutputTests(), withCodexAdaptiveTestPolicy(c.Request.Context()), resp, c, openAIFirstOutputTestAccount(6), time.Now())
+			result, err := tc.call(svcForCompatFirstOutputTests(), c.Request.Context(), resp, c, openAIFirstOutputTestAccount(6), time.Now())
 
 			require.Nil(t, result)
 			var failoverErr *UpstreamFailoverError
@@ -150,7 +144,7 @@ func TestOpenAILongPreambleDoesNotTriggerAdaptiveFailover(t *testing.T) {
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
 			started := time.Now()
-			ctx := withCodexAdaptiveTestPolicy(c.Request.Context())
+			ctx := c.Request.Context()
 
 			if passthrough {
 				result, err := svcForCompatFirstOutputTests().handleStreamingResponsePassthrough(ctx, resp, c, openAIFirstOutputTestAccount(1), started, "gpt-5.6-sol", "gpt-5.6-sol")
@@ -298,7 +292,7 @@ func TestOpenAINativeFirstOutputEOFDispatchesTerminalEventWithoutBlankLine(t *te
 		Body: io.NopCloser(strings.NewReader(payload)),
 	}
 
-	result, err := svc.handleStreamingResponse(withCodexAdaptiveTestPolicy(c.Request.Context()), resp, c, openAIFirstOutputTestAccount(1), time.Now(), "model", "model")
+	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, openAIFirstOutputTestAccount(1), time.Now(), "model", "model")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -329,7 +323,7 @@ func TestOpenAIFirstOutputStageOverflowFailsOverWithoutAttemptBytes(t *testing.T
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Request-Id": []string{"request-overflow"}}, Body: io.NopCloser(strings.NewReader(body))}
-			ctx := withCodexAdaptiveTestPolicy(c.Request.Context())
+			ctx := c.Request.Context()
 
 			var err error
 			if passthrough {

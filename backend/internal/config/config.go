@@ -980,18 +980,6 @@ type GatewayConfig struct {
 	// ForceCodexCLI: 强制将 OpenAI `/v1/responses` 请求按 Codex CLI 处理。
 	// 用于网关未透传/改写 User-Agent 时的兼容兜底（默认关闭，避免影响其他客户端）。
 	ForceCodexCLI bool `mapstructure:"force_codex_cli"`
-	// CodexQuotaOverdraftEnabled enables the guarded Codex 5h/7d quota-overdraft
-	// detector and scheduler integration. The detector defaults on for
-	// compatibility with the production rollout. It is also the deployment
-	// emergency upper bound: false always fail-closes the runtime, while the
-	// value remains the legacy fallback when an older database has no admin key.
-	CodexQuotaOverdraftEnabled bool `mapstructure:"codex_quota_overdraft_enabled"`
-	// CodexQuotaOverdraftBusinessInjectionEnabled permits adding the synthetic
-	// no-op tool pair to real user requests. It is separate and opt-in because
-	// upstream token accounting may include that pair; probe-only operation is
-	// the safe default. It is used as a legacy fallback only when the DB key is
-	// absent.
-	CodexQuotaOverdraftBusinessInjectionEnabled bool `mapstructure:"codex_quota_overdraft_business_injection_enabled"`
 	// DisableCodexIdentityEnforcement: 关闭「强制统一 Codex 出站身份」。上游 /backend-api/codex
 	// 在容量紧张时按客户端身份分优先级降载，被降载的请求会拿到 HTTP 200 + 流内
 	// server_is_overloaded，该次请求失败。默认强制统一出口：所有 OAuth 出站的
@@ -1289,7 +1277,9 @@ type GatewayOpenAIWSConfig struct {
 	MaxConnsPerAccount int `mapstructure:"max_conns_per_account"`
 	MinIdlePerAccount  int `mapstructure:"min_idle_per_account"`
 	MaxIdlePerAccount  int `mapstructure:"max_idle_per_account"`
-	// DynamicMaxConnsByAccountConcurrencyEnabled: 是否按账号并发动态计算连接池上限
+	// DynamicMaxConnsByAccountConcurrencyEnabled: 是否按账号并发动态计算连接池上限。
+	// 旧版及 mode_router_v2 的 ctx_pool 共用此开关和类型系数；关闭后使用 max_conns_per_account。
+	// mode_router_v2 下并发数 <= 0 的账号仍不可调度。
 	DynamicMaxConnsByAccountConcurrencyEnabled bool `mapstructure:"dynamic_max_conns_by_account_concurrency_enabled"`
 	// OAuthMaxConnsFactor: OAuth 账号连接池系数（effective=ceil(concurrency*factor)）
 	OAuthMaxConnsFactor float64 `mapstructure:"oauth_max_conns_factor"`
@@ -2394,13 +2384,11 @@ func setDefaults() {
 	viper.SetDefault("gateway.max_account_switches", 10)
 	viper.SetDefault("gateway.max_account_switches_gemini", 3)
 	viper.SetDefault("gateway.force_codex_cli", false)
-	viper.SetDefault("gateway.codex_quota_overdraft_enabled", true)
-	viper.SetDefault("gateway.codex_quota_overdraft_business_injection_enabled", false)
 	viper.SetDefault("gateway.disable_codex_identity_enforcement", false)
 	viper.SetDefault("gateway.disable_codex_originator_normalization", false)
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
-	viper.SetDefault("gateway.openai_compact_model", "gpt-5.4")
+	viper.SetDefault("gateway.openai_compact_model", "gpt-5.5")
 	viper.SetDefault("gateway.live.max_session_duration_seconds", 3600)
 	// OpenAI Responses WebSocket（默认开启；可通过 force_http 紧急回滚）
 	viper.SetDefault("gateway.openai_ws.enabled", true)

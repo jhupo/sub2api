@@ -2,11 +2,9 @@ package repository
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -59,8 +57,7 @@ const (
 
 	// 一次性迁移 marker：活跃索引机制上线前遗留的等待计数键无法被索引发现，
 	// 且有流量时 TTL 会被不断刷新，必须清扫一次。marker 存在即代表已完成。
-	legacyWaitSweepMarkerKey       = "concurrency:startup:legacy_wait_sweep:v1"
-	codexAdaptivePressureKeyPrefix = "codex:adaptive:pressure:"
+	legacyWaitSweepMarkerKey = "concurrency:startup:legacy_wait_sweep:v1"
 )
 
 var (
@@ -85,19 +82,6 @@ var (
 		local timeResult = redis.call('TIME')
 		local now = tonumber(timeResult[1])
 		local expireBefore = now - ttl
-		if #KEYS >= 3 then
-			local window = tonumber(ARGV[4])
-			redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', now - window)
-			local pressure = redis.call('ZCARD', KEYS[3])
-			if pressure >= 2 then
-				maxConcurrency = math.max(1, math.ceil(maxConcurrency / pressure))
-			end
-			local softPercent = tonumber(ARGV[5])
-			if softPercent > 0 and softPercent < 100 then
-				maxConcurrency = math.ceil(maxConcurrency * softPercent / 100)
-			end
-		end
-
 		-- 清理过期槽位
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
 		redis.call('ZREMRANGEBYSCORE', liveKey, '-inf', now - 60)
@@ -141,33 +125,6 @@ var (
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
 		redis.call('ZREMRANGEBYSCORE', liveKey, '-inf', now - 60)
 		return redis.call('ZCARD', key) + redis.call('ZCARD', liveKey)
-	`)
-
-	codexAdaptiveFailureScript = redis.NewScript(`
-		redis.replicate_commands()
-		local now = tonumber(redis.call('TIME')[1])
-		local window = tonumber(ARGV[1])
-		local member = ARGV[2]
-		redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now - window)
-		redis.call('ZADD', KEYS[1], now, member)
-		redis.call('EXPIRE', KEYS[1], window * 2)
-		return redis.call('ZCARD', KEYS[1])
-	`)
-
-	codexAdaptiveSuccessScript = redis.NewScript(`
-		redis.replicate_commands()
-		local now = tonumber(redis.call('TIME')[1])
-		local window = tonumber(ARGV[1])
-		local member = ARGV[2]
-		redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now - window)
-		redis.call('ZREM', KEYS[1], member)
-		local remaining = redis.call('ZCARD', KEYS[1])
-		if remaining == 0 then
-			redis.call('DEL', KEYS[1])
-		else
-			redis.call('EXPIRE', KEYS[1], window * 2)
-		end
-		return remaining
 	`)
 
 	acquireLiveLeaseScript = redis.NewScript(`
@@ -684,19 +641,6 @@ func (c *concurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int
 	return result == 1, nil
 }
 
-func (c *concurrencyCache) AcquireAdaptiveAccountSlot(ctx context.Context, accountID int64, policy service.AccountSlotAdmission, requestID string) (bool, error) {
-	keys := []string{accountSlotKey(accountID), liveAccountSlotKey(accountID), codexAdaptivePressureKey(accountID, policy.PressureModel)}
-	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, keys,
-		policy.MaxConcurrency, c.slotTTLSeconds, requestID, codexAdaptiveWindowSeconds(policy.PressureWindow), policy.SoftLimitPercent)
-	if err != nil {
-		return false, err
-	}
-	if result == 1 {
-		c.touchActiveIndexAt(ctx, accountActiveIndexKey, accountID, now+int64(c.slotTTLSeconds))
-	}
-	return result == 1, nil
-}
-
 func (c *concurrencyCache) ReleaseAccountSlot(ctx context.Context, accountID int64, requestID string) error {
 	key := accountSlotKey(accountID)
 	if err := c.rdb.ZRem(ctx, key, requestID).Err(); err != nil {
@@ -754,61 +698,6 @@ func (c *concurrencyCache) GetAccountConcurrencyBatch(ctx context.Context, accou
 	result := make(map[int64]int, len(accountIDs))
 	for _, cmd := range cmds {
 		result[cmd.accountID] = int(cmd.zcardCmd.Val() + cmd.liveCmd.Val())
-	}
-	return result, nil
-}
-
-func codexAdaptivePressureKey(accountID int64, model string) string {
-	digest := sha256.Sum256([]byte(model))
-	return codexAdaptivePressureKeyPrefix + strconv.FormatInt(accountID, 10) + ":" + fmt.Sprintf("%x", digest[:12])
-}
-
-func codexAdaptiveWindowSeconds(window time.Duration) int64 {
-	seconds := int64(window / time.Second)
-	if seconds < 1 {
-		return 1
-	}
-	return seconds
-}
-
-func (c *concurrencyCache) ObserveCodexAdaptiveFailure(ctx context.Context, accountID int64, model, sessionMember string, window time.Duration) (int, error) {
-	count, err := codexAdaptiveFailureScript.Run(
-		ctx, c.rdb, []string{codexAdaptivePressureKey(accountID, model)},
-		codexAdaptiveWindowSeconds(window), sessionMember,
-	).Int()
-	return count, err
-}
-
-func (c *concurrencyCache) ObserveCodexAdaptiveSuccess(ctx context.Context, accountID int64, model, sessionMember string, window time.Duration) (int, error) {
-	count, err := codexAdaptiveSuccessScript.Run(
-		ctx, c.rdb, []string{codexAdaptivePressureKey(accountID, model)},
-		codexAdaptiveWindowSeconds(window), sessionMember,
-	).Int()
-	return count, err
-}
-
-func (c *concurrencyCache) GetCodexAdaptivePressureBatch(ctx context.Context, accountIDs []int64, model string, window time.Duration) (map[int64]int, error) {
-	result := make(map[int64]int, len(accountIDs))
-	if len(accountIDs) == 0 {
-		return result, nil
-	}
-	now, err := c.rdb.Time(ctx).Result()
-	if err != nil {
-		return nil, fmt.Errorf("redis TIME: %w", err)
-	}
-	cutoff := strconv.FormatInt(now.Unix()-codexAdaptiveWindowSeconds(window), 10)
-	pipe := c.rdb.Pipeline()
-	commands := make(map[int64]*redis.IntCmd, len(accountIDs))
-	for _, accountID := range accountIDs {
-		key := codexAdaptivePressureKey(accountID, model)
-		pipe.ZRemRangeByScore(ctx, key, "-inf", cutoff)
-		commands[accountID] = pipe.ZCard(ctx, key)
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("read codex adaptive pressure: %w", err)
-	}
-	for accountID, command := range commands {
-		result[accountID] = int(command.Val())
 	}
 	return result, nil
 }

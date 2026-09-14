@@ -300,6 +300,7 @@ func TestGetOpenAICodexClientVersionPriority(t *testing.T) {
 		name     string
 		override string
 		synced   string
+		autoSync string
 		want     string
 	}{
 		{name: "面板覆写优先", override: "0.150.0", synced: "0.146.0", want: "0.150.0"},
@@ -307,13 +308,16 @@ func TestGetOpenAICodexClientVersionPriority(t *testing.T) {
 		{name: "两者皆空时用内置常量", want: codexCLIVersion},
 		{name: "非法覆写回退同步值", override: "latest", synced: "0.146.0", want: "0.146.0"},
 		{name: "非法同步值回退内置常量", synced: "not-a-version", want: codexCLIVersion},
+		{name: "关闭同步不采用旧同步值", synced: "0.200.1", autoSync: "false", want: codexCLIVersion},
+		{name: "关闭同步仍使用手动版本", override: "0.150.0", synced: "0.200.1", autoSync: "false", want: "0.150.0"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
-				SettingKeyOpenAICodexClientVersion:       tt.override,
-				SettingKeyOpenAICodexClientVersionSynced: tt.synced,
+				SettingKeyOpenAICodexClientVersion:          tt.override,
+				SettingKeyOpenAICodexClientVersionSynced:    tt.synced,
+				SettingKeyOpenAICodexVersionAutoSyncEnabled: tt.autoSync,
 			}}, nil)
 
 			require.Equal(t, tt.want, svc.GetOpenAICodexClientVersion(context.Background()))
@@ -339,11 +343,9 @@ func TestGetOpenAICodexCanonicalUserAgentBuildsFromVersion(t *testing.T) {
 	)
 }
 
-// 回归：面板完整 UA 是唯一能改 OS / 架构 / 终端指纹的地方，必须保留；但它填写于某个
-// 历史版本，逐字沿用会绕过版本自动同步、把出站身份永久钉死在陈旧版本上——而陈旧身份
-// 正是上游优先降载的那一侧。因此只借它的指纹，版本段一律用生效版本重建。
-func TestGetOpenAICodexCanonicalUserAgentRebuildsPanelUAVersion(t *testing.T) {
-	t.Run("陈旧面板 UA 跟随生效版本", func(t *testing.T) {
+// 显式 UA 的两个版本都保留，仅留空时采用版本设置。
+func TestGetOpenAICodexCanonicalUserAgentPreservesPanelUA(t *testing.T) {
+	t.Run("显式 CLI UA 保留版本", func(t *testing.T) {
 		svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
 			// 历史面板 placeholder 的原文，照抄填写过的存量部署就是这个值。
 			SettingKeyOpenAICodexUserAgent:           "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color",
@@ -351,37 +353,48 @@ func TestGetOpenAICodexCanonicalUserAgentRebuildsPanelUAVersion(t *testing.T) {
 		}}, nil)
 
 		require.Equal(t,
-			"codex_cli_rs/0.200.1 (Ubuntu 22.4.0; x86_64) xterm-256color",
+			"codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color",
 			svc.GetOpenAICodexCanonicalUserAgent(context.Background()),
 		)
 	})
 
 	t.Run("自定义指纹原样保留", func(t *testing.T) {
 		svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
-			SettingKeyOpenAICodexUserAgent:           "codex_cli_rs/0.140.0 (Mac OS X 15.1.0; arm64) iTerm.app",
+			SettingKeyOpenAICodexUserAgent:           "codex_cli_rs/0.150.0 (Mac OS X 15.1.0; arm64) iTerm.app",
 			SettingKeyOpenAICodexClientVersionSynced: "0.200.1",
 		}}, nil)
 
 		require.Equal(t,
-			"codex_cli_rs/0.200.1 (Mac OS X 15.1.0; arm64) iTerm.app",
+			"codex_cli_rs/0.150.0 (Mac OS X 15.1.0; arm64) iTerm.app",
 			svc.GetOpenAICodexCanonicalUserAgent(context.Background()),
 		)
 	})
 
-	t.Run("TUI UA 的首尾两个版本号同时更新", func(t *testing.T) {
+	t.Run("Desktop 尾部 app build 保留", func(t *testing.T) {
+		svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
+			SettingKeyOpenAICodexUserAgent:           "Codex Desktop/0.153.4 (Mac OS 26.6.1; arm64) unknown (Codex Desktop; 26.903.61454)",
+			SettingKeyOpenAICodexClientVersionSynced: "0.200.1",
+		}}, nil)
+
+		require.Equal(t,
+			"Codex Desktop/0.153.4 (Mac OS 26.6.1; arm64) unknown (Codex Desktop; 26.903.61454)",
+			svc.GetOpenAICodexCanonicalUserAgent(context.Background()),
+		)
+	})
+
+	t.Run("TUI UA 的首尾两个版本号同时保留", func(t *testing.T) {
 		svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
 			SettingKeyOpenAICodexUserAgent:           "codex-tui/0.146.1 (Ubuntu 22.4.0; x86_64) WindowsTerminal (codex-tui; 0.146.1)",
 			SettingKeyOpenAICodexClientVersionSynced: "0.200.1",
 		}}, nil)
 
 		require.Equal(t,
-			"codex-tui/0.200.1 (Ubuntu 22.4.0; x86_64) WindowsTerminal (codex-tui; 0.200.1)",
+			"codex-tui/0.146.1 (Ubuntu 22.4.0; x86_64) WindowsTerminal (codex-tui; 0.146.1)",
 			svc.GetOpenAICodexCanonicalUserAgent(context.Background()),
 		)
 	})
 
-	// 面板版本号覆写优先级仍然高于同步值：管理员固定版本的诉求不被重建绕开。
-	t.Run("面板版本号覆写优先", func(t *testing.T) {
+	t.Run("完整 UA 优先于手动版本和同步版本", func(t *testing.T) {
 		svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
 			SettingKeyOpenAICodexUserAgent:           "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color",
 			SettingKeyOpenAICodexClientVersion:       "0.150.0",
@@ -389,18 +402,17 @@ func TestGetOpenAICodexCanonicalUserAgentRebuildsPanelUAVersion(t *testing.T) {
 		}}, nil)
 
 		require.Equal(t,
-			"codex_cli_rs/0.150.0 (Ubuntu 22.4.0; x86_64) xterm-256color",
+			"codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color",
 			svc.GetOpenAICodexCanonicalUserAgent(context.Background()),
 		)
 	})
 
-	// 非 `{client}/{version}` 形态无法重建，原样返回，由收口整体回退规范身份。
-	t.Run("非 Codex 形态原样返回", func(t *testing.T) {
+	t.Run("非法存量配置整体回退", func(t *testing.T) {
 		svc := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
 			SettingKeyOpenAICodexUserAgent: "not-a-codex-client",
 		}}, nil)
 
-		require.Equal(t, "not-a-codex-client", svc.GetOpenAICodexCanonicalUserAgent(context.Background()))
+		require.Equal(t, codexCLIUserAgent, svc.GetOpenAICodexCanonicalUserAgent(context.Background()))
 	})
 }
 

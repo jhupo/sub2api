@@ -93,30 +93,6 @@ still lose unpersisted usage and platform revenue. Recovery favors not charging
 an unproven estimate. Once actual settlement is persisted, existing recovery
 continues it. Database schema, prices and subscription reset windows are unchanged.
 
-## Scheduling Simulation
-
-`TestOpenAISchedulerSimulation40Users6Accounts5Slots` exercises production
-selection, admission, bounded pool waiting and sticky migration using synchronized
-in-memory repository/cache doubles, with both scheduler modes enabled/disabled.
-
-- Forty users contend for six OAuth accounts with a hard limit of five each.
-- A saturated phase must reach 30 occupied slots and at least 10 queued requests.
-- Seeded faults disable two accounts, rate-limit two accounts and inject
-  request-scoped overloaded failures. Independent session pressure changes
-  subsequent atomic admission limits; it never raises the configured ceiling.
-- All-account unavailability rejects requests. Restored accounts accept requests.
-- Successful migration publishes the next sticky account; sequential follow-ups
-  remain there with spare capacity.
-- A migration's post-selection queue remains on its claimed target, as in the
-  real handler. The simulation must not reenter pool spillover after selection
-  has already coordinated that target; target ownership is asserted before work.
-- Forty blocked requests are canceled together; all wait entries and acquired
-  slots must be released, including duplicate cleanup calls.
-
-This is not live OpenAI traffic, a throughput benchmark, or a full HTTP/Redis/
-PostgreSQL production load test. Separate repository tests exercise real admission
-Lua scripts against local miniredis, and handler/relay tests use local WebSockets.
-
 ## Validation — 2026-09-11
 
 - Affected-chain regression: 867 top-level tests passed across handler (120),

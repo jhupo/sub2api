@@ -261,9 +261,9 @@ func (s *SettingService) GetAntigravityUserAgentVersion(ctx context.Context) str
 }
 
 // GetOpenAICodexUserAgent 返回 OpenAI Codex 上游请求使用的 User-Agent。
-// 后台设置优先；为空时回退到内置默认值。
+// 保留空值，以区分自动生成的 UA 和管理员显式配置的完整 UA。
 func (s *SettingService) GetOpenAICodexUserAgent(ctx context.Context) string {
-	fallback := DefaultOpenAICodexUserAgent
+	fallback := ""
 	if s == nil || s.settingRepo == nil {
 		return fallback
 	}
@@ -293,26 +293,20 @@ func (s *SettingService) GetOpenAICodexUserAgent(ctx context.Context) string {
 			})
 			return fallback, nil
 		}
-		ua := strings.TrimSpace(value)
-		if ua == "" {
-			ua = fallback
-		}
 		s.openAICodexUACache.Store(&cachedOpenAICodexUserAgent{
-			value:     ua,
+			value:     value,
 			expiresAt: time.Now().Add(openAICodexUserAgentCacheTTL).UnixNano(),
 		})
-		return ua, nil
+		return value, nil
 	})
-	if ua, ok := result.(string); ok && ua != "" {
+	if ua, ok := result.(string); ok {
 		return ua
 	}
 	return fallback
 }
 
-// GetOpenAICodexClientVersion 返回出站声明的 Codex 客户端版本号。
-// 优先级：管理员在面板覆写的版本 → 自动同步到的官方最新稳定版 → 内置常量。
-// 上游在容量紧张时按客户端身份分优先级降载，陈旧版本会被优先丢弃，故该值需保持跟随官方发布；
-// 自动同步让运维不必为了跟版本而发新版本。
+// GetOpenAICodexClientVersion 返回默认 CLI UA 使用的版本号。
+// 优先级：手动版本 → 启用同步时的最新稳定版 → 内置常量。
 func (s *SettingService) GetOpenAICodexClientVersion(ctx context.Context) string {
 	fallback := codexCLIVersion
 	if s == nil || s.settingRepo == nil {
@@ -338,6 +332,7 @@ func (s *SettingService) GetOpenAICodexClientVersion(ctx context.Context) string
 		values, err := s.settingRepo.GetMultiple(dbCtx, []string{
 			SettingKeyOpenAICodexClientVersion,
 			SettingKeyOpenAICodexClientVersionSynced,
+			SettingKeyOpenAICodexVersionAutoSyncEnabled,
 		})
 		if err != nil {
 			slog.Warn("failed to get openai codex client version setting", "error", err)
@@ -348,7 +343,8 @@ func (s *SettingService) GetOpenAICodexClientVersion(ctx context.Context) string
 			return fallback, nil
 		}
 		version := NormalizeCodexClientVersion(values[SettingKeyOpenAICodexClientVersion])
-		if version == "" {
+		autoSync := strings.TrimSpace(values[SettingKeyOpenAICodexVersionAutoSyncEnabled])
+		if version == "" && (autoSync == "" || autoSync == "true") {
 			version = NormalizeCodexClientVersion(values[SettingKeyOpenAICodexClientVersionSynced])
 		}
 		if version == "" {
@@ -377,27 +373,17 @@ func (s *SettingService) InvalidateOpenAICodexClientVersionCache() {
 }
 
 // GetOpenAICodexCanonicalUserAgent 返回出站规范 Codex User-Agent。
-// 未填面板 UA 时按当前生效的客户端版本号拼出标准 Codex TUI UA。
+// 未填面板 UA 时按当前生效的客户端版本号拼出标准 TUI UA。
 //
-// 面板 UA 只贡献客户端名与 OS / 架构 / 终端指纹，版本段一律用生效版本重建：该输入框是
-// 唯一能改 UA 后缀的地方，但它填写于某个历史版本，逐字沿用会把出站身份永久钉死在陈旧
-// 版本上并绕过自动同步——而陈旧身份正是上游优先降载的那一侧。
-// 需要固定版本请填「Codex 客户端版本号」并关闭自动同步。
+// 自定义 UA 的 Core 和 clientInfo 版本完整保留，不受手动版本或自动同步影响。
 func (s *SettingService) GetOpenAICodexCanonicalUserAgent(ctx context.Context) string {
 	if s == nil {
 		return codexCLIUserAgent
 	}
-	version := s.GetOpenAICodexClientVersion(ctx)
-	ua := strings.TrimSpace(s.GetOpenAICodexUserAgent(ctx))
-	if ua == "" {
-		return buildCodexCLIUserAgent(version)
+	if identity, ok := codexOutboundIdentityFromUA(s.GetOpenAICodexUserAgent(ctx)); ok {
+		return identity.userAgent
 	}
-	if rebuilt := openai.SetCodexUserAgentVersion(ua, version); rebuilt != "" {
-		return rebuilt
-	}
-	// 非 `{client}/{version}` 形态：交给 PairCodexClientIdentity 判定，
-	// 推导不出官方身份时由收口整体回退规范身份。
-	return ua
+	return buildCodexCLIUserAgent(s.GetOpenAICodexClientVersion(ctx))
 }
 
 var legacyClaudeCodeCodexWhitelistEntry = openai.AllowedClientEntry{

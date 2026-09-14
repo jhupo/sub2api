@@ -22,8 +22,6 @@ const {
   getAccessBlockSettings,
   updateAccessBlockSettings,
   getStreamTimeoutSettings,
-  getCodexAdaptiveSchedulingSettings,
-  updateCodexAdaptiveSchedulingSettings,
   getRectifierSettings,
   getBetaPolicySettings,
   getUpstreamBillingProbeSettings,
@@ -81,8 +79,6 @@ const {
     panel_blacklist_window_seconds: 600,
   })),
   getStreamTimeoutSettings: vi.fn(),
-  getCodexAdaptiveSchedulingSettings: vi.fn(),
-  updateCodexAdaptiveSchedulingSettings: vi.fn(),
   getRectifierSettings: vi.fn(),
   getBetaPolicySettings: vi.fn(),
   getUpstreamBillingProbeSettings: vi.fn().mockResolvedValue({
@@ -125,8 +121,6 @@ vi.mock("@/api", () => ({
       getPanelRateLimitSettings,
       updatePanelRateLimitSettings,
       getStreamTimeoutSettings,
-      getCodexAdaptiveSchedulingSettings,
-      updateCodexAdaptiveSchedulingSettings,
       getRectifierSettings,
       getBetaPolicySettings,
     },
@@ -513,6 +507,9 @@ const baseSettingsResponse = {
   enable_client_dateline_normalization: true,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
+  openai_codex_client_version: "",
+  openai_codex_client_version_synced: "0.200.1",
+  openai_codex_version_auto_sync_enabled: true,
   payment_enabled: true,
   payment_min_amount: 1,
   payment_max_amount: 10000,
@@ -698,8 +695,6 @@ describe("admin SettingsView payment visible method controls", () => {
       panel_blacklist_window_seconds: 600,
     }));
     getStreamTimeoutSettings.mockReset();
-    getCodexAdaptiveSchedulingSettings.mockReset();
-    updateCodexAdaptiveSchedulingSettings.mockReset();
     getRectifierSettings.mockReset();
     getBetaPolicySettings.mockReset();
     getUpstreamBillingProbeSettings.mockReset();
@@ -751,10 +746,6 @@ describe("admin SettingsView payment visible method controls", () => {
       threshold_count: 3,
       threshold_window_minutes: 10,
     });
-    getCodexAdaptiveSchedulingSettings.mockResolvedValue({
-      enabled: false,
-    });
-    updateCodexAdaptiveSchedulingSettings.mockImplementation(async (payload) => payload);
     getRectifierSettings.mockResolvedValue({
       enabled: true,
       thinking_signature_enabled: true,
@@ -1463,26 +1454,43 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(summary.text()).not.toContain("透传");
   });
 
-  it("loads and saves Codex adaptive scheduling settings", async () => {
-    getCodexAdaptiveSchedulingSettings.mockResolvedValueOnce({
-      enabled: true,
-    });
+  it.each([
+    "codex-tui/0.153.4 (Linux; x86_64) xterm (codex-tui; 0.149.0)",
+    "Codex Desktop/0.153.4 (Mac OS 26.6.1; arm64) unknown (Codex Desktop; 26.903.61454)",
+  ])("preserves custom UA %s and restores version preferences when cleared", async (customUA) => {
     const wrapper = mountView();
-
     await flushPromises();
     await openGatewayTab(wrapper);
 
-    const card = wrapper.get('[data-testid="codex-adaptive-scheduling-settings"]');
-    expect(
-      (card.get('[data-testid="codex-adaptive-scheduling-toggle"]').element as HTMLInputElement)
-        .checked,
-    ).toBe(true);
-    await card.get('[data-testid="codex-adaptive-scheduling-save"]').trigger("click");
+    const ua = wrapper.get('[data-testid="codex-user-agent"]');
+    const version = wrapper.get('[data-testid="codex-client-version"]');
+    const sync = wrapper.get('[data-testid="codex-version-auto-sync"]');
+    expect((version.element as HTMLInputElement).disabled).toBe(false);
+    expect((sync.element as HTMLInputElement).disabled).toBe(false);
+    await version.setValue("0.200.1");
+    await ua.setValue(customUA);
+    expect((version.element as HTMLInputElement).disabled).toBe(true);
+    expect((sync.element as HTMLInputElement).disabled).toBe(true);
+    await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
+    expect(updateSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      openai_codex_user_agent: customUA,
+      openai_codex_client_version: "0.200.1",
+      openai_codex_version_auto_sync_enabled: true,
+    }));
 
-    expect(updateCodexAdaptiveSchedulingSettings).toHaveBeenCalledWith({
-      enabled: true,
-    });
+    await ua.setValue("");
+    expect((version.element as HTMLInputElement).disabled).toBe(false);
+    expect((version.element as HTMLInputElement).value).toBe("0.200.1");
+    expect((sync.element as HTMLInputElement).disabled).toBe(false);
+    expect((sync.element as HTMLInputElement).checked).toBe(true);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      openai_codex_user_agent: "",
+      openai_codex_client_version: "0.200.1",
+      openai_codex_version_auto_sync_enabled: true,
+    }));
   });
 
   it("loads and saves upstream billing probe settings from the gateway tab", async () => {
@@ -1727,8 +1735,6 @@ describe("admin SettingsView wechat connect controls", () => {
     getRateLimit429CooldownSettings.mockReset();
     updateRateLimit429CooldownSettings.mockReset();
     getStreamTimeoutSettings.mockReset();
-    getCodexAdaptiveSchedulingSettings.mockReset();
-    updateCodexAdaptiveSchedulingSettings.mockReset();
     getRectifierSettings.mockReset();
     getBetaPolicySettings.mockReset();
     getGroups.mockReset();
@@ -1779,10 +1785,6 @@ describe("admin SettingsView wechat connect controls", () => {
       threshold_count: 3,
       threshold_window_minutes: 10,
     });
-    getCodexAdaptiveSchedulingSettings.mockResolvedValue({
-      enabled: false,
-    });
-    updateCodexAdaptiveSchedulingSettings.mockImplementation(async (payload) => payload);
     getRectifierSettings.mockResolvedValue({
       enabled: true,
       thinking_signature_enabled: true,
@@ -1979,8 +1981,6 @@ describe("admin SettingsView platform quota matrix", () => {
     getRateLimit429CooldownSettings.mockReset();
     updateRateLimit429CooldownSettings.mockReset();
     getStreamTimeoutSettings.mockReset();
-    getCodexAdaptiveSchedulingSettings.mockReset();
-    updateCodexAdaptiveSchedulingSettings.mockReset();
     getRectifierSettings.mockReset();
     getBetaPolicySettings.mockReset();
     getGroups.mockReset();
@@ -2007,10 +2007,6 @@ describe("admin SettingsView platform quota matrix", () => {
     getRateLimit429CooldownSettings.mockResolvedValue({});
     updateRateLimit429CooldownSettings.mockResolvedValue({});
     getStreamTimeoutSettings.mockResolvedValue({});
-    getCodexAdaptiveSchedulingSettings.mockResolvedValue({
-      enabled: false,
-    });
-    updateCodexAdaptiveSchedulingSettings.mockImplementation(async (payload) => payload);
     getRectifierSettings.mockResolvedValue({});
     getBetaPolicySettings.mockResolvedValue({});
     getGroups.mockResolvedValue([]);

@@ -473,6 +473,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyRewriteMessageCacheControl] = strconv.FormatBool(settings.RewriteMessageCacheControl)
 	updates[SettingKeyEnableClientDatelineNormalization] = strconv.FormatBool(settings.EnableClientDatelineNormalization)
 	updates[SettingKeyAntigravityUserAgentVersion] = antigravity.NormalizeUserAgentVersion(settings.AntigravityUserAgentVersion)
+	if err := ValidateOpenAICodexUserAgent(settings.OpenAICodexUserAgent); err != nil {
+		return nil, infraerrors.BadRequest("INVALID_OPENAI_CODEX_USER_AGENT", err.Error())
+	}
 	updates[SettingKeyOpenAICodexUserAgent] = strings.TrimSpace(settings.OpenAICodexUserAgent)
 	updates[SettingKeyOpenAICodexClientVersion] = NormalizeCodexClientVersion(settings.OpenAICodexClientVersion)
 	updates[SettingKeyOpenAICodexVersionAutoSyncEnabled] = strconv.FormatBool(settings.OpenAICodexVersionAutoSyncEnabled)
@@ -491,8 +494,6 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingPaymentVisibleMethodWxpayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodWxpayEnabled)
 	updates[SettingKeyOpenAILowUpstreamRatePriorityEnabled] = strconv.FormatBool(settings.OpenAILowUpstreamRatePriorityEnabled)
 	updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = strconv.FormatFloat(settings.OpenAIOAuthSchedulingRateMultiplier, 'f', -1, 64)
-	updates[SettingKeyCodexQuotaOverdraftEnabled] = strconv.FormatBool(settings.CodexQuotaOverdraftEnabled)
-	updates[SettingKeyCodexQuotaOverdraftBusinessInjectionEnabled] = strconv.FormatBool(settings.CodexQuotaOverdraftBusinessInjectionEnabled)
 	updates[openAIAdvancedSchedulerSettingKey] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerEnabled)
 	updates[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerStickyWeightedEnabled)
 	updates[SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerSubscriptionPriorityEnabled)
@@ -685,12 +686,6 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		return
 	}
 	s.publishBalancePreauthorizationRuntime(settings.BalancePreauthorizationEnabled)
-	// Publish the Codex gates together with the other in-process setting caches;
-	// this makes a panel change take effect immediately on the writer replica.
-	s.publishCodexQuotaOverdraftRuntime(CodexQuotaOverdraftRuntimeSettings{
-		Enabled:                  settings.CodexQuotaOverdraftEnabled,
-		BusinessInjectionEnabled: settings.CodexQuotaOverdraftBusinessInjectionEnabled,
-	})
 	// 先使 inflight singleflight 失效，再刷新缓存，缩小旧值覆盖新值的竞态窗口
 	versionBoundsSF.Forget("version_bounds")
 	versionBoundsCache.Store(&cachedVersionBounds{
@@ -726,12 +721,8 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		expiresAt: time.Now().Add(antigravityUserAgentVersionCacheTTL).UnixNano(),
 	})
 	s.openAICodexUASF.Forget("openai_codex_user_agent")
-	codexUA := strings.TrimSpace(settings.OpenAICodexUserAgent)
-	if codexUA == "" {
-		codexUA = DefaultOpenAICodexUserAgent
-	}
 	s.openAICodexUACache.Store(&cachedOpenAICodexUserAgent{
-		value:     codexUA,
+		value:     settings.OpenAICodexUserAgent,
 		expiresAt: time.Now().Add(openAICodexUserAgentCacheTTL).UnixNano(),
 	})
 	// 版本号缓存只做失效，不在此重算：生效值还取决于自动同步写入的 synced 键，

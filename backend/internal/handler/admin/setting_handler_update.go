@@ -274,8 +274,6 @@ type UpdateSettingsRequest struct {
 	// OpenAI account scheduling
 	OpenAILowUpstreamRatePriorityEnabled               *bool    `json:"openai_low_upstream_rate_priority_enabled"`
 	OpenAIOAuthSchedulingRateMultiplier                *float64 `json:"openai_oauth_scheduling_rate_multiplier"`
-	CodexQuotaOverdraftEnabled                         *bool    `json:"codex_quota_overdraft_enabled"`
-	CodexQuotaOverdraftBusinessInjectionEnabled        *bool    `json:"codex_quota_overdraft_business_injection_enabled"`
 	OpenAIAdvancedSchedulerEnabled                     *bool    `json:"openai_advanced_scheduler_enabled"`
 	OpenAIAdvancedSchedulerStickyWeightedEnabled       *bool    `json:"openai_advanced_scheduler_sticky_weighted_enabled"`
 	OpenAIAdvancedSchedulerSubscriptionPriorityEnabled *bool    `json:"openai_advanced_scheduler_subscription_priority_enabled"`
@@ -1436,13 +1434,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		}
 	}
 	if req.OpenAICodexUserAgent != nil {
-		normalized := strings.TrimSpace(*req.OpenAICodexUserAgent)
-		req.OpenAICodexUserAgent = &normalized
-		// 仅做长度上限保护，不限制具体格式（运维需要可自由调整 codex 版本号）
-		if len(normalized) > 512 {
-			response.Error(c, http.StatusBadRequest, "openai_codex_user_agent must be at most 512 characters")
+		if err := service.ValidateOpenAICodexUserAgent(*req.OpenAICodexUserAgent); err != nil {
+			response.Error(c, http.StatusBadRequest, err.Error())
 			return
 		}
+		normalized := strings.TrimSpace(*req.OpenAICodexUserAgent)
+		req.OpenAICodexUserAgent = &normalized
 	}
 	if req.OpenAICodexClientVersion != nil {
 		// 该值会被拼进出站 User-Agent 与 version 头，必须是合法版本号；空串表示跟随自动同步。
@@ -1806,18 +1803,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.OpenAIOAuthSchedulingRateMultiplier
 			}
 			return previousSettings.OpenAIOAuthSchedulingRateMultiplier
-		}(),
-		CodexQuotaOverdraftEnabled: func() bool {
-			if req.CodexQuotaOverdraftEnabled != nil {
-				return *req.CodexQuotaOverdraftEnabled
-			}
-			return previousSettings.CodexQuotaOverdraftEnabled
-		}(),
-		CodexQuotaOverdraftBusinessInjectionEnabled: func() bool {
-			if req.CodexQuotaOverdraftBusinessInjectionEnabled != nil {
-				return *req.CodexQuotaOverdraftBusinessInjectionEnabled
-			}
-			return previousSettings.CodexQuotaOverdraftBusinessInjectionEnabled
 		}(),
 		OpenAIAdvancedSchedulerEnabled: func() bool {
 			if req.OpenAIAdvancedSchedulerEnabled != nil {
@@ -2319,8 +2304,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentVisibleMethodWxpayEnabled:                       updatedSettings.PaymentVisibleMethodWxpayEnabled,
 		OpenAILowUpstreamRatePriorityEnabled:                   updatedSettings.OpenAILowUpstreamRatePriorityEnabled,
 		OpenAIOAuthSchedulingRateMultiplier:                    updatedSettings.OpenAIOAuthSchedulingRateMultiplier,
-		CodexQuotaOverdraftEnabled:                             updatedSettings.CodexQuotaOverdraftEnabled,
-		CodexQuotaOverdraftBusinessInjectionEnabled:            updatedSettings.CodexQuotaOverdraftBusinessInjectionEnabled,
 		OpenAIAdvancedSchedulerEnabled:                         updatedSettings.OpenAIAdvancedSchedulerEnabled,
 		OpenAIAdvancedSchedulerStickyWeightedEnabled:           updatedSettings.OpenAIAdvancedSchedulerStickyWeightedEnabled,
 		OpenAIAdvancedSchedulerSubscriptionPriorityEnabled:     updatedSettings.OpenAIAdvancedSchedulerSubscriptionPriorityEnabled,

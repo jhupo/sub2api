@@ -538,6 +538,9 @@ const (
 
 	// SettingKeyRateLimit429CooldownSettings stores JSON config for 429 fallback cooldown handling.
 	SettingKeyRateLimit429CooldownSettings = "rate_limit_429_cooldown_settings"
+	// SettingKeyOpenAI503RetrySettings stores account-local retries for explicit
+	// OpenAI capacity-shed responses.
+	SettingKeyOpenAI503RetrySettings = "openai_503_retry_settings"
 	// SettingKeyOpenAIAPIKeyHealthBreakerSettings stores the opt-in OpenAI pool API-key breaker config.
 	SettingKeyOpenAIAPIKeyHealthBreakerSettings = "openai_apikey_health_breaker_settings"
 
@@ -548,9 +551,6 @@ const (
 	// SettingKeyStreamTimeoutSettings stores JSON config for stream timeout handling.
 	SettingKeyStreamTimeoutSettings = "stream_timeout_settings"
 
-	// SettingKeyCodexAdaptiveSchedulingSettings stores the runtime policy for
-	// Codex first-output protection and adaptive overload scheduling.
-	SettingKeyCodexAdaptiveSchedulingSettings = "codex_adaptive_scheduling_settings"
 
 	// =========================
 	// Request Rectifier (请求整流器)
@@ -603,13 +603,6 @@ const (
 	SettingKeyOpenAILowUpstreamRatePriorityEnabled = "openai_low_upstream_rate_priority_enabled"
 	// SettingKeyOpenAIOAuthSchedulingRateMultiplier OAuth 账号参与成本调度时使用的参考倍率。
 	SettingKeyOpenAIOAuthSchedulingRateMultiplier = "openai_oauth_scheduling_rate_multiplier"
-	// SettingKeyCodexQuotaOverdraftEnabled controls the guarded Codex quota
-	// overdraft detector at the admin-settings layer. The deployment config
-	// remains the master switch for enabling the feature at process startup.
-	SettingKeyCodexQuotaOverdraftEnabled = "codex_quota_overdraft_enabled"
-	// SettingKeyCodexQuotaOverdraftBusinessInjectionEnabled controls the
-	// optional synthetic business-request evidence path. It defaults false.
-	SettingKeyCodexQuotaOverdraftBusinessInjectionEnabled = "codex_quota_overdraft_business_injection_enabled"
 	// SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled OpenAI 高级调度下是否启用粘性加权。
 	SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled = "openai_advanced_scheduler_sticky_weighted_enabled"
 	// SettingKeyOpenAIAdvancedSchedulerSubscriptionPriorityEnabled OpenAI 高级调度下是否优先使用订阅账号池。
@@ -657,13 +650,11 @@ const (
 	SettingKeyRewriteMessageCacheControl = "rewrite_message_cache_control"
 	// SettingKeyAntigravityUserAgentVersion Antigravity 上游 User-Agent 版本号（空值使用环境变量/默认值）
 	SettingKeyAntigravityUserAgentVersion = "antigravity_user_agent_version"
-	// SettingKeyOpenAICodexUserAgent OpenAI Codex 完整 User-Agent（空值使用内置默认）
-	// 当客户端 UA 被识别为浏览器（Chrome/Firefox/Safari/Edge 等）时，转发给 OpenAI 上游前会替换为此值，
-	// 用于避免 Cloudflare 对浏览器型 UA 的质询拦截。
+	// SettingKeyOpenAICodexUserAgent 完整 Codex UA，保留 Core 和 clientInfo 版本。
+	// 空值按版本设置生成默认 CLI UA。
 	SettingKeyOpenAICodexUserAgent = "openai_codex_user_agent"
-	// SettingKeyOpenAICodexClientVersion 网关对 ChatGPT 上游声明的 Codex 客户端版本号（管理员覆写）。
-	// 空值表示跟随自动同步值；自动同步也没有结果时回退到内置常量。
-	// 上游在容量紧张时按客户端身份分优先级降载，陈旧版本会被优先丢弃，故该值需保持跟随官方发布。
+	// SettingKeyOpenAICodexClientVersion 默认 CLI 的 Core 版本；自定义 UA 时不生效。
+	// 空值且启用同步时使用同步值，否则回退到内置常量。
 	SettingKeyOpenAICodexClientVersion = "openai_codex_client_version"
 	// SettingKeyOpenAICodexClientVersionSynced 自动同步任务写入的官方 Codex 最新稳定版版本号。
 	// 由 OpenAICodexVersionSyncService 独占写入，面板只读展示；管理员覆写请用

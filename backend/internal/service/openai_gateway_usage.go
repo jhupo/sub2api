@@ -1214,11 +1214,6 @@ func (s *OpenAIGatewayService) publishCodexUsageSnapshots(accountID int64) {
 		} else {
 			failures = 0
 			notifyOpenAIAutoReset(accountID)
-			if s.codexQuotaOverdraft != nil && codexQuotaOverdraftSnapshotPrearmReached(updates) {
-				if account, err := s.accountRepo.GetByID(updateCtx, accountID); err == nil && account != nil && !account.IsShadow() {
-					s.codexQuotaOverdraft.ObserveAccount(account, "")
-				}
-			}
 		}
 		cancel()
 		time.Sleep(time.Second)

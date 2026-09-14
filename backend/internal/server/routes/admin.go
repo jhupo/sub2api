@@ -575,14 +575,14 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// 429默认回避配置
 		adminSettings.GET("/rate-limit-429-cooldown", h.Admin.Setting.GetRateLimit429CooldownSettings)
 		adminSettings.PUT("/rate-limit-429-cooldown", h.Admin.Setting.UpdateRateLimit429CooldownSettings)
+		adminSettings.GET("/openai-503-retry", h.Admin.Setting.GetOpenAI503RetrySettings)
+		adminSettings.PUT("/openai-503-retry", h.Admin.Setting.UpdateOpenAI503RetrySettings)
 		// 面板 API 限流配置
 		adminSettings.GET("/panel-rate-limit", h.Admin.Setting.GetPanelRateLimitSettings)
 		adminSettings.PUT("/panel-rate-limit", h.Admin.Setting.UpdatePanelRateLimitSettings)
 		// 流超时处理配置
 		adminSettings.GET("/stream-timeout", h.Admin.Setting.GetStreamTimeoutSettings)
 		adminSettings.PUT("/stream-timeout", h.Admin.Setting.UpdateStreamTimeoutSettings)
-		adminSettings.GET("/codex-adaptive-scheduling", h.Admin.Setting.GetCodexAdaptiveSchedulingSettings)
-		adminSettings.PUT("/codex-adaptive-scheduling", h.Admin.Setting.UpdateCodexAdaptiveSchedulingSettings)
 		// 请求整流器配置
 		adminSettings.GET("/rectifier", h.Admin.Setting.GetRectifierSettings)
 		adminSettings.PUT("/rectifier", h.Admin.Setting.UpdateRectifierSettings)

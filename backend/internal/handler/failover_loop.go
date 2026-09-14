@@ -122,7 +122,7 @@ func sameAccountRetryDelayFor(failoverErr *service.UpstreamFailoverError, retryC
 }
 
 func sameAccountRetryAllowed(failoverErr *service.UpstreamFailoverError, retryCount, retryLimit int) bool {
-	if failoverErr == nil || !failoverErr.RetryableOnSameAccount {
+	if failoverErr == nil || failoverErr.OpenAI503QueueHandled || !failoverErr.RetryableOnSameAccount {
 		return false
 	}
 	// The account setting is the attempt budget. A deadline only shortens the

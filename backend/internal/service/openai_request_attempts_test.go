@@ -24,7 +24,7 @@ func TestOpenAIRequestAttemptBudgetSharedAcrossTransportsAndAccounts(t *testing.
 	}
 	wg.Wait()
 	require.Equal(t, int64(3), admitted.Load())
-	failure := codexAdaptiveCapacityShedError()
+	failure := &UpstreamFailoverError{StatusCode: 503, ResponseBody: []byte(`{"error":{"code":"server_is_overloaded"}}`), RetryableOnSameAccount: true, RequestScopedTransient: true}
 	recordOpenAIRequestFailure(ctx, failure)
 	err := consumeOpenAIRequestAttempt(ctx)
 	var exhausted *UpstreamFailoverError

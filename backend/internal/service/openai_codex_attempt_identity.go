@@ -57,12 +57,7 @@ func (s *OpenAIGatewayService) resolveCodexAttemptIdentity(account, source *Acco
 	if account == nil || !account.IsOpenAI() || !account.UsesOpenAICodexProtocol() {
 		return nil
 	}
-	forceCLI := s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI
-	override := source.GetOpenAIUserAgent()
-	if source != account && account.GetOpenAIUserAgent() != "" {
-		override = account.GetOpenAIUserAgent()
-	}
-	client := resolveCodexRequestClientIdentity(input.userAgent, override, forceCLI)
+	client := s.resolveCodexAccountClientIdentity(account, source, input.userAgent)
 	identity := &codexAttemptIdentity{accountID: account.ID, deviceID: source.GetOpenAIDeviceID(), promptCacheKey: input.promptCacheKey, client: client, scope: newCodexAccountIdentityScope(source, apiKeyID), turn: 1}
 	if !compact {
 		// The selected row owns policy; the actual credential owns its device seed.

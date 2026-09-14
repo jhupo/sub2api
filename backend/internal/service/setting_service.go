@@ -154,19 +154,9 @@ type SettingService struct {
 	openAIQuotaAutoPauseSettingsCache atomic.Value // *cachedOpenAIQuotaAutoPauseSettings
 	openAIQuotaAutoPauseSettingsSF    singleflight.Group
 	openAIAPIKeyHealthBreakerCache    atomic.Value // *cachedOpenAIAPIKeyHealthBreakerSettings
-	codexAdaptiveSchedulingCache      atomic.Value // *cachedCodexAdaptiveSchedulingSettings
-	codexAdaptiveSchedulingSF         singleflight.Group
-	codexAdaptiveSchedulingRevision   atomic.Uint64
 
-	// codexQuotaOverdraftRuntimeCache is a short stale-while-revalidate cache
-	// for the two admin-controlled Codex overdraft gates.  It avoids a database
-	// round trip on every high-volume gateway request while allowing each API
-	// replica to observe a panel change within a few seconds.
-	codexQuotaOverdraftRuntimeCache      atomic.Value // *cachedCodexQuotaOverdraftRuntime
-	codexQuotaOverdraftRuntimeSF         singleflight.Group
-	codexQuotaOverdraftRuntimeRefreshing atomic.Bool
-	balancePreauthorizationRuntimeCache  atomic.Value // *cachedBalancePreauthorizationRuntime
-	balancePreauthorizationRuntimeSF     singleflight.Group
+	balancePreauthorizationRuntimeCache atomic.Value // *cachedBalancePreauthorizationRuntime
+	balancePreauthorizationRuntimeSF    singleflight.Group
 
 	channelMonitorRuntimeListenersMu sync.Mutex
 	channelMonitorRuntimeListeners   []func()

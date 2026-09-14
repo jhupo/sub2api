@@ -249,16 +249,6 @@ gateway:
   #
   # 注意：开启后会影响所有客户端的行为（不仅限于 VS Code / Codex CLI），请谨慎开启。
   force_codex_cli: false
-  # Experimental Codex 5h/7d quota-overdraft detector (probe/state/recovery).
-  # 实验性 Codex 5h/7d 额度透支探测、状态与恢复；兼容现网默认开启。
-  # 可通过管理员系统设置或此部署级 master 开关关闭。
-  codex_quota_overdraft_enabled: true
-  # Injects a no-op tool pair into real business requests. Keep false unless
-  # you have accepted that upstream token accounting may include the pair.
-  # 真实业务请求注入无操作工具对；可能计入上游 token，默认关闭。
-  # Legacy bootstrap value used only when the DB-backed admin key does not yet
-  # exist. Fresh installations persist the safe false preference explicitly.
-  codex_quota_overdraft_business_injection_enabled: false
   # Stop rewriting load-shed Codex originators to the official CLI identity.
   # 关闭「把落在上游降载桶的 Codex originator 改写为官方 CLI 身份（codex_cli_rs）」。
   #
@@ -306,11 +296,11 @@ gateway:
   # OpenAI 透传模式是否放行客户端超时头（如 x-stainless-timeout）
   # 默认 false：过滤超时头，降低上游提前断流风险。
   openai_passthrough_allow_timeout_headers: false
-  # Model used for OpenAI /responses/compact upstream requests (default: gpt-5.4).
-  # OpenAI /responses/compact 上游模型（默认 gpt-5.4）。
+  # Model used for OpenAI /responses/compact upstream requests (default: gpt-5.5).
+  # OpenAI /responses/compact 上游模型（默认 gpt-5.5）。
   # Use this to avoid compact failures when newer models are not yet supported by the compact endpoint.
   # 当 compact 端点暂未支持更新模型时，可通过这里降级规避失败。
-  openai_compact_model: "gpt-5.4"
+  openai_compact_model: "gpt-5.5"
   # ChatGPT Frameless Live 单会话硬上限（秒）。
   live:
     max_session_duration_seconds: 3600
@@ -357,6 +347,8 @@ gateway:
     max_idle_per_account: 12
     # 是否按账号并发动态计算连接池上限：
     # effective_max_conns = min(max_conns_per_account, ceil(account.concurrency * factor))
+    # 旧版及 mode_router_v2 的 ctx_pool 共用此开关和下方类型系数；关闭后使用 max_conns_per_account。
+    # mode_router_v2 下并发数 <= 0 的账号仍不可调度。
     dynamic_max_conns_by_account_concurrency_enabled: true
     # 按账号类型分别设置系数（OAuth / API Key）
     oauth_max_conns_factor: 1.0

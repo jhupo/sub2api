@@ -340,10 +340,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		c.Header("X-Request-Id", lease.HandshakeHeader("X-Request-Id"))
 	}
 
-	if codexAdaptiveAccountEligible(account) {
-		if err := consumeOpenAIRequestAttempt(ctx); err != nil {
-			return nil, err
-		}
+	if err := consumeOpenAIRequestAttempt(ctx); err != nil {
+		return nil, err
 	}
 	if err := s.performOpenAIWSGeneratePrewarm(
 		ctx,

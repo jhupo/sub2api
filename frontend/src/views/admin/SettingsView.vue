@@ -411,6 +411,50 @@
             </div>
           </div>
 
+          <!-- OpenAI explicit 503 retry settings -->
+          <div class="card">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.openai503Retry.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.openai503Retry.description") }}
+              </p>
+            </div>
+            <div class="space-y-5 p-6">
+              <div v-if="openai503RetryLoading" class="flex items-center gap-2 text-gray-500">
+                <div class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600"></div>
+                {{ t("common.loading") }}
+              </div>
+              <template v-else>
+                <div class="flex items-center justify-between">
+                  <div>
+                    <label class="font-medium text-gray-900 dark:text-white">{{ t("admin.settings.openai503Retry.enabled") }}</label>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.openai503Retry.enabledHint") }}</p>
+                  </div>
+                  <Toggle v-model="openai503RetryForm.enabled" />
+                </div>
+                <div v-if="openai503RetryForm.enabled" class="space-y-4 border-t border-gray-100 pt-4 dark:border-dark-700">
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t("admin.settings.openai503Retry.retryDelaySeconds") }}</label>
+                    <input v-model.number="openai503RetryForm.retry_delay_seconds" type="number" min="1" max="120" class="input w-32" />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">{{ t("admin.settings.openai503Retry.retryDelaySecondsHint") }}</p>
+                  </div>
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t("admin.settings.openai503Retry.maxSameAccountRetries") }}</label>
+                    <input v-model.number="openai503RetryForm.max_same_account_retries" type="number" min="0" max="10" class="input w-32" />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">{{ t("admin.settings.openai503Retry.maxSameAccountRetriesHint") }}</p>
+                  </div>
+                </div>
+                <div class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700">
+                  <button type="button" @click="saveOpenAI503RetrySettings" :disabled="openai503RetrySaving" class="btn btn-primary btn-sm">
+                    {{ openai503RetrySaving ? t("common.saving") : t("common.save") }}
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+
           <!-- Stream Timeout Settings -->
           <div class="card">
             <div
@@ -582,66 +626,6 @@
                     </svg>
                     {{
                       streamTimeoutSaving
-                        ? t("common.saving")
-                        : t("common.save")
-                    }}
-                  </button>
-                </div>
-              </template>
-            </div>
-          </div>
-
-          <!-- Codex Adaptive Scheduling -->
-          <div class="card" data-testid="codex-adaptive-scheduling-settings">
-            <div
-              class="border-b border-gray-100 px-6 py-4 dark:border-dark-700"
-            >
-              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-                {{ t("admin.settings.codexAdaptiveScheduling.title") }}
-              </h2>
-              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                {{ t("admin.settings.codexAdaptiveScheduling.description") }}
-              </p>
-            </div>
-            <div class="space-y-5 p-6">
-              <div
-                v-if="codexAdaptiveSchedulingLoading"
-                class="flex items-center gap-2 text-gray-500"
-              >
-                <div
-                  class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600"
-                ></div>
-                {{ t("common.loading") }}
-              </div>
-
-              <template v-else>
-                <div class="flex items-center justify-between gap-6">
-                  <div>
-                    <label class="font-medium text-gray-900 dark:text-white">
-                      {{ t("admin.settings.codexAdaptiveScheduling.enabled") }}
-                    </label>
-                    <p class="text-sm text-gray-500 dark:text-gray-400">
-                      {{ t("admin.settings.codexAdaptiveScheduling.enabledHint") }}
-                    </p>
-                  </div>
-                  <Toggle
-                    v-model="codexAdaptiveSchedulingForm.enabled"
-                    data-testid="codex-adaptive-scheduling-toggle"
-                  />
-                </div>
-
-                <div
-                  class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700"
-                >
-                  <button
-                    type="button"
-                    class="btn btn-primary btn-sm"
-                    :disabled="codexAdaptiveSchedulingSaving"
-                    data-testid="codex-adaptive-scheduling-save"
-                    @click="saveCodexAdaptiveSchedulingSettings"
-                  >
-                    {{
-                      codexAdaptiveSchedulingSaving
                         ? t("common.saving")
                         : t("common.save")
                     }}
@@ -4408,34 +4392,6 @@
               </h2>
             </div>
             <div class="p-6 space-y-4">
-                <div class="rounded-lg border border-blue-200 bg-blue-50/70 p-4 dark:border-blue-900/60 dark:bg-blue-950/20">
-                  <div class="flex items-start justify-between gap-4">
-                    <div class="min-w-0">
-                      <h3 class="text-base font-semibold text-gray-900 dark:text-white">
-                        {{ t("admin.settings.gatewayForwarding.codexOverdraftTitle") }}
-                      </h3>
-                      <p class="mt-1 text-xs text-gray-600 dark:text-gray-400">
-                        {{ t("admin.settings.gatewayForwarding.codexOverdraftDescription") }}
-                      </p>
-                    </div>
-                    <Toggle v-model="form.codex_quota_overdraft_enabled" data-testid="codex-quota-overdraft-toggle" />
-                  </div>
-                  <div class="mt-4 flex items-start justify-between gap-4 border-t border-blue-200/70 pt-4 dark:border-blue-900/50">
-                    <div class="min-w-0">
-                      <h4 class="text-sm font-medium text-gray-900 dark:text-white">
-                        {{ t("admin.settings.gatewayForwarding.codexOverdraftBusinessInjection") }}
-                      </h4>
-                      <p class="mt-1 text-xs text-amber-700 dark:text-amber-300">
-                        {{ t("admin.settings.gatewayForwarding.codexOverdraftBusinessInjectionHint") }}
-                      </p>
-                    </div>
-                    <Toggle
-                      v-model="form.codex_quota_overdraft_business_injection_enabled"
-                      :disabled="!form.codex_quota_overdraft_enabled"
-                      data-testid="codex-quota-overdraft-business-toggle"
-                    />
-                  </div>
-                </div>
                 <div>
                   <h3 class="text-base font-semibold text-gray-900 dark:text-white">
                     {{ t("admin.settings.gatewayForwarding.codexClientRestrictionTitle") }}
@@ -5609,6 +5565,7 @@
                 </label>
                 <input
                   v-model="form.openai_codex_user_agent"
+                  data-testid="codex-user-agent"
                   type="text"
                   class="input w-full font-mono text-sm"
                   :placeholder="
@@ -5639,8 +5596,10 @@
                 </label>
                 <input
                   v-model="form.openai_codex_client_version"
+                  data-testid="codex-client-version"
+                  :disabled="codexCustomUserAgentConfigured"
                   type="text"
-                  class="input w-full font-mono text-sm"
+                  class="input w-full font-mono text-sm disabled:cursor-not-allowed disabled:opacity-50"
                   :placeholder="
                     t(
                       'admin.settings.gatewayForwarding.openaiCodexClientVersionPlaceholder',
@@ -5650,7 +5609,9 @@
                 <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                   {{
                     t(
-                      "admin.settings.gatewayForwarding.openaiCodexClientVersionHint",
+                      codexCustomUserAgentConfigured
+                        ? "admin.settings.gatewayForwarding.openaiCodexCustomUserAgentActive"
+                        : "admin.settings.gatewayForwarding.openaiCodexClientVersionHint",
                     )
                   }}
                 </p>
@@ -5682,7 +5643,12 @@
                     {{ codexSyncedVersionLabel }}
                   </p>
                 </div>
-                <Toggle v-model="form.openai_codex_version_auto_sync_enabled" />
+                <Toggle
+                  v-model="form.openai_codex_version_auto_sync_enabled"
+                  data-testid="codex-version-auto-sync"
+                  :disabled="codexCustomUserAgentConfigured"
+                  class="disabled:cursor-not-allowed disabled:opacity-50"
+                />
               </div>
 
             </div>
@@ -8961,6 +8927,14 @@ const rateLimit429CooldownForm = reactive({
   cooldown_seconds: 5,
 });
 
+const openai503RetryLoading = ref(true);
+const openai503RetrySaving = ref(false);
+const openai503RetryForm = reactive({
+  enabled: true,
+  retry_delay_seconds: 2,
+  max_same_account_retries: 1,
+});
+
 // Panel API Rate Limit 状态
 const panelRateLimitLoading = ref(true);
 const panelRateLimitSaving = ref(false);
@@ -8981,12 +8955,6 @@ const streamTimeoutForm = reactive({
   temp_unsched_minutes: 5,
   threshold_count: 3,
   threshold_window_minutes: 10,
-});
-
-const codexAdaptiveSchedulingLoading = ref(true);
-const codexAdaptiveSchedulingSaving = ref(false);
-const codexAdaptiveSchedulingForm = reactive({
-  enabled: false,
 });
 
 // Rectifier 状态
@@ -9472,8 +9440,6 @@ type SettingsForm = Omit<
   force_email_on_third_party_signup: boolean;
   openai_low_upstream_rate_priority_enabled: boolean;
   openai_oauth_scheduling_rate_multiplier: number;
-  codex_quota_overdraft_enabled: boolean;
-  codex_quota_overdraft_business_injection_enabled: boolean;
   openai_advanced_scheduler_enabled: boolean;
   openai_advanced_scheduler_sticky_weighted_enabled: boolean;
   openai_advanced_scheduler_subscription_priority_enabled: boolean;
@@ -9717,10 +9683,6 @@ const form = reactive<SettingsForm>({
   allow_ungrouped_key_scheduling: false,
   openai_low_upstream_rate_priority_enabled: false,
   openai_oauth_scheduling_rate_multiplier: 1,
-  // Codex 5h/7d detector stays on for compatibility; real-request injection
-  // is opt-in because upstream may count the synthetic tool pair.
-  codex_quota_overdraft_enabled: true,
-  codex_quota_overdraft_business_injection_enabled: false,
   openai_advanced_scheduler_enabled: false,
   openai_advanced_scheduler_sticky_weighted_enabled: false,
   openai_advanced_scheduler_subscription_priority_enabled: false,
@@ -10725,6 +10687,10 @@ function removeCodexWhitelistRow(i: number): void {
   codexWhitelistRows.value.splice(i, 1);
 }
 
+const codexCustomUserAgentConfigured = computed(
+  () => !!form.openai_codex_user_agent?.trim(),
+);
+
 const codexSyncedVersionLabel = computed(() => {
   const synced = form.openai_codex_client_version_synced?.trim();
   if (!synced) return "";
@@ -11339,7 +11305,7 @@ async function saveSettings() {
       antigravity_user_agent_version:
         form.antigravity_user_agent_version?.trim() || "",
       openai_codex_user_agent:
-        form.openai_codex_user_agent?.trim() || "",
+        form.openai_codex_user_agent || "",
       openai_codex_client_version:
         form.openai_codex_client_version?.trim() || "",
       openai_codex_version_auto_sync_enabled:
@@ -11396,11 +11362,6 @@ async function saveSettings() {
         form.openai_low_upstream_rate_priority_enabled,
       openai_oauth_scheduling_rate_multiplier:
         form.openai_oauth_scheduling_rate_multiplier,
-      codex_quota_overdraft_enabled: form.codex_quota_overdraft_enabled,
-      // Keep the subordinate preference when the master switch is temporarily
-      // off; runtime still requires master=true before any injection occurs.
-      codex_quota_overdraft_business_injection_enabled:
-        form.codex_quota_overdraft_business_injection_enabled,
       openai_advanced_scheduler_enabled: form.openai_advanced_scheduler_enabled,
       openai_advanced_scheduler_sticky_weighted_enabled:
         form.openai_advanced_scheduler_sticky_weighted_enabled,
@@ -11908,6 +11869,37 @@ async function saveRateLimit429CooldownSettings() {
   }
 }
 
+async function loadOpenAI503RetrySettings() {
+  openai503RetryLoading.value = true;
+  try {
+    const settings = await adminAPI.settings.getOpenAI503RetrySettings();
+    Object.assign(openai503RetryForm, settings);
+  } catch (_error: unknown) {
+    // Keep defaults when the endpoint is unavailable.
+  } finally {
+    openai503RetryLoading.value = false;
+  }
+}
+
+async function saveOpenAI503RetrySettings() {
+  openai503RetrySaving.value = true;
+  try {
+    const updated = await adminAPI.settings.updateOpenAI503RetrySettings({
+      enabled: openai503RetryForm.enabled,
+      retry_delay_seconds: openai503RetryForm.retry_delay_seconds,
+      max_same_account_retries: openai503RetryForm.max_same_account_retries,
+    });
+    Object.assign(openai503RetryForm, updated);
+    appStore.showSuccess(t("admin.settings.openai503Retry.saved"));
+  } catch (error: unknown) {
+    appStore.showError(
+      extractApiErrorMessage(error, t("admin.settings.openai503Retry.saveFailed")),
+    );
+  } finally {
+    openai503RetrySaving.value = false;
+  }
+}
+
 // Stream Timeout 方法
 async function loadStreamTimeoutSettings() {
   streamTimeoutLoading.value = true;
@@ -11942,42 +11934,6 @@ async function saveStreamTimeoutSettings() {
     );
   } finally {
     streamTimeoutSaving.value = false;
-  }
-}
-
-async function loadCodexAdaptiveSchedulingSettings() {
-  codexAdaptiveSchedulingLoading.value = true;
-  try {
-    const settings =
-      await adminAPI.settings.getCodexAdaptiveSchedulingSettings();
-    Object.assign(codexAdaptiveSchedulingForm, settings);
-  } catch (_error: unknown) {
-    // Keep the disabled defaults when the settings endpoint is unavailable.
-  } finally {
-    codexAdaptiveSchedulingLoading.value = false;
-  }
-}
-
-async function saveCodexAdaptiveSchedulingSettings() {
-  codexAdaptiveSchedulingSaving.value = true;
-  try {
-    const updated =
-      await adminAPI.settings.updateCodexAdaptiveSchedulingSettings({
-        enabled: codexAdaptiveSchedulingForm.enabled,
-      });
-    Object.assign(codexAdaptiveSchedulingForm, updated);
-    appStore.showSuccess(
-      t("admin.settings.codexAdaptiveScheduling.saved"),
-    );
-  } catch (error: unknown) {
-    appStore.showError(
-      extractApiErrorMessage(
-        error,
-        t("admin.settings.codexAdaptiveScheduling.saveFailed"),
-      ),
-    );
-  } finally {
-    codexAdaptiveSchedulingSaving.value = false;
   }
 }
 
@@ -12592,9 +12548,9 @@ onMounted(() => {
   loadOllamaCloudUsageSettings();
   loadOverloadCooldownSettings();
   loadRateLimit429CooldownSettings();
+  loadOpenAI503RetrySettings();
   loadPanelRateLimitSettings();
   loadStreamTimeoutSettings();
-  loadCodexAdaptiveSchedulingSettings();
   loadRectifierSettings();
   loadBetaPolicySettings();
   loadProviders();

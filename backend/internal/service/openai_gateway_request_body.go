@@ -1088,6 +1088,11 @@ func normalizeOpenAIResponsesReasoningMode(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
+	// Astra treats reasoning.mode and reasoning.effort as independent parameters.
+	// Preserve both values verbatim instead of applying the legacy pro -> max shim.
+	if isOpenAIGPT6AstraModel(parseRawJSONView(body).Get("model").String()) {
+		return body, false, nil
+	}
 	mode := parseRawJSONView(body).Get("reasoning.mode")
 	if !mode.Exists() || mode.Type != gjson.String {
 		return body, false, nil

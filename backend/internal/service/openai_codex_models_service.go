@@ -355,6 +355,7 @@ type configuredCodexModelDescriptor struct {
 	Description                       string                          `json:"description"`
 	DefaultReasoningLevel             *string                         `json:"default_reasoning_level,omitempty"`
 	SupportedReasoningLevels          []configuredCodexReasoningLevel `json:"supported_reasoning_levels"`
+	MultiAgentReasoningEffort         *string                         `json:"multi_agent_reasoning_effort,omitempty"`
 	ShellType                         string                          `json:"shell_type"`
 	Visibility                        string                          `json:"visibility"`
 	SupportedInAPI                    bool                            `json:"supported_in_api"`
@@ -486,6 +487,9 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 				descriptor.MaxContextWindow = configuredCodexGPT56MaxContext
 			}
 			if isOpenAIGPT6AstraModel(modelID) {
+				multiAgentEffort := "xhigh"
+				descriptor.MultiAgentReasoningEffort = &multiAgentEffort
+				descriptor.MultiAgentVersion = "v2"
 				descriptor.ContextWindow = configuredCodexGPT6AstraContext
 				descriptor.MaxContextWindow = configuredCodexGPT6AstraContext
 			}
@@ -599,7 +603,7 @@ func configuredCodexGPTReasoningLevels(modelID string) []configuredCodexReasonin
 			Description: "Maximum reasoning depth for complex tasks",
 		})
 	}
-	if normalized == "gpt-5.6-sol" || normalized == "gpt-5.6-terra" {
+	if isOpenAIGPT6AstraModel(modelID) || normalized == "gpt-5.6-sol" || normalized == "gpt-5.6-terra" {
 		levels = append(levels, configuredCodexReasoningLevel{
 			Effort:      "ultra",
 			Description: "Maximum reasoning with automatic task delegation",
@@ -1583,9 +1587,6 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 	}
 
 	clientVersion = strings.TrimSpace(clientVersion)
-	if clientVersion == "" {
-		clientVersion = CodexCanonicalClientVersion()
-	}
 
 	requestEndpoint := chatgptCodexModelsURL
 	authToken := ""
@@ -1614,6 +1615,16 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_ACCOUNT_TYPE_UNSUPPORTED", "account type %q cannot fetch the Codex models manifest", credAccount.Type)
 	}
 
+	var identity codexOutboundIdentity
+	if useAPIKeyUpstream {
+		identity = resolveCodexOutboundIdentity("")
+		if clientVersion == "" {
+			clientVersion = identity.version
+		}
+	} else {
+		identity = s.resolveCodexAccountClientIdentity(account, credAccount, "")
+		clientVersion = identity.version
+	}
 	requestURL, err := buildCodexModelsManifestURL(requestEndpoint, appendModelsPath, clientVersion)
 	if err != nil {
 		if useAPIKeyUpstream {
@@ -1639,22 +1650,13 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 		setOpenAIChatGPTAccountHeaders(headers, credAccount)
 	}
 	headers.Set("Accept", "application/json")
-	overrideUA := ""
-	if !useAPIKeyUpstream {
-		overrideUA = credAccount.GetOpenAIUserAgent()
+	identity.applyHeaders(headers)
+	// Custom API key upstreams retain their client-version content negotiation.
+	if useAPIKeyUpstream {
+		if version := NormalizeCodexClientVersion(clientVersion); version != "" && CompareVersions(version, codexUpstreamMinVersion) >= 0 {
+			headers.Set("Version", version)
+		}
 	}
-	identity := resolveCodexOutboundIdentity(overrideUA)
-	headers.Set("Originator", identity.originator)
-	headers.Set("User-Agent", identity.userAgent)
-	// Version 头优先与 client_version 查询参数同源：客户端自报版本合法且不低于上游
-	// 门槛时原样使用；否则回退规范版本，避免陈旧 version 触发上游 404（issue #3901）。
-	// client_version 查询参数本身始终按客户端原值透传（内容协商语义，契约见
-	// TestFetchCodexModelsManifestPassthrough）。
-	headerVersion := NormalizeCodexClientVersion(clientVersion)
-	if headerVersion == "" || CompareVersions(headerVersion, codexUpstreamMinVersion) < 0 {
-		headerVersion = identity.version
-	}
-	headers.Set("Version", headerVersion)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -2028,19 +2030,33 @@ func convertOpenAIModelListToCodexManifestForAccount(body []byte, account *Accou
 	if !ok {
 		return body
 	}
-	var entries []struct {
-		ID string `json:"id"`
-	}
+	var entries []map[string]json.RawMessage
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return body
 	}
 	modelIDs := make([]string, 0, len(entries))
+	modelMetadata := make(map[string]codexModelMetadataOverride, len(entries))
+	metadataModels := make(map[string]string, len(entries))
 	for _, entry := range entries {
-		id := strings.TrimSpace(entry.ID)
+		var id string
+		if err := json.Unmarshal(entry["id"], &id); err != nil {
+			continue
+		}
+		id = strings.TrimSpace(id)
 		if id == "" {
 			continue
 		}
 		modelIDs = append(modelIDs, id)
+		capabilityModel := id
+		if account != nil {
+			capabilityModel = account.GetMappedModel(id)
+		}
+		metadataModels[id] = capabilityModel
+		capabilities := accountCodexToolCapabilities(account, capabilityModel)
+		applyCodexToolCapabilities(capabilities, entry, true)
+		modelMetadata[id] = codexModelMetadataOverride{UpstreamModelMetadata: UpstreamModelMetadata{
+			CodexToolCapabilities: capabilities,
+		}}
 	}
 	if len(modelIDs) == 0 {
 		return body
@@ -2057,7 +2073,7 @@ func convertOpenAIModelListToCodexManifestForAccount(body []byte, account *Accou
 			searchToolModels[modelID] = true
 		}
 	}
-	converted, err := buildCodexModelsManifest(modelIDs, imageInputModels, searchToolModels, nil, nil)
+	converted, err := buildCodexModelsManifest(modelIDs, imageInputModels, searchToolModels, metadataModels, modelMetadata)
 	if err != nil {
 		return body
 	}
@@ -2376,6 +2392,11 @@ func mergeMissingCodexModelFields(current, defaults map[string]json.RawMessage) 
 	changed := false
 	for key, defaultValue := range defaults {
 		currentValue, exists := current[key]
+		// An explicit capability declaration, including null, belongs to the
+		// provider and must not be replaced by a locally synthesized default.
+		if exists && stringSliceContains(codexToolCapabilityFields, key) {
+			continue
+		}
 		if !exists || (bytes.Equal(bytes.TrimSpace(currentValue), []byte("null")) &&
 			!bytes.Equal(bytes.TrimSpace(defaultValue), []byte("null"))) {
 			current[key] = defaultValue

@@ -488,6 +488,20 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			})
 			pendingReasoning = ""
 			continue
+		case "agent_message":
+			// Codex multi_agent_v2 uses agent_message between parent and child
+			// agents. Chat Completions has no matching item type, so keep its
+			// envelope and task body as one user message in the original order.
+			text := agentMessageText(item["content"])
+			if text == "" {
+				pendingReasoning = ""
+				continue
+			}
+			content, _ := json.Marshal(text)
+			messages = append(messages, ChatMessage{Role: "user", Content: content})
+			pendingReasoning = ""
+			lastTurnReasoning = ""
+			continue
 		case "input_text", "text":
 			content, _ := json.Marshal(rawString(item["text"]))
 			messages = append(messages, ChatMessage{Role: "user", Content: content})
@@ -545,6 +559,33 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 	}
 
 	return messages, mediaByCallID, nil
+}
+
+// agentMessageText joins the text-bearing agent_message parts without changing
+// their order. Custom providers expose encrypted_content as plaintext here.
+func agentMessageText(raw json.RawMessage) string {
+	raw = bytesTrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	var parts []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, part := range parts {
+		switch rawString(part["type"]) {
+		case "input_text", "text":
+			_, _ = b.WriteString(rawString(part["text"]))
+		case "encrypted_content":
+			_, _ = b.WriteString(rawString(part["encrypted_content"]))
+		}
+	}
+	return b.String()
 }
 
 // extractToolOutputMedia rewrites only recognized image nodes. Media-free

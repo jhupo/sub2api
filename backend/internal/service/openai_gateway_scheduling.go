@@ -599,9 +599,6 @@ func shouldAutoPauseOpenAIAccountByQuota(ctx context.Context, account *Account) 
 			return true, openAIQuotaAutoPauseDecision{window: "7d", threshold: pause7d, utilization: utilization7d, reason: "quota_auto_reset_credit_check_7d"}
 		}
 	}
-	if codexQuotaOverdraftBypassesSchedulingThreshold(ctx, account) {
-		return false, openAIQuotaAutoPauseDecision{}
-	}
 	// Per-account explicit-disable flags must take precedence over the global default.
 	// Without these, leaving the account threshold blank means "use global default",
 	// so an admin has no way to exempt a single account from auto-pause once a global
@@ -954,29 +951,6 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 	// 3. 按优先级 + LRU 选择最佳账号
 	// Select by priority + LRU
 	selected, compactBlocked, filterStats := s.selectBestAccount(ctx, groupID, platform, accounts, requestedModel, excludedIDs, requireCompact, requiredCapability, preferLowUpstreamRate)
-	// A normal scheduler snapshot may contain accounts, but all of them can be
-	// incompatible with this model/capability.  Only then consult the isolated
-	// Codex overdraft candidate query; this keeps the hot path unchanged while
-	// still allowing a compatible threshold-paused account to fill the request.
-	if selected == nil && platform == PlatformOpenAI && CodexQuotaOverdraftSchedulingEnabled(ctx) {
-		if overdraft, handled, fallbackErr := s.listCodexQuotaOverdraftSchedulableAccounts(ctx, groupID, platform); fallbackErr != nil {
-			return nil, fallbackErr
-		} else if handled && len(overdraft) > 0 {
-			seen := make(map[int64]struct{}, len(accounts)+len(overdraft))
-			for i := range accounts {
-				seen[accounts[i].ID] = struct{}{}
-			}
-			for i := range overdraft {
-				if _, exists := seen[overdraft[i].ID]; exists {
-					continue
-				}
-				seen[overdraft[i].ID] = struct{}{}
-				accounts = append(accounts, overdraft[i])
-			}
-			selected, compactBlocked, filterStats = s.selectBestAccount(ctx, groupID, platform, accounts, requestedModel, excludedIDs, requireCompact, requiredCapability, preferLowUpstreamRate)
-		}
-	}
-
 	if selected == nil {
 		return nil, noAvailableOpenAISelectionError(requestedModel, compactBlocked, filterStats.summary(""))
 	}
@@ -1357,24 +1331,6 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		candidates = append(candidates, acc)
 	}
 
-	if len(candidates) == 0 && platform == PlatformOpenAI && CodexQuotaOverdraftSchedulingEnabled(ctx) {
-		if overdraft, handled, fallbackErr := s.listCodexQuotaOverdraftSchedulableAccounts(ctx, groupID, platform); fallbackErr != nil {
-			return nil, fallbackErr
-		} else if handled {
-			for i := range overdraft {
-				acc := &overdraft[i]
-				if isExcluded(acc.ID) ||
-					!isOpenAICompatibleAccountEligibleForRequest(ctx, acc, platform, requestedModel, false, requiredCapability) ||
-					!parentHealthyForShadow(acc, parentLookupL2) ||
-					s.isOpenAIAccountRequestRuntimeBlocked(acc, requestedModel) ||
-					(needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, acc, requestedModel, requireCompact)) {
-					continue
-				}
-				baseCandidateCount++
-				candidates = append(candidates, acc)
-			}
-		}
-	}
 	if len(candidates) == 0 {
 		return nil, noAvailableOpenAISelectionError(requestedModel, false, filterStats.summary(""))
 	}
@@ -1412,7 +1368,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			}
 			hasCapacity := loadInfo.LoadRate < 100
 			if platform == PlatformOpenAI {
-				limit := s.codexAdaptiveEffectiveConcurrency(ctx, acc, canonicalOpenAIAccountSchedulingModel(acc, requestedModel), acc.Concurrency)
+				limit := acc.Concurrency
 				hasCapacity = limit <= 0 || loadInfo.CurrentConcurrency < limit
 			}
 			if hasCapacity {
@@ -1598,11 +1554,6 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 		if platform == PlatformGrok {
 			accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
 		}
-		if len(accounts) == 0 {
-			if overdraft, handled, fallbackErr := s.listCodexQuotaOverdraftSchedulableAccounts(ctx, groupID, platform); handled {
-				return overdraft, fallbackErr
-			}
-		}
 		return accounts, nil
 	}
 	var accounts []Account
@@ -1620,11 +1571,6 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 	accounts = s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts)
 	if platform == PlatformGrok {
 		accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
-	}
-	if len(accounts) == 0 {
-		if overdraft, handled, fallbackErr := s.listCodexQuotaOverdraftSchedulableAccounts(ctx, groupID, platform); handled {
-			return overdraft, fallbackErr
-		}
 	}
 	return accounts, nil
 }
@@ -1654,22 +1600,7 @@ func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccountBeforeProfit(
 	platform = NormalizeOpenAICompatiblePlatform(platform)
 
 	fresh := account
-	if codexQuotaOverdraftCandidateKnown(ctx, account.ID) && s.accountRepo != nil {
-		// Fallback candidates are intentionally absent from the shared snapshot.
-		// Read the durable record directly and normalize only the coordinator's
-		// own threshold pause before the ordinary capability checks run.
-		fallbackCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
-		current, err := s.accountRepo.GetByID(fallbackCtx, account.ID)
-		cancel()
-		if err != nil || current == nil {
-			return nil
-		}
-		if normalized, ok := normalizeCodexQuotaOverdraftHydratedAccount(ctx, current, time.Now().UTC()); !ok {
-			return nil
-		} else {
-			fresh = normalized
-		}
-	} else if s.schedulerSnapshot != nil {
+	if s.schedulerSnapshot != nil {
 		current, err := s.getSchedulableAccount(ctx, account.ID)
 		if err != nil || current == nil {
 			return nil
@@ -1763,13 +1694,6 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDBBeforeProfit(ct
 	}
 	if !s.openAIAccountMatchesSchedulingGroup(latest, groupID) {
 		return nil
-	}
-	if codexQuotaOverdraftCandidateKnown(ctx, latest.ID) {
-		if normalized, ok := normalizeCodexQuotaOverdraftHydratedAccount(ctx, latest, time.Now().UTC()); !ok {
-			return nil
-		} else {
-			latest = normalized
-		}
 	}
 	if s.openAIGroupRequiresPrivacySet(ctx, groupID) && !latest.IsPrivacySet() {
 		return nil
@@ -1869,9 +1793,6 @@ func (s *OpenAIGatewayService) isOpenAIAccountBlockedBySchedulingThreshold(ctx c
 	if s == nil || s.rateLimitService == nil || account == nil {
 		return false
 	}
-	if codexQuotaOverdraftBypassesSchedulingThreshold(ctx, account) {
-		return false
-	}
 	return s.rateLimitService.ApplyAccountSchedulingThreshold(ctx, account)
 }
 
@@ -1880,13 +1801,6 @@ func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, accou
 		return account, nil
 	}
 	if hydrated, ok := schedulerHydratedAccount(ctx, account.ID); ok {
-		if codexQuotaOverdraftCandidateKnown(ctx, hydrated.ID) {
-			normalized, valid := normalizeCodexQuotaOverdraftHydratedAccount(ctx, hydrated, time.Now().UTC())
-			if !valid {
-				return nil, fmt.Errorf("selected openai account %d is no longer schedulable", hydrated.ID)
-			}
-			return normalized, nil
-		}
 		return hydrated, nil
 	}
 	hydrated, err := s.schedulerSnapshot.GetAccount(ctx, account.ID)
@@ -1901,101 +1815,13 @@ func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, accou
 		}
 	}
 	if err == nil && hydrated != nil {
-		// Overdraft candidates are intentionally kept out of the shared
-		// scheduler snapshot.  A stale snapshot entry must not resurrect a
-		// generic pause, but a threshold pause may be admitted only when the
-		// request-scoped coordinator has positively marked this ID as a fallback
-		// candidate.  Re-check the durable fields before returning the account.
-		if codexQuotaOverdraftCandidateKnown(ctx, account.ID) {
-			if normalized, ok := normalizeCodexQuotaOverdraftHydratedAccount(ctx, hydrated, time.Now().UTC()); ok {
-				return normalized, nil
-			}
-			// The snapshot may contain a stale copy from before the explicit
-			// candidate query.  Fall through to the bounded durable read below
-			// before rejecting the candidate.
-		}
-		if !codexQuotaOverdraftCandidateKnown(ctx, account.ID) {
-			rememberSchedulerHydratedAccount(ctx, hydrated)
-			return hydrated, nil
-		}
-	}
-
-	// The explicit overdraft query does not write candidates into the shared
-	// snapshot.  When Redis/snapshot hydration misses such an account, perform a
-	// request-scoped DB read instead of treating it as a vanished account.  The
-	// marker is server-generated by listCodexQuotaOverdraftSchedulableAccounts;
-	// never broaden this fallback to arbitrary client-marked requests.
-	if codexQuotaOverdraftCandidateKnown(ctx, account.ID) && s.accountRepo != nil {
-		// Keep this exceptional read bounded independently of the long-lived
-		// streaming request.  A saturated DB must not turn one missing Redis
-		// entry into a 30s/120s request stall.
-		fallbackCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
-		fresh, fetchErr := s.accountRepo.GetByID(fallbackCtx, account.ID)
-		cancel()
-		if fetchErr == nil && fresh != nil {
-			if normalized, ok := normalizeCodexQuotaOverdraftHydratedAccount(ctx, fresh, time.Now().UTC()); ok {
-				rememberSchedulerHydratedAccount(ctx, normalized)
-				return normalized, nil
-			}
-			return nil, fmt.Errorf("selected openai account %d is no longer schedulable", account.ID)
-		}
-		if fetchErr != nil {
-			return nil, fmt.Errorf("hydrate overdraft account %d from repository: %w", account.ID, fetchErr)
-		}
+		rememberSchedulerHydratedAccount(ctx, hydrated)
+		return hydrated, nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	return nil, fmt.Errorf("selected openai account %d not found during hydration", account.ID)
-}
-
-// normalizeCodexQuotaOverdraftHydratedAccount applies the same durable pause
-// checks as ordinary scheduling while permitting only the explicit threshold
-// pause that the overdraft coordinator has admitted for this request.  It
-// returns a clone so a threshold pause is never cleared on the shared account
-// object or persisted accidentally.
-func normalizeCodexQuotaOverdraftHydratedAccount(ctx context.Context, account *Account, now time.Time) (*Account, bool) {
-	if account == nil || !codexQuotaOverdraftCandidateKnown(ctx, account.ID) ||
-		!isCodexQuotaOverdraftAccount(account) || !account.IsActive() || !account.Schedulable {
-		return nil, false
-	}
-	if account.AutoPauseOnExpired && account.ExpiresAt != nil && !now.Before(*account.ExpiresAt) {
-		return nil, false
-	}
-	if account.OverloadUntil != nil && now.Before(*account.OverloadUntil) {
-		return nil, false
-	}
-	clearRateLimit := account.RateLimitResetAt != nil && now.Before(*account.RateLimitResetAt)
-	if clearRateLimit && (!codexQuotaOverdraftAccountHasQuotaEvidence(account, now) ||
-		!codexQuotaOverdraftSchedulingAllowed(account, now)) {
-		return nil, false
-	}
-	clearThresholdPause := account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil)
-	if account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) {
-		if !IsAccountSchedulingThresholdReason(account.TempUnschedulableReason) ||
-			!codexQuotaOverdraftSchedulingAllowed(account, now) {
-			return nil, false
-		}
-	}
-	if !clearRateLimit && !clearThresholdPause && !account.IsSchedulable() {
-		return nil, false
-	}
-	if !clearRateLimit && !clearThresholdPause {
-		return account, true
-	}
-	clone := *account
-	if clearRateLimit {
-		clone.RateLimitedAt = nil
-		clone.RateLimitResetAt = nil
-	}
-	if clearThresholdPause {
-		clone.TempUnschedulableUntil = nil
-		clone.TempUnschedulableReason = ""
-	}
-	if !clone.IsSchedulable() {
-		return nil, false
-	}
-	return &clone, true
 }
 
 func (s *OpenAIGatewayService) newSelectionResult(ctx context.Context, account *Account, acquired bool, release func(), waitPlan *AccountWaitPlan) (*AccountSelectionResult, error) {

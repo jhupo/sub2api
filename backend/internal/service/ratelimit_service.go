@@ -52,8 +52,7 @@ type SuccessfulTestRecoveryResult struct {
 
 // AccountRecoveryOptions 控制账号恢复时的附加行为。
 type AccountRecoveryOptions struct {
-	InvalidateToken                  bool
-	PreserveCodexQuotaOverdraftPause bool
+	InvalidateToken bool
 }
 
 type geminiUsageCacheEntry struct {
@@ -165,9 +164,6 @@ func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, 
 	if !account.IsActive() || !account.Schedulable {
 		return false
 	}
-	if codexQuotaOverdraftBypassesSchedulingThreshold(ctx, account) {
-		return false
-	}
 
 	now := time.Now().UTC()
 	thresholds := s.settingService.GetAccountSchedulingThresholds(ctx)
@@ -196,7 +192,7 @@ func (s *RateLimitService) ApplyAccountSchedulingThreshold(ctx context.Context, 
 
 	account.TempUnschedulableUntil = cloneTimePtr(decision.Until)
 	account.TempUnschedulableReason = reason
-	s.notifyCodexQuotaOverdraftAwareSchedulingBlock(ctx, account, *decision.Until)
+	s.notifyAccountSchedulingBlocked(account, *decision.Until, "account_scheduling_threshold")
 
 	if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, *decision.Until, reason); err != nil {
 		slog.Warn("account_scheduling_threshold_set_temp_unsched_failed",
@@ -330,6 +326,9 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
+	if account == nil {
+		return false
+	}
 	// Team 联动熔断必须先于池模式/自定义错误码/临时不可调度的各类早退；
 	// 同请求内与 fastpath 调用点的重复触发由方法内去重吸收。
 	s.maybeHandleOpenAITeamLinkedError(ctx, account, statusCode, responseBody)
@@ -2066,9 +2065,7 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 		}
 	}
 
-	preserveCodexPause := options.PreserveCodexQuotaOverdraftPause &&
-		codexQuotaOverdraftPauseNeedsPreservation(account, time.Now().UTC())
-	if hasRecoverableRuntimeState(account) && !preserveCodexPause {
+	if hasRecoverableRuntimeState(account) {
 		if err := s.ClearRateLimit(ctx, accountID); err != nil {
 			return nil, err
 		}
@@ -2087,29 +2084,7 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 // RecoverAccountAfterSuccessfulTest 将一次成功测试视为正常请求，
 // 按需恢复 error / rate-limit / overload / temp-unsched / model-rate-limit 等运行时状态。
 func (s *RateLimitService) RecoverAccountAfterSuccessfulTest(ctx context.Context, accountID int64) (*SuccessfulTestRecoveryResult, error) {
-	return s.RecoverAccountState(ctx, accountID, AccountRecoveryOptions{
-		PreserveCodexQuotaOverdraftPause: true,
-	})
-}
-
-// codexQuotaOverdraftPauseNeedsPreservation prevents an ordinary successful
-// admin/scheduled test from clearing a live failed or in-flight quota probe.
-// Explicit RecoverState calls do not set the option and remain an intentional
-// operator override.
-func codexQuotaOverdraftPauseNeedsPreservation(account *Account, now time.Time) bool {
-	if !isCodexQuotaOverdraftAccount(account) {
-		return false
-	}
-	state, ok := codexQuotaOverdraftStateFromAccount(account)
-	if !ok || state.RecoverAt == nil || !state.RecoverAt.After(now) {
-		return false
-	}
-	switch state.Status {
-	case codexQuotaOverdraftProbePending, codexQuotaOverdraftProbeFailed, codexQuotaOverdraftProbeInconclusive:
-		return true
-	default:
-		return false
-	}
+	return s.RecoverAccountState(ctx, accountID, AccountRecoveryOptions{})
 }
 
 func (s *RateLimitService) ClearTempUnschedulable(ctx context.Context, accountID int64) error {

@@ -48,8 +48,7 @@ Test login, API key authentication, package assignment/redemption, wallet and
 subscription billing, HTTP streaming, sequential WS turns, model switching,
 insufficient allowance, retries, cancellation and reconnection. Check official
 OpenAI usage versus user rate-adjusted billing; a hold is not actual spending.
-Initially keep optional Codex overdraft probing disabled unless intentionally
-required. Do not overwrite an existing operator setting through migration.
+Do not overwrite an existing operator setting through migration.
 
 ## Production Sequence
 

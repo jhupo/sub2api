@@ -160,13 +160,45 @@ func (s *OpenAIGatewayService) resolveCCFallbackTarget(account *Account) (apiKey
 	return apiKey, targetURL, nil
 }
 
-// sendCCUpstreamRequest 构建并发送 CC 上游请求：分离的上游 context、OpenAI HTTP
+// sendCCUpstreamRequest applies the account-local explicit-503 queue policy.
+func (s *OpenAIGatewayService) sendCCUpstreamRequest(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	targetURL string,
+	body []byte,
+	stream bool,
+	bearerToken string,
+	userAgent string,
+	grokCacheIdentity string,
+) (*http.Response, error) {
+	state, err := s.newOpenAI503RetryState(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	defer state.complete()
+	for {
+		resp, sendErr := s.sendCCUpstreamRequestOnce(ctx, c, account, targetURL, body, stream, bearerToken, userAgent, grokCacheIdentity)
+		if sendErr != nil || resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
+			return resp, sendErr
+		}
+		retry, handleErr := state.handle503(c, resp)
+		if handleErr != nil {
+			return nil, handleErr
+		}
+		if !retry {
+			return resp, nil
+		}
+	}
+}
+
+// sendCCUpstreamRequestOnce constructs and sends CC upstream request: separate upstream context, OpenAI HTTP
 // profile、标准头（含流式 Accept 切换）、客户端 header 白名单透传、自定义 UA 与
 // 账号级 header 覆写，最后经代理发出。传输层失败（DNS/TCP/TLS，无 HTTP 响应）
 // 统一由 handleOpenAIUpstreamTransportError 归一为 failover。
 //
 // userAgent 为空时保留默认 UA；Grok 的默认 UA 兜底由调用方解析后传入。
-func (s *OpenAIGatewayService) sendCCUpstreamRequest(
+func (s *OpenAIGatewayService) sendCCUpstreamRequestOnce(
 	ctx context.Context,
 	c *gin.Context,
 	account *Account,

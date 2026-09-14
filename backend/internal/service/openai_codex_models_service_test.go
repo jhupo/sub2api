@@ -344,6 +344,7 @@ func TestNewConfiguredCodexModelDescriptorUsesProviderMetadataAndSafeFallback(t 
 	require.Equal(t, "low", *gpt56.DefaultVerbosity)
 	require.True(t, gpt56.SupportsReasoningSummaryParameter)
 	require.Equal(t, "none", gpt56.DefaultReasoningSummary)
+	require.True(t, strings.HasPrefix(gpt56.ModelMessages.InstructionsTemplate, "You are Codex, an agent based on GPT-5."))
 
 	gpt56Luna := newConfiguredCodexModelDescriptor("gpt-5.6-luna")
 	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max"}, effortsFromConfiguredCodexLevels(gpt56Luna.SupportedReasoningLevels))
@@ -353,7 +354,10 @@ func TestNewConfiguredCodexModelDescriptorUsesProviderMetadataAndSafeFallback(t 
 	require.Equal(t, "GPT-6 Astra", astra.DisplayName)
 	require.NotNil(t, astra.DefaultReasoningLevel)
 	require.Equal(t, "medium", *astra.DefaultReasoningLevel)
-	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max"}, effortsFromConfiguredCodexLevels(astra.SupportedReasoningLevels))
+	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max", "ultra"}, effortsFromConfiguredCodexLevels(astra.SupportedReasoningLevels))
+	require.NotNil(t, astra.MultiAgentReasoningEffort)
+	require.Equal(t, "xhigh", *astra.MultiAgentReasoningEffort)
+	require.Equal(t, "v2", astra.MultiAgentVersion)
 	require.NotContains(t, astra.SupportedReasoningLevels, configuredCodexReasoningLevel{Effort: "none"})
 	require.NotContains(t, astra.SupportedReasoningLevels, configuredCodexReasoningLevel{Effort: "minimal"})
 	require.Len(t, astra.ServiceTiers, 1)
@@ -363,16 +367,21 @@ func TestNewConfiguredCodexModelDescriptorUsesProviderMetadataAndSafeFallback(t 
 	require.Equal(t, int64(1_050_000), astra.ContextWindow)
 	require.Equal(t, int64(1_050_000), astra.MaxContextWindow)
 	require.Equal(t, configuredCodexTruncationPolicy{Mode: "tokens", Limit: 10_000}, astra.TruncationPolicy)
+	require.True(t, strings.HasPrefix(astra.ModelMessages.InstructionsTemplate, "You are Codex, an agent based on GPT-6."))
 	gpt6 := newConfiguredCodexModelDescriptor("gpt-6")
 	require.Equal(t, "GPT-6 (Astra)", gpt6.DisplayName)
-	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max"}, effortsFromConfiguredCodexLevels(gpt6.SupportedReasoningLevels))
+	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max", "ultra"}, effortsFromConfiguredCodexLevels(gpt6.SupportedReasoningLevels))
+	require.NotNil(t, gpt6.MultiAgentReasoningEffort)
+	require.Equal(t, "xhigh", *gpt6.MultiAgentReasoningEffort)
 	require.Equal(t, int64(1_050_000), gpt6.ContextWindow)
 	gpt6Astra := newConfiguredCodexModelDescriptor("gpt-6-astra")
 	require.Equal(t, "GPT-6 Astra", gpt6Astra.DisplayName)
 	require.NotNil(t, gpt6Astra.DefaultReasoningLevel)
 	require.Equal(t, "medium", *gpt6Astra.DefaultReasoningLevel)
-	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max"}, effortsFromConfiguredCodexLevels(gpt6Astra.SupportedReasoningLevels))
-	require.NotContains(t, gpt6Astra.SupportedReasoningLevels, configuredCodexReasoningLevel{Effort: "ultra"})
+	require.Equal(t, []string{"low", "medium", "high", "xhigh", "max", "ultra"}, effortsFromConfiguredCodexLevels(gpt6Astra.SupportedReasoningLevels))
+	require.NotNil(t, gpt6Astra.MultiAgentReasoningEffort)
+	require.Equal(t, "xhigh", *gpt6Astra.MultiAgentReasoningEffort)
+	require.Equal(t, "v2", gpt6Astra.MultiAgentVersion)
 	require.NotContains(t, gpt6Astra.SupportedReasoningLevels, configuredCodexReasoningLevel{Effort: "none"})
 	require.True(t, configuredCodexSupportsPriorityServiceTier("gpt-6-astra"))
 	require.Equal(t, []configuredCodexServiceTier{{
@@ -480,7 +489,10 @@ func TestBuildCodexModelsManifestUsesGPT6AstraContract(t *testing.T) {
 	require.Equal(t, "medium", model["default_reasoning_level"])
 	levels, ok := model["supported_reasoning_levels"].([]any)
 	require.True(t, ok)
-	require.Len(t, levels, 5)
+	require.Len(t, levels, 6)
+	require.Equal(t, "ultra", levels[5].(map[string]any)["effort"])
+	require.Equal(t, "xhigh", model["multi_agent_reasoning_effort"])
+	require.Equal(t, "v2", model["multi_agent_version"])
 }
 
 // Scenario: 支持 Fast 的 GPT 型号在目录中声明 priority service tier。
@@ -1629,12 +1641,14 @@ func newCodexModelsTestAccount() *Account {
 func TestFetchCodexModelsManifestPassthrough(t *testing.T) {
 	manifestBody := `{"models":[{"slug":"gpt-5.5","display_name":"GPT-5.5"}]}`
 
-	var gotAuth, gotAccountID, gotOriginator, gotClientVersion string
+	var gotAuth, gotAccountID, gotOriginator, gotClientVersion, gotUA, gotVersion string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotAccountID = r.Header.Get("chatgpt-account-id")
 		gotOriginator = r.Header.Get("Originator")
 		gotClientVersion = r.URL.Query().Get("client_version")
+		gotUA = r.Header.Get("User-Agent")
+		gotVersion = r.Header.Get("Version")
 		w.Header().Set("ETag", `W/"abc123"`)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(manifestBody))
@@ -1666,8 +1680,68 @@ func TestFetchCodexModelsManifestPassthrough(t *testing.T) {
 	if gotOriginator != openai.CodexDefaultOriginator {
 		t.Errorf("originator header: got %q", gotOriginator)
 	}
-	if gotClientVersion != "0.137.0" {
+	if gotClientVersion != codexCLIVersion {
 		t.Errorf("client_version query: got %q", gotClientVersion)
+	}
+	require.Equal(t, codexCLIUserAgent, gotUA)
+	require.Equal(t, codexCLIVersion, gotVersion)
+}
+
+func TestFetchCodexModelsManifestUsesSingleIdentity(t *testing.T) {
+	const desktopUA = "Codex Desktop/0.153.4 (Mac OS 26.6.1; arm64) unknown (Codex Desktop; 26.903.61454)"
+	const cliUA = "codex-tui/0.150.0 (Linux; x86_64) xterm (codex-tui; 0.149.0)"
+	var gotHeader http.Header
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		gotHeader = req.Header.Clone()
+		gotQuery = req.URL.Query().Get("client_version")
+		_, _ = w.Write([]byte(`{"models":[]}`))
+	}))
+	defer server.Close()
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+	for _, tc := range []struct {
+		name, canonical, override, wantUA, wantOriginator, wantVersion string
+		force, shadow                                                  bool
+	}{
+		{"global_desktop", desktopUA, "", desktopUA, "Codex Desktop", "0.153.4", false, false},
+		{"global_cli", cliUA, "", cliUA, "codex-tui", "0.150.0", false, false},
+		{"account_cli", desktopUA, cliUA, cliUA, "codex-tui", "0.150.0", false, false},
+		{"account_desktop", cliUA, desktopUA, desktopUA, "Codex Desktop", "0.153.4", false, false},
+		{"force_canonical", desktopUA, cliUA, desktopUA, "Codex Desktop", "0.153.4", true, false},
+		{"shadow_inherits_parent", cliUA, "", desktopUA, "Codex Desktop", "0.153.4", false, true},
+		{"shadow_overrides_parent", desktopUA, cliUA, cliUA, "codex-tui", "0.150.0", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reads := 0
+			SetCodexCanonicalUserAgentResolver(func() string {
+				reads++
+				if reads > 1 {
+					return buildCodexCLIUserAgent("0.201.0")
+				}
+				return tc.canonical
+			})
+			t.Cleanup(func() { SetCodexCanonicalUserAgentResolver(nil) })
+			svc := &OpenAIGatewayService{cfg: &config.Config{}}
+			svc.cfg.Gateway.ForceCodexCLI = tc.force
+			account := newCodexModelsTestAccount()
+			account.Credentials["user_agent"] = tc.override
+			if tc.shadow {
+				parent := newCodexModelsTestAccount()
+				parent.ID = account.ID + 1
+				parent.Credentials["user_agent"] = desktopUA
+				account.ParentAccountID = &parent.ID
+				svc.accountRepo = &codexAccountIdentityRepoStub{account: parent}
+			}
+			_, err := svc.FetchCodexModelsManifest(context.Background(), account, "0.999.0", "")
+			require.NoError(t, err)
+			require.Equal(t, 1, reads, "all fields must share one snapshot")
+			require.Equal(t, tc.wantUA, gotHeader.Get("User-Agent"))
+			require.Equal(t, tc.wantOriginator, gotHeader.Get("originator"))
+			require.Equal(t, tc.wantVersion, gotHeader.Get("version"))
+			require.Equal(t, tc.wantVersion, gotQuery)
+		})
 	}
 }
 

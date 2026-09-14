@@ -518,17 +518,14 @@ export default {
         antigravityUserAgentVersionHint: '留空时使用 ANTIGRAVITY_USER_AGENT_VERSION 或内置默认值 2.8.0；填写后后台设置优先。',
         openaiCodexUserAgent: 'OpenAI Codex UA',
         openaiCodexUserAgentPlaceholder: 'codex-tui/0.146.1 (Ubuntu 22.4.0; x86_64) WindowsTerminal (codex-tui; 0.146.1)',
-        openaiCodexUserAgentHint: '出站统一使用的完整 Codex User-Agent，用于自定义 OS / 架构 / 终端指纹。留空则按下方版本号拼出标准 codex-tui 形态（推荐）。填写后首段和尾部的版本号仍会被下方版本号同步覆盖，避免这条 UA 停在填写时的旧版本——上游在容量紧张时按客户端身份分优先级降载，陈旧或非官方形态的身份会被优先丢弃并回 server_is_overloaded。',
+        openaiCodexUserAgentHint: '留空使用默认 CLI 身份。填写完整 CLI 或 Desktop UA 后，Core 和尾部客户端版本均按填写值保留，originator、version 与模型清单的 client_version 由该 UA 确定。',
+        openaiCodexCustomUserAgentActive: '自定义 UA 生效，版本以 UA 为准。以下版本偏好已保留，清空 UA 后恢复生效。',
         openaiCodexClientVersion: 'Codex 客户端版本号',
         openaiCodexClientVersionPlaceholder: '留空则跟随自动同步',
-        openaiCodexClientVersionHint: '网关对上游声明的 Codex 客户端版本号，User-Agent 与 version 头同源使用。留空表示使用自动同步到的官方最新稳定版；填写后固定为该版本，不再跟随同步。',
+        openaiCodexClientVersionHint: '仅在 UA 留空时生效。填写后固定默认 CLI 的 Core 版本；留空且启用同步时使用最新稳定版，否则使用内置版本。',
         openaiCodexVersionAutoSync: '自动同步 Codex 版本号',
-        openaiCodexVersionAutoSyncHint: '每 6 小时从官方仓库获取最新稳定版客户端版本号，无需为了跟版本而升级本服务。关闭后仅使用上方手填版本或内置版本。',
+        openaiCodexVersionAutoSyncHint: '每 6 小时从官方仓库同步最新稳定版 Core 版本。仅在 UA 和手动版本均留空时采用同步值；关闭后使用手动版本或内置版本。',
         openaiCodexVersionSyncedValue: '当前同步到：{version}',
-        codexOverdraftTitle: 'Codex 5 小时 / 7 天额度透支探测与调度',
-        codexOverdraftDescription: '默认开启。记录上游配额周期、执行有界探测并在窗口恢复后自动解除停调；不修改真实业务请求内容。',
-        codexOverdraftBusinessInjection: '兼容 CPAProxy 的真实请求隐藏注入',
-        codexOverdraftBusinessInjectionHint: '高风险开关：会向真实请求加入无操作工具对，上游可能把它计入输入 Token。只有确认计费修正和成本影响后才建议开启；默认关闭。',
         codexHardeningTitle: 'Codex 设置',
         codexClientRestrictionTitle: 'Codex 客户端限制',
         codexHardeningDesc:
@@ -1015,6 +1012,18 @@ export default {
         saved: '429 默认回避设置保存成功',
         saveFailed: '保存 429 默认回避设置失败'
       },
+      openai503Retry: {
+        title: 'OpenAI 503 账号内重试',
+        description: '明确的 server_is_overloaded 或 slow_down 只在当前账号内排队重试，不改变额度状态',
+        enabled: '启用 503 账号内重试',
+        enabledHint: '收到明确的 OpenAI 容量 503 后保留账号槽位并按 FIFO 排队',
+        retryDelaySeconds: '重试等待时间（秒）',
+        retryDelaySecondsHint: '每次 503 重试前的等待时间（1-120 秒）',
+        maxSameAccountRetries: '同账号最大重试次数',
+        maxSameAccountRetriesHint: '超过次数后交给上层换号；设为 0 表示不在同账号重试',
+        saved: 'OpenAI 503 重试设置保存成功',
+        saveFailed: '保存 OpenAI 503 重试设置失败'
+      },
       streamTimeout: {
         title: '流超时后的账号处理',
         description: '配置已发生流空闲超时后如何处理账号；超时判定仍由网关流超时配置控制',
@@ -1035,14 +1044,6 @@ export default {
         thresholdWindowMinutesHint: '超时计数的时间窗口（1-60分钟）',
         saved: '流超时账号处理设置保存成功',
         saveFailed: '保存流超时账号处理设置失败'
-      },
-      codexAdaptiveScheduling: {
-        title: 'Codex 自适应过载调度',
-        description: '适用于 OpenAI OAuth、Setup Token 和官方 API Key，包含压缩请求；仅根据明确的过载错误降载，自定义中转不参与',
-        enabled: '启用 Codex 自适应过载调度',
-        enabledHint: '启用后按账号、模型和独立会话统计真实过载压力，动态降低并发上限；首字耗时只记录，不会中止请求或触发换号',
-        saved: 'Codex 自适应过载调度设置保存成功',
-        saveFailed: '保存 Codex 自适应过载调度设置失败'
       },
       rectifier: {
         title: '请求整流器',

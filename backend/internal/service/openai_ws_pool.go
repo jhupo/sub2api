@@ -39,6 +39,7 @@ var (
 	errOpenAIWSConnClosed               = errors.New("openai ws connection closed")
 	errOpenAIWSConnQueueFull            = errors.New("openai ws connection queue full")
 	errOpenAIWSPreferredConnUnavailable = errors.New("openai ws preferred connection unavailable")
+	errOpenAIWSPoolChanged              = errors.New("openai ws account pool changed")
 )
 
 type openAIWSDialError struct {
@@ -355,6 +356,35 @@ func (c *openAIWSConn) acquire(ctx context.Context) error {
 			}
 			return nil
 		}
+	}
+}
+
+// acquireOrPoolChanged waits for this connection while also observing account
+// pool changes. A release, eviction, or completed dial lets the caller return
+// to pool selection instead of remaining pinned to a busier connection.
+func (c *openAIWSConn) acquireOrPoolChanged(ctx context.Context, poolChanged <-chan struct{}) error {
+	if c == nil {
+		return errOpenAIWSConnClosed
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.closedCh:
+		return errOpenAIWSConnClosed
+	case <-poolChanged:
+		return errOpenAIWSPoolChanged
+	case <-c.leaseCh:
+		if err := ctx.Err(); err != nil {
+			c.release()
+			return err
+		}
+		select {
+		case <-c.closedCh:
+			c.release()
+			return errOpenAIWSConnClosed
+		default:
+		}
+		return nil
 	}
 }
 
@@ -925,19 +955,40 @@ func (p *openAIWSConnPool) runBackgroundCleanupSweep(now time.Time) {
 	}
 }
 
+type openAIWSAcquireQueueWait struct {
+	queued  bool
+	rewoken bool
+	total   time.Duration
+}
+
 func (p *openAIWSConnPool) Acquire(ctx context.Context, req openAIWSAcquireRequest) (*openAIWSConnLease, error) {
 	if p != nil {
 		p.metrics.acquireTotal.Add(1)
 	}
-	return p.acquire(ctx, cloneOpenAIWSAcquireRequest(req), 0)
+	queueWait := &openAIWSAcquireQueueWait{}
+	lease, err := p.acquire(ctx, cloneOpenAIWSAcquireRequest(req), 0, queueWait)
+	if lease != nil && queueWait.rewoken {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			lease.Release()
+			return nil, ctxErr
+		}
+	}
+	if lease != nil && queueWait.total > 0 {
+		lease.queueWait = queueWait.total
+		p.metrics.acquireQueueWaitMs.Add(queueWait.total.Milliseconds())
+	}
+	return lease, err
 }
 
-func (p *openAIWSConnPool) acquire(ctx context.Context, req openAIWSAcquireRequest, retry int) (*openAIWSConnLease, error) {
+func (p *openAIWSConnPool) acquire(ctx context.Context, req openAIWSAcquireRequest, retry int, queueWait *openAIWSAcquireQueueWait) (*openAIWSConnLease, error) {
 	if p == nil || req.Account == nil || req.Account.ID <= 0 {
 		return nil, errors.New("invalid ws acquire request")
 	}
 	if stringsTrim(req.WSURL) == "" {
 		return nil, errors.New("ws url is empty")
+	}
+	if queueWait == nil {
+		queueWait = &openAIWSAcquireQueueWait{}
 	}
 
 retryAcquire:
@@ -987,7 +1038,7 @@ retryAcquire:
 						preferredConn.close()
 						p.evictConn(accountID, preferredConn.id)
 						if retry < 1 {
-							return p.acquire(ctx, req, retry+1)
+							return p.acquire(ctx, req, retry+1, queueWait)
 						}
 						return nil, err
 					}
@@ -1021,7 +1072,7 @@ retryAcquire:
 
 			if err := preferredConn.acquire(ctx); err != nil {
 				if errors.Is(err, errOpenAIWSConnClosed) && retry < 1 {
-					return p.acquire(ctx, req, retry+1)
+					return p.acquire(ctx, req, retry+1, queueWait)
 				}
 				return nil, err
 			}
@@ -1031,7 +1082,7 @@ retryAcquire:
 					preferredConn.close()
 					p.evictConn(accountID, preferredConn.id)
 					if retry < 1 {
-						return p.acquire(ctx, req, retry+1)
+						return p.acquire(ctx, req, retry+1, queueWait)
 					}
 					return nil, err
 				}
@@ -1064,7 +1115,7 @@ retryAcquire:
 						conn.close()
 						p.evictConn(accountID, conn.id)
 						if retry < 1 {
-							return p.acquire(ctx, req, retry+1)
+							return p.acquire(ctx, req, retry+1, queueWait)
 						}
 						return nil, err
 					}
@@ -1091,7 +1142,7 @@ retryAcquire:
 					best.close()
 					p.evictConn(accountID, best.id)
 					if retry < 1 {
-						return p.acquire(ctx, req, retry+1)
+						return p.acquire(ctx, req, retry+1, queueWait)
 					}
 					return nil, err
 				}
@@ -1117,7 +1168,7 @@ retryAcquire:
 							conn.close()
 							p.evictConn(accountID, conn.id)
 							if retry < 1 {
-								return p.acquire(ctx, req, retry+1)
+								return p.acquire(ctx, req, retry+1, queueWait)
 							}
 							return nil, err
 						}
@@ -1196,7 +1247,7 @@ retryAcquire:
 				conn.close()
 			}
 			if retry < 1 {
-				return p.acquire(ctx, req, retry+1)
+				return p.acquire(ctx, req, retry+1, queueWait)
 			}
 			return nil, errOpenAIWSConnClosed
 		}
@@ -1253,17 +1304,33 @@ acquireAtCapacity:
 		return nil, errOpenAIWSConnQueueFull
 	}
 	target.waiters.Add(1)
+	changedCh := ap.changeChannelLocked()
 	ap.mu.Unlock()
 	closeOpenAIWSConns(evicted)
-	defer target.waiters.Add(-1)
 	waitStart := time.Now()
-	p.metrics.acquireQueueWaitTotal.Add(1)
+	if !queueWait.queued {
+		queueWait.queued = true
+		p.metrics.acquireQueueWaitTotal.Add(1)
+	}
 
-	if err := target.acquire(ctx); err != nil {
-		if errors.Is(err, errOpenAIWSConnClosed) && retry < 1 {
-			return p.acquire(ctx, req, retry+1)
+	waitErr := target.acquireOrPoolChanged(ctx, changedCh)
+	target.waiters.Add(-1)
+	queueWait.total += time.Since(waitStart)
+	if waitErr != nil {
+		if errors.Is(waitErr, errOpenAIWSPoolChanged) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			queueWait.rewoken = true
+			goto retryAcquire
 		}
-		return nil, err
+		if errors.Is(waitErr, errOpenAIWSConnClosed) {
+			p.evictConn(accountID, target.id)
+			if retry < 1 {
+				return p.acquire(ctx, req, retry+1, queueWait)
+			}
+		}
+		return nil, waitErr
 	}
 	if p.shouldHealthCheckConn(target) {
 		if err := target.pingWithTimeout(openAIWSConnHealthCheckTO); err != nil {
@@ -1271,15 +1338,13 @@ acquireAtCapacity:
 			target.close()
 			p.evictConn(accountID, target.id)
 			if retry < 1 {
-				return p.acquire(ctx, req, retry+1)
+				return p.acquire(ctx, req, retry+1, queueWait)
 			}
 			return nil, err
 		}
 	}
 
-	queueWait := time.Since(waitStart)
-	p.metrics.acquireQueueWaitMs.Add(queueWait.Milliseconds())
-	lease := &openAIWSConnLease{pool: p, accountID: accountID, conn: target, queueWait: queueWait, connPick: connPick, reused: true}
+	lease := &openAIWSConnLease{pool: p, accountID: accountID, conn: target, connPick: connPick, reused: true}
 	p.metrics.acquireReuseTotal.Add(1)
 	p.recordLastSuccessfulAcquire(accountID, acquireGeneration, req)
 	p.ensureTargetIdleAsync(accountID)
@@ -1964,14 +2029,8 @@ func (p *openAIWSConnPool) effectiveMaxConnsByAccount(account *Account) int {
 	if hardCap <= 0 {
 		return 0
 	}
-	if p.modeRouterV2Enabled() {
-		if account == nil {
-			return hardCap
-		}
-		if account.Concurrency <= 0 {
-			return 0
-		}
-		return min(account.Concurrency, hardCap)
+	if p.modeRouterV2Enabled() && account != nil && account.Concurrency <= 0 {
+		return 0
 	}
 	if account == nil || !p.dynamicMaxConnsEnabled() {
 		return hardCap
