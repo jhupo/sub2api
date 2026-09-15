@@ -1246,7 +1246,7 @@ func (s *OpenAIGatewayService) publishCodexUsageSnapshots(accountID int64) {
 		s.codexUsagePending[accountID] = nil
 		s.codexUsageMu.Unlock()
 		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := s.accountRepo.UpdateExtra(updateCtx, accountID, updates); err != nil {
+		if err := s.accountRepo.UpdateExtra(updateCtx, accountID, updates); err != nil && !errors.Is(err, ErrCodexQuotaSnapshotStale) {
 			logger.LegacyPrintf("service.openai_gateway", "Codex quota snapshot publication failed: account=%d error=%v", accountID, err)
 			failures++
 			if failures < 3 {
@@ -1256,7 +1256,9 @@ func (s *OpenAIGatewayService) publishCodexUsageSnapshots(accountID int64) {
 			}
 		} else {
 			failures = 0
-			persistCodexQuotaRateLimit(updateCtx, s.accountRepo, accountID, updates)
+			if err == nil {
+				persistCodexQuotaRateLimit(updateCtx, s.accountRepo, accountID, updates)
+			}
 		}
 		cancel()
 		time.Sleep(time.Second)

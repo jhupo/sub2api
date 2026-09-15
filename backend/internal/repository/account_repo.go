@@ -2810,7 +2810,7 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 				return queryErr
 			}
 			if exists {
-				return nil
+				return service.ErrCodexQuotaSnapshotStale
 			}
 		}
 		return service.ErrAccountNotFound

@@ -22,7 +22,7 @@ var CodexCLIUserAgentPrefixes = []string{
 // Cursor/VSCode 扩展两种 UA：默认 `codex_vscode/`、GitHub Copilot 集成模式 `codex_vscode_copilot/`
 // （取证 extension.js `IS="codex_vscode_copilot"` 经 env 注入）；交互式 TUI 自报 `codex-tui/`
 // （连字符，2026-06-23 审计抽样约占真实流量 35%，必须显式列出）。`Codex Desktop/` 等 `Codex `
-// 前缀家族由 codexOfficialClientFamilyPrefix 单独处理（保留空格，避免退化为裸 codex 的宽松兜底）。
+// spaced family names are checked by an explicit allowlist below.
 var codexOfficialClientUAPrefixes = []string{
 	"codex_cli_rs/",
 	"codex-tui/",
@@ -39,7 +39,9 @@ var codexOfficialClientUAPrefixes = []string{
 // is_first_party_originator 的 starts_with("Codex ")。**保留尾随空格**，并以 HasPrefix 直接比对
 // 已归一化（小写 + 去首尾空格）的值——绝不能再经 normalizeCodexClientHeader 处理本前缀，否则
 // 空格被 TrimSpace 去掉、退化成裸 "codex" 而把任何含 codex 的串都放行。
-const codexOfficialClientFamilyPrefix = "codex "
+// The spaced family is intentionally allowlisted by client name. A generic
+// `Codex ` prefix would accept forged values such as `Codex Evil/1.0`.
+const codexOfficialClientFamilyName = "codex desktop"
 
 // codexOfficialClientOriginators：Codex 官方客户端家族 originator 精确集合。
 // app-server `initialize` 把 originator 设为 clientInfo.name 逐字值（codex-rs default_client.rs），
@@ -101,7 +103,7 @@ func isCodexOfficialClientRequest(userAgent string, strict bool) bool {
 	} else if matchCodexClientHeaderPrefixes(ua, codexOfficialClientUAPrefixes) {
 		return true
 	}
-	if strings.HasPrefix(ua, codexOfficialClientFamilyPrefix) {
+	if isCodexOfficialClientFamily(ua) {
 		return true
 	}
 	// UA 尾部兜底：提取最后一个括号组里的 name 段，用官方 originator 检测器判定。
@@ -149,7 +151,11 @@ func IsCodexOfficialClientOriginator(originator string) bool {
 	if codexOfficialClientOriginators[v] {
 		return true
 	}
-	return strings.HasPrefix(v, codexOfficialClientFamilyPrefix)
+	return isCodexOfficialClientFamily(v)
+}
+
+func isCodexOfficialClientFamily(value string) bool {
+	return value == codexOfficialClientFamilyName || strings.HasPrefix(value, codexOfficialClientFamilyName+"/")
 }
 
 // IsCodexOfficialClientByHeaders checks whether the request headers indicate an

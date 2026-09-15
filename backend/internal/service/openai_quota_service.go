@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -278,6 +279,9 @@ func (s *OpenAIQuotaService) cacheResetCreditsSnapshot(ctx context.Context, acco
 	}
 	updates[openaiQuotaResetCreditsKey] = credits
 	if err := s.accountRepo.UpdateExtra(ctx, accountID, updates); err != nil {
+		if errors.Is(err, ErrCodexQuotaSnapshotStale) {
+			return nil
+		}
 		return infraerrors.New(
 			http.StatusInternalServerError,
 			"OPENAI_QUOTA_CACHE_WRITE_FAILED",

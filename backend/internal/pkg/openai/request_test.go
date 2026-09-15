@@ -71,6 +71,7 @@ func TestIsCodexOfficialClientRequest(t *testing.T) {
 		{name: "codex_exec 前缀", ua: "codex_exec/0.1.0", want: true},
 		{name: "codex_sdk_ts 前缀", ua: "codex_sdk_ts/0.1.0", want: true},
 		{name: "Codex 桌面 UA", ua: "Codex Desktop/1.2.3", want: true},
+		{name: "伪造 spaced family UA", ua: "Codex Evil/1.0", want: false},
 		{name: "codex-tui 连字符前缀(真实流量占比最高)", ua: "codex-tui/0.141.0 (Mac OS 15.5.0; arm64) ghostty/1.3.1 (codex-tui; 0.141.0)", want: true},
 		{name: "复合 UA 包含 codex_app", ua: "Mozilla/5.0 codex_app/0.1.0", want: true},
 		{name: "大小写混合", ua: "Codex_VSCode/1.2.3", want: true},
@@ -109,6 +110,7 @@ func TestIsCodexOfficialClientOriginator(t *testing.T) {
 		{name: "codex_exec", originator: "codex_exec", want: true},
 		{name: "codex_sdk_ts", originator: "codex_sdk_ts", want: true},
 		{name: "Codex 前缀", originator: "Codex Desktop", want: true},
+		{name: "伪造 Codex originator", originator: "Codex Evil", want: false},
 		{name: "codex-tui 连字符(真实流量占比最高)", originator: "codex-tui", want: true},
 		{name: "空白包裹", originator: "  codex_vscode  ", want: true},
 		{name: "伪造含 codex_ 子串应拒(L2 收紧)", originator: "evil-codex_cli", want: false},
@@ -138,6 +140,7 @@ func TestIsCodexOfficialClientRequestStrict(t *testing.T) {
 		{name: "codex_vscode 前缀开头", ua: "codex_vscode/1.0.0", want: true},
 		{name: "codex_app 前缀开头", ua: "codex_app/2.1.0", want: true},
 		{name: "Codex 家族前缀保留", ua: "Codex Desktop/1.2.3", want: true},
+		{name: "伪造 spaced family 前缀拒绝", ua: "Codex Evil/1.2.3", want: false},
 		{name: "大小写混合前缀开头", ua: "Codex_CLI_Rs/0.141.0", want: true},
 		// UA 尾部兜底保留：cccc override 真实 codex-tui 仍放行
 		{name: "cccc override 尾部兜底仍放行", ua: "cccc/0.141.0 (Mac OS 14.6.1; arm64) Apple_Terminal/453 (codex-tui; 0.141.0)", want: true},

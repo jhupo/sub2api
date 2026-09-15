@@ -350,119 +350,146 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return nil, fmt.Errorf("get access token: %w", err)
 	}
 
-	// 6. Build upstream request
-	stageCodexAttemptIdentity(c, s.codexAttemptIdentity(c, account).withBridgeSession(promptCacheKey))
-	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-	cancelUpstream := func() {}
-	if clientStream {
-		upstreamCtx, cancelUpstream = context.WithCancel(upstreamCtx)
-		stop := context.AfterFunc(ctx, cancelUpstream)
-		defer stop()
-	}
-	defer cancelUpstream()
-	upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, promptCacheKey, false)
-	releaseUpstreamCtx()
+	// 6. Build and send the upstream request. The retry state rebuilds a fresh
+	// request after a 503 because the previous body has been consumed.
+	openAI503State, err := s.newOpenAI503RetryState(ctx, account)
 	if err != nil {
-		return nil, fmt.Errorf("build upstream request: %w", err)
+		return nil, err
 	}
-
-	if !account.UsesOpenAICodexProtocol() && promptCacheKey != "" {
-		sessionKey := promptCacheKey
-		if !compatPromptCacheTenantIsolated {
-			sessionKey = isolateOpenAISessionID(getAPIKeyIDFromContext(c), promptCacheKey)
-		}
-		upstreamReq.Header.Set("session_id", generateSessionUUID(sessionKey))
-	}
-
-	// 7. Send request
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
-	if err != nil {
-		cancelUpstream()
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
-	}
+	stageCodexAttemptIdentity(c, s.codexAttemptIdentity(c, account).withBridgeSession(promptCacheKey))
+	var cancelUpstream context.CancelFunc
+	var stopUpstream func() bool
 	defer func() {
-		cancelUpstream()
-		_ = resp.Body.Close()
+		if stopUpstream != nil {
+			_ = stopUpstream()
+		}
+		if cancelUpstream != nil {
+			cancelUpstream()
+		}
 	}()
-
-	// 8. Handle error response with failover
-	if resp.StatusCode >= 400 {
-		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
-		if replayStats != nil && replayStats.Injected > 0 &&
-			resp.StatusCode == http.StatusBadRequest &&
-			isOpenAIInvalidEncryptedContentError(respBody, upstreamMsg) {
-			replayLog.Warn("openai chat_completions: upstream rejected replayed reasoning, retrying without replay",
-				zap.Int("reasoning_items_injected", replayStats.Injected),
-				zap.String("upstream_message", upstreamMsg),
-			)
-			return s.forwardAsChatCompletions(withChatReasoningReplayDisabled(ctx), c, account, body, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated)
+	buildUpstreamRequest := func() (*http.Request, error) {
+		if stopUpstream != nil {
+			_ = stopUpstream()
+			stopUpstream = nil
 		}
-		if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
-			expectedTaskID := account.GetCredential("task_id")
-			if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {
-				return nil, fmt.Errorf("agent identity task recovery failed: %w", err)
+		if cancelUpstream != nil {
+			cancelUpstream()
+			cancelUpstream = nil
+		}
+		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+		if clientStream {
+			upstreamCtx, cancelUpstream = context.WithCancel(upstreamCtx)
+			stopUpstream = context.AfterFunc(ctx, cancelUpstream)
+		}
+		upstreamReq, buildErr := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, promptCacheKey, false)
+		releaseUpstreamCtx()
+		if buildErr != nil {
+			return nil, fmt.Errorf("build upstream request: %w", buildErr)
+		}
+		if !account.UsesOpenAICodexProtocol() && promptCacheKey != "" {
+			sessionKey := promptCacheKey
+			if !compatPromptCacheTenantIsolated {
+				sessionKey = isolateOpenAISessionID(getAPIKeyIDFromContext(c), promptCacheKey)
 			}
-			return s.forwardAsChatCompletions(markAgentIdentityTaskRecoveryTried(ctx), c, account, body, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated)
+			upstreamReq.Header.Set("session_id", generateSessionUUID(sessionKey))
 		}
-		if account.Type == AccountTypeAPIKey &&
-			openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown &&
-			!isResponsesEndpointSupportedByStatus(resp.StatusCode) {
-			logger.L().Info("openai chat_completions: /responses unsupported, falling back to raw chat completions",
-				zap.Int64("account_id", account.ID),
-				zap.Int("upstream_status", resp.StatusCode),
-				zap.String("upstream_message", upstreamMsg),
+		return upstreamReq, nil
+	}
+	for {
+		resp, err := openAI503State.do(c, buildUpstreamRequest, proxyURL)
+		if err != nil {
+			var failoverErr *UpstreamFailoverError
+			if errors.As(err, &failoverErr) {
+				return nil, err
+			}
+			if resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+		}
+
+		// 7. Handle error response with failover
+		if resp.StatusCode >= 400 {
+			respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+			if replayStats != nil && replayStats.Injected > 0 &&
+				resp.StatusCode == http.StatusBadRequest &&
+				isOpenAIInvalidEncryptedContentError(respBody, upstreamMsg) {
+				replayLog.Warn("openai chat_completions: upstream rejected replayed reasoning, retrying without replay",
+					zap.Int("reasoning_items_injected", replayStats.Injected),
+					zap.String("upstream_message", upstreamMsg),
+				)
+				return s.forwardAsChatCompletions(withChatReasoningReplayDisabled(ctx), c, account, body, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated)
+			}
+			if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
+				expectedTaskID := account.GetCredential("task_id")
+				if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {
+					return nil, fmt.Errorf("agent identity task recovery failed: %w", err)
+				}
+				return s.forwardAsChatCompletions(markAgentIdentityTaskRecoveryTried(ctx), c, account, body, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated)
+			}
+			if account.Type == AccountTypeAPIKey &&
+				openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown &&
+				!isResponsesEndpointSupportedByStatus(resp.StatusCode) {
+				logger.L().Info("openai chat_completions: /responses unsupported, falling back to raw chat completions",
+					zap.Int64("account_id", account.ID),
+					zap.Int("upstream_status", resp.StatusCode),
+					zap.String("upstream_message", upstreamMsg),
+				)
+				return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
+			}
+			if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
+				return nil, foErr
+			}
+			return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
+		}
+
+		// 8. Handle normal response
+		var result *OpenAIForwardResult
+		var handleErr error
+		if clientStream {
+			result, handleErr = s.handleChatStreamingResponse(
+				ctx, resp, c, account, originalModel, billingModel, upstreamModel,
+				startTime, len(body),
 			)
-			return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
+		} else {
+			result, handleErr = s.handleChatBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
 		}
-		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
-			return nil, foErr
+		if handleErr != nil {
+			var retry bool
+			if retry, handleErr = openAI503State.handleStreamError(c, resp, handleErr); retry {
+				continue
+			}
 		}
-		return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
-	}
 
-	// 9. Handle normal response
-	var result *OpenAIForwardResult
-	var handleErr error
-	if clientStream {
-		result, handleErr = s.handleChatStreamingResponse(
-			ctx, resp, c, account, originalModel, billingModel, upstreamModel,
-			startTime, len(body),
-		)
-	} else {
-		result, handleErr = s.handleChatBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
-	}
-
-	// cyber_policy：标记已设、error 已按 Chat Completions 格式发给客户端。丢弃 result、
-	// 返回哨兵，使 handler 落入 tokens=0 免费用量行（对齐 /v1/responses），不计费、不 failover。
-	if GetOpsCyberPolicy(c) != nil {
-		if handleErr == nil {
-			handleErr = errOpenAICyberPolicyForwarded
+		// cyber_policy：标记已设、error 已按 Chat Completions 格式发给客户端。丢弃 result、
+		// 返回哨兵，使 handler 落入 tokens=0 免费用量行（对齐 /v1/responses），不计费、不 failover。
+		if GetOpsCyberPolicy(c) != nil {
+			if handleErr == nil {
+				handleErr = errOpenAICyberPolicyForwarded
+			}
+			return nil, handleErr
 		}
-		return nil, handleErr
-	}
 
-	// Propagate ServiceTier and ReasoningEffort to result for billing.
-	// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过
-	// fast policy filter/force 之后）里的 tier，policy filter 删掉字段后不再
-	// 按原请求 Fast 计费。
-	if result != nil {
-		if tier := resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(responsesBody)); tier != nil {
-			result.ServiceTier = tier
+		// Propagate ServiceTier and ReasoningEffort to result for billing.
+		// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过
+		// fast policy filter/force 之后）里的 tier，policy filter 删掉字段后不再
+		// 按原请求 Fast 计费。
+		if result != nil {
+			if tier := resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(responsesBody)); tier != nil {
+				result.ServiceTier = tier
+			}
+			if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
+				re := responsesReq.Reasoning.Effort
+				result.ReasoningEffort = &re
+			}
 		}
-		if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
-			re := responsesReq.Reasoning.Effort
-			result.ReasoningEffort = &re
-		}
-	}
 
-	return result, handleErr
+		return result, handleErr
+	}
 }
 
 func normalizeResponsesRequestServiceTier(req *apicompat.ResponsesRequest) {

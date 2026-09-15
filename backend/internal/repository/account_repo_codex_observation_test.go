@@ -24,8 +24,11 @@ func TestCodexQuotaUpdateExtraRejectsOlderObservationAtomically(t *testing.T) {
 			WithArgs(sqlmock.AnyArg(), int64(1), int64(200)).WillReturnResult(sqlmock.NewResult(0, affected))
 		if affected == 0 {
 			mock.ExpectQuery(`SELECT .*accounts.*`).WithArgs(int64(1)).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)))
+			err := repo.UpdateExtra(context.Background(), 1, map[string]any{"codex_usage_observed_at_us": int64(200), "codex_5h_used_percent": float64(3)})
+			require.ErrorIs(t, err, service.ErrCodexQuotaSnapshotStale)
+		} else {
+			require.NoError(t, repo.UpdateExtra(context.Background(), 1, map[string]any{"codex_usage_observed_at_us": int64(200), "codex_5h_used_percent": float64(3)}))
 		}
-		require.NoError(t, repo.UpdateExtra(context.Background(), 1, map[string]any{"codex_usage_observed_at_us": int64(200), "codex_5h_used_percent": float64(3)}))
 		require.NoError(t, mock.ExpectationsWereMet())
 	}
 }

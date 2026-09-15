@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -994,6 +995,8 @@ func (s *AccountUsageService) persistOpenAICodexSnapshot(accountID int64, update
 		defer updateCancel()
 		if err := s.accountRepo.UpdateExtra(updateCtx, accountID, updates); err == nil {
 			persistCodexQuotaRateLimit(updateCtx, s.accountRepo, accountID, updates)
+		} else if !errors.Is(err, ErrCodexQuotaSnapshotStale) {
+			return
 		}
 	}()
 }
