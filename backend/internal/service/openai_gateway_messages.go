@@ -537,7 +537,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		}
 		return result, handleErr
 	}
-	return nil, fmt.Errorf("openai messages forwarding loop exited unexpectedly")
 }
 
 func ensureCodexOAuthInstructionsField(reqBody map[string]any) {
