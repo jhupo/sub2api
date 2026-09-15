@@ -2155,7 +2155,7 @@ func classifyOpsPhase(errType, message, code string) string {
 		return "upstream"
 	case "invalid_request_error", "permission_error", "forbidden_error", "not_found_error", "model_not_found":
 		return "request"
-	case "upstream_error", "overloaded_error":
+	case "upstream_error", "overloaded_error", "service_unavailable_error":
 		return "upstream"
 	case "api_error":
 		if isOpsNoAvailableAccountMessage(msg) {

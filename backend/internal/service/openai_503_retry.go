@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -10,56 +11,36 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
 )
 
-// openAI503RetryState activates an account-local FIFO only after the account
-// has returned an explicit capacity 503. Before that point it is dormant and
-// does not serialize ordinary requests.
+// One state owns the retry budget for an account attempt, including HTTP and
+// pre-output SSE failures. The handler keeps the account concurrency slot.
 type openAI503RetryState struct {
-	service      *OpenAIGatewayService
-	account      *Account
-	ctx          context.Context
-	lease        *openAI503RetryLease
-	retries      int
-	completeOnce bool
+	service *OpenAIGatewayService
+	account *Account
+	ctx     context.Context
+	retries int
 }
 
 func (s *OpenAIGatewayService) newOpenAI503RetryState(ctx context.Context, account *Account) (*openAI503RetryState, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	state := &openAI503RetryState{service: s, account: account, ctx: ctx}
-	if s == nil || account == nil || account.ID <= 0 {
+	if s == nil || account == nil || account.ID <= 0 || account.Platform != PlatformOpenAI {
 		return state, nil
 	}
-	lease, err := s.getOpenAI503RetryQueue().enter(ctx, account.ID)
-	if err != nil {
+	if err := s.getOpenAI503RetryQueue().wait(ctx, account.ID, 0, false); err != nil {
+		if errors.Is(err, ErrOpenAI503RetryQueueFull) {
+			return nil, &UpstreamFailoverError{StatusCode: http.StatusServiceUnavailable, OpenAI503QueueHandled: true}
+		}
 		return nil, err
 	}
-	state.lease = lease
 	return state, nil
 }
 
-func (s *openAI503RetryState) complete() {
-	if s == nil || s.completeOnce {
-		return
-	}
-	s.completeOnce = true
-	if s.lease != nil {
-		s.lease.complete()
-	}
-}
-
-// do sends one or more HTTP attempts. build must create a fresh request for
-// each attempt because the previous request body and context are consumed.
-// Non-capacity responses are returned untouched for the caller's normal error
-// and streaming handling.
-func (s *openAI503RetryState) do(
-	c *gin.Context,
-	build func() (*http.Request, error),
-	proxyURL string,
-) (*http.Response, error) {
-	if s == nil || s.service == nil {
-		return nil, nil
-	}
+// build creates a fresh request because the previous attempt consumed its body.
+func (s *openAI503RetryState) do(c *gin.Context, build func() (*http.Request, error), proxyURL string) (*http.Response, error) {
 	for {
 		req, err := build()
 		if err != nil {
@@ -70,11 +51,8 @@ func (s *openAI503RetryState) do(
 		if c != nil {
 			SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(started).Milliseconds())
 		}
-		if err != nil {
+		if err != nil || resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
 			return resp, err
-		}
-		if resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
-			return resp, nil
 		}
 		retry, handleErr := s.handle503(c, resp)
 		if handleErr != nil {
@@ -86,80 +64,79 @@ func (s *openAI503RetryState) do(
 	}
 }
 
-// handle503 consumes and restores the response body when it is not a queue
-// signal, and returns retry=true after moving the current lease to its FIFO
-// position. On exhaustion it returns the failover error to the caller.
+// Stream readers only return a typed capacity failure while replay is safe.
+// Close the previous stream before waiting, so it cannot retain a connection
+// or keep producing data during cooldown.
+func (s *openAI503RetryState) handleStreamError(c *gin.Context, resp *http.Response, err error) (bool, error) {
+	var failure *UpstreamFailoverError
+	if !errors.As(err, &failure) || failure.OpenAI503QueueHandled ||
+		openAIStreamClientOutputStarted(c, false) ||
+		!isOpenAI503RetrySignal(failure.StatusCode, failure.ResponseBody) {
+		return false, err
+	}
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	retry, queueErr := s.retry(c, failure.StatusCode, failure.ResponseHeaders, failure.ResponseBody)
+	if retry || queueErr != nil {
+		return retry, queueErr
+	}
+	return false, err
+}
+
 func (s *openAI503RetryState) handle503(c *gin.Context, resp *http.Response) (bool, error) {
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, openAIUpstreamErrorBodyReadLimit))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, openAIUpstreamErrorBodyReadLimit))
 	_ = resp.Body.Close()
-	if readErr != nil {
-		return false, readErr
+	if err != nil {
+		return false, err
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
-	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))
-	if !isOpenAI503RetrySignal(resp.StatusCode, body) {
+	return s.retry(c, resp.StatusCode, resp.Header, body)
+}
+
+func (s *openAI503RetryState) retry(c *gin.Context, status int, headers http.Header, body []byte) (bool, error) {
+	if s.account == nil || s.account.Platform != PlatformOpenAI || !isOpenAI503RetrySignal(status, body) {
 		return false, nil
 	}
+	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))
 	settings := DefaultOpenAI503RetrySettings()
 	if s.service.settingService != nil {
-		if configured, getErr := s.service.settingService.GetOpenAI503RetrySettings(s.ctx); getErr == nil && configured != nil {
+		if configured, err := s.service.settingService.GetOpenAI503RetrySettings(s.ctx); err == nil && configured != nil {
 			settings = configured
 		}
 	}
-	if !settings.Enabled {
-		return false, nil
+	exhausted := func() error {
+		failure := s.service.newOpenAIAccountFailoverError(s.account, status, headers, body, message, false, false)
+		failure.OpenAI503QueueHandled = true
+		failure.RetryableOnSameAccount = false
+		return failure
 	}
-	if s.lease == nil || !s.lease.active() {
-		lease, activateErr := s.service.getOpenAI503RetryQueue().activate(s.ctx, s.account.ID)
-		if activateErr != nil {
-			failoverErr := s.service.newOpenAIAccountFailoverError(s.account, resp.StatusCode, resp.Header, body, message, false, false)
-			failoverErr.OpenAI503QueueHandled = true
-			s.complete()
-			return false, failoverErr
-		}
-		s.lease = lease
-	}
-	if s.retries >= settings.MaxSameAccountRetries {
-		failoverErr := s.service.newOpenAIAccountFailoverError(s.account, resp.StatusCode, resp.Header, body, message, false, false)
-		failoverErr.OpenAI503QueueHandled = true
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			Platform: s.account.Platform, AccountID: s.account.ID, AccountName: s.account.Name,
-			UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"), Kind: "failover", Message: message,
-		})
-		s.complete()
-		return false, failoverErr
+	if !settings.Enabled || s.retries >= settings.MaxSameAccountRetries {
+		return false, exhausted()
 	}
 	s.retries++
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		Platform: s.account.Platform, AccountID: s.account.ID, AccountName: s.account.Name,
+		UpstreamStatusCode: status, UpstreamRequestID: headers.Get("x-request-id"), Kind: "retry", Message: message,
+	})
 	delay := time.Duration(settings.RetryDelaySeconds) * time.Second
-	if retryAfter := openAI503RetryAfter(resp.Header); retryAfter > delay {
+	if retryAfter := openAI503RetryAfter(headers); retryAfter > delay {
 		delay = retryAfter
 	}
-	_ = resp.Body.Close()
-	s.lease.requeue(delay)
-	if err := s.lease.waitTurn(s.ctx); err != nil {
-		s.complete()
+	if err := s.service.getOpenAI503RetryQueue().wait(s.ctx, s.account.ID, delay, true); err != nil {
+		if errors.Is(err, ErrOpenAI503RetryQueueFull) {
+			return false, exhausted()
+		}
 		return false, err
 	}
 	return true, nil
 }
 
 func isOpenAI503RetrySignal(status int, body []byte) bool {
-	if status != http.StatusServiceUnavailable {
-		return false
-	}
-	for _, path := range []string{"error.code", "response.error.code", "code"} {
-		code := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, path).String()))
-		if code == "server_is_overloaded" || code == "slow_down" {
-			return true
-		}
-	}
-	return false
+	return status == http.StatusServiceUnavailable && isOpenAIRequestScopedCapacityShed("", body)
 }
 
 func openAI503RetryAfter(headers http.Header) time.Duration {
-	if headers == nil {
-		return 0
-	}
 	seconds, err := strconv.Atoi(strings.TrimSpace(headers.Get("Retry-After")))
 	if err != nil || seconds <= 0 || seconds > 120 {
 		return 0

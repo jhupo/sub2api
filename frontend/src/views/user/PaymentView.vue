@@ -6,27 +6,23 @@
       </div>
 
       <template v-else>
-        <!-- A compact purchase hero keeps the account context visible without competing with the checkout. -->
-        <section class="relative overflow-hidden rounded-[28px] bg-gradient-to-br from-slate-950 via-blue-950 to-primary-600 px-6 py-7 text-white shadow-xl shadow-blue-900/10 md:px-8">
-          <div class="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-white/10 blur-3xl"></div>
-          <div class="pointer-events-none absolute -bottom-28 left-1/3 h-56 w-56 rounded-full bg-cyan-300/15 blur-3xl"></div>
-          <div class="relative flex flex-col gap-7 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <div class="mb-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold text-blue-100">
-                <Icon name="creditCard" size="sm" />
-                <span>{{ t('payment.rechargeAccount') }}</span>
-              </div>
-              <h1 class="text-2xl font-bold tracking-tight md:text-3xl">
+        <section class="flex items-center justify-between gap-4 rounded-2xl border border-primary-100 bg-gradient-to-r from-white to-primary-50 px-4 py-4 shadow-sm dark:border-dark-700 dark:from-dark-900 dark:to-dark-800 sm:px-6" data-testid="purchase-header">
+          <div class="flex min-w-0 items-center gap-3">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/40 dark:text-primary-300">
+              <Icon :name="activeTab === 'recharge' ? 'creditCard' : 'sparkles'" size="md" />
+            </div>
+            <div class="min-w-0">
+              <h1 class="text-xl font-bold text-gray-900 dark:text-white">
                 {{ activeTab === 'recharge' ? t('payment.tabTopUp') : t('payment.tabSubscribe') }}
               </h1>
-              <p class="mt-2 max-w-xl text-sm leading-6 text-blue-100/80">
-                {{ user?.username || '' }} · {{ t('payment.currentBalance') }} {{ user?.balance?.toFixed(2) || '0.00' }}
+              <p v-if="user?.username" class="mt-0.5 truncate text-sm text-gray-500 dark:text-gray-400" :title="user.username">
+                {{ user.username }}
               </p>
             </div>
-            <div class="rounded-2xl border border-white/15 bg-white/10 px-5 py-4 backdrop-blur-md lg:min-w-[190px]">
-              <p class="text-xs font-medium text-blue-100/70">{{ t('payment.currentBalance') }}</p>
-              <p class="mt-1 text-2xl font-bold tracking-tight">${{ user?.balance?.toFixed(2) || '0.00' }}</p>
-            </div>
+          </div>
+          <div class="shrink-0 text-right">
+            <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('payment.currentBalance') }}</p>
+            <p class="mt-0.5 text-xl font-bold tabular-nums text-gray-900 dark:text-white sm:text-2xl">${{ user?.balance?.toFixed(2) || '0.00' }}</p>
           </div>
         </section>
 
@@ -125,22 +121,21 @@
           <template v-else-if="activeTab === 'subscription'">
             <template v-if="selectedPlan">
               <div class="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)] lg:items-start">
-                <section class="selected-checkout-plan-card relative overflow-hidden p-6 text-white md:p-8">
-                  <div class="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full bg-white/10 blur-2xl"></div>
+                <section class="selected-checkout-plan-card relative overflow-hidden border border-primary-100 bg-gradient-to-br from-white to-primary-50 p-6 text-gray-900 dark:border-dark-600 dark:from-dark-900 dark:to-primary-950 dark:text-white md:p-8">
                   <div class="relative">
-                    <div class="mb-8 flex items-center gap-2 text-sm font-semibold text-primary-100"><Icon name="sparkles" size="sm" />{{ t('payment.tabSubscribe') }}</div>
-                    <h2 class="text-2xl font-bold">{{ selectedPlan.name }}</h2>
+                    <div class="mb-6 flex items-center gap-2 text-sm font-semibold text-primary-700 dark:text-primary-100"><Icon name="sparkles" size="sm" />{{ t('payment.tabSubscribe') }}</div>
+                    <h2 class="break-words text-2xl font-bold">{{ selectedPlan.name }}</h2>
                     <div class="mt-4 flex flex-wrap items-baseline gap-2">
-                      <span v-if="selectedPlan.original_price" class="text-sm text-primary-200 line-through">{{ formatSelectedSubscriptionPaymentAmount(selectedPlan.original_price) }}</span>
-                      <span class="text-4xl font-bold tracking-tight">{{ formatSelectedSubscriptionPaymentAmount(selectedPlan.price) }}</span>
-                      <span class="text-sm text-primary-100">/ {{ planValiditySuffix }}</span>
+                      <span v-if="selectedPlan.original_price" class="text-sm text-gray-500 line-through dark:text-primary-200">{{ formatSelectedSubscriptionPaymentAmount(selectedPlan.original_price) }}</span>
+                      <span class="break-all text-4xl font-bold">{{ formatSelectedSubscriptionPaymentAmount(selectedPlan.price) }}</span>
+                      <span class="text-sm text-gray-600 dark:text-primary-100">/ {{ planValiditySuffix }}</span>
                     </div>
-                    <p v-if="selectedPlan.description" class="mt-4 text-sm leading-6 text-primary-100">{{ selectedPlan.description }}</p>
+                    <p v-if="selectedPlan.description" class="mt-4 break-words text-sm leading-6 text-gray-600 dark:text-primary-100">{{ selectedPlan.description }}</p>
                     <div class="mt-8 grid grid-cols-2 gap-3">
-                      <div v-if="selectedPlan.daily_limit_usd != null" class="rounded-2xl border border-white/15 bg-white/10 p-3"><span class="text-xs text-primary-100">{{ t('payment.planCard.dailyLimit') }}</span><div class="mt-1 font-semibold">${{ selectedPlan.daily_limit_usd }}</div></div>
-                      <div v-if="selectedPlan.weekly_limit_usd != null" class="rounded-2xl border border-white/15 bg-white/10 p-3"><span class="text-xs text-primary-100">{{ t('payment.planCard.weeklyLimit') }}</span><div class="mt-1 font-semibold">${{ selectedPlan.weekly_limit_usd }}</div></div>
-                      <div v-if="selectedPlan.monthly_limit_usd != null" class="rounded-2xl border border-white/15 bg-white/10 p-3"><span class="text-xs text-primary-100">{{ t('payment.planCard.monthlyLimit') }}</span><div class="mt-1 font-semibold">${{ selectedPlan.monthly_limit_usd }}</div></div>
-                      <div v-if="selectedPlan.daily_limit_usd == null && selectedPlan.weekly_limit_usd == null && selectedPlan.monthly_limit_usd == null" class="rounded-2xl border border-white/15 bg-white/10 p-3"><span class="text-xs text-primary-100">{{ t('payment.planCard.quota') }}</span><div class="mt-1 font-semibold">{{ t('payment.planCard.unlimited') }}</div></div>
+                      <div v-if="selectedPlan.daily_limit_usd != null" class="selected-plan-limit"><span>{{ t('payment.planCard.dailyLimit') }}</span><div>${{ selectedPlan.daily_limit_usd }}</div></div>
+                      <div v-if="selectedPlan.weekly_limit_usd != null" class="selected-plan-limit"><span>{{ t('payment.planCard.weeklyLimit') }}</span><div>${{ selectedPlan.weekly_limit_usd }}</div></div>
+                      <div v-if="selectedPlan.monthly_limit_usd != null" class="selected-plan-limit"><span>{{ t('payment.planCard.monthlyLimit') }}</span><div>${{ selectedPlan.monthly_limit_usd }}</div></div>
+                      <div v-if="selectedPlan.daily_limit_usd == null && selectedPlan.weekly_limit_usd == null && selectedPlan.monthly_limit_usd == null" class="selected-plan-limit"><span>{{ t('payment.planCard.quota') }}</span><div>{{ t('payment.planCard.unlimited') }}</div></div>
                     </div>
                   </div>
                 </section>
@@ -1031,10 +1026,20 @@ onMounted(async () => {
 <style scoped>
 .selected-checkout-plan-card {
   isolation: isolate;
-  border: 1px solid #334b70;
   border-radius: 22px;
-  background: radial-gradient(ellipse at 100% 0%, #1a3e60 0%, transparent 60%), #101d33;
-  box-shadow: 0 16px 36px -16px rgb(15 35 70 / 45%);
+  @apply shadow-sm;
+}
+
+.selected-plan-limit {
+  @apply min-w-0 rounded-2xl border border-primary-100 bg-white/70 p-3 dark:border-white/15 dark:bg-white/10;
+}
+
+.selected-plan-limit > span {
+  @apply text-xs text-gray-600 dark:text-primary-100;
+}
+
+.selected-plan-limit > div {
+  @apply mt-1 break-words font-semibold;
 }
 
 .selected-checkout-plan-card::before {

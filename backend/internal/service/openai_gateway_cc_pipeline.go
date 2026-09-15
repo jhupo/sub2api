@@ -176,7 +176,6 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	if err != nil {
 		return nil, err
 	}
-	defer state.complete()
 	for {
 		resp, sendErr := s.sendCCUpstreamRequestOnce(ctx, c, account, targetURL, body, stream, bearerToken, userAgent, grokCacheIdentity)
 		if sendErr != nil || resp == nil || resp.StatusCode != http.StatusServiceUnavailable {

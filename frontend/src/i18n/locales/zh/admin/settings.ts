@@ -1020,7 +1020,7 @@ export default {
         retryDelaySeconds: '重试等待时间（秒）',
         retryDelaySecondsHint: '每次 503 重试前的等待时间（1-120 秒）',
         maxSameAccountRetries: '同账号最大重试次数',
-        maxSameAccountRetriesHint: '超过次数后交给上层换号；设为 0 表示不在同账号重试',
+        maxSameAccountRetriesHint: '耗尽后本次请求排除此账号并尝试其他账号，无候选则返回错误；0 表示不在同账号重试',
         saved: 'OpenAI 503 重试设置保存成功',
         saveFailed: '保存 OpenAI 503 重试设置失败'
       },

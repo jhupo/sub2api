@@ -1026,7 +1026,7 @@ export default {
         retryDelaySeconds: 'Retry delay (seconds)',
         retryDelaySecondsHint: 'Wait before each 503 retry (1-120 seconds)',
         maxSameAccountRetries: 'Maximum same-account retries',
-        maxSameAccountRetriesHint: 'After this count fail over to another account; 0 disables same-account retries',
+        maxSameAccountRetriesHint: 'Once exhausted, exclude this account for the current request and try another; return an error if none remain. 0 disables same-account retries',
         saved: 'OpenAI 503 retry settings saved',
         saveFailed: 'Failed to save OpenAI 503 retry settings'
       },

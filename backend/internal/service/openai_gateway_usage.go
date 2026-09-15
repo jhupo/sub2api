@@ -1137,6 +1137,49 @@ func buildCodexUsageExtraUpdates(snapshot *OpenAICodexUsageSnapshot, fallbackNow
 	return updates
 }
 
+// persistCodexQuotaRateLimit turns an explicit exhausted Codex window into the
+// same account-level cooldown used for an upstream 429. A usage snapshot below
+// 100% remains only an observation and never changes account state.
+func persistCodexQuotaRateLimit(ctx context.Context, repo AccountRepository, accountID int64, updates map[string]any) {
+	if repo == nil || accountID <= 0 || len(updates) == 0 {
+		return
+	}
+	now := time.Now()
+	var resetAt *time.Time
+	for _, window := range []string{"5h", "7d"} {
+		used, ok := resolveAccountExtraNumber(updates, "codex_"+window+"_used_percent")
+		if !ok || used < 100 {
+			continue
+		}
+		candidate := parseSchedulingResetAt(updates["codex_"+window+"_reset_at"])
+		if candidate == nil {
+			seconds, hasSeconds := resolveAccountExtraNumber(updates, "codex_"+window+"_reset_after_seconds")
+			observed, observedErr := parseTime(fmt.Sprint(updates["codex_usage_updated_at"]))
+			if hasSeconds && observedErr == nil {
+				value := observed.Add(time.Duration(seconds) * time.Second)
+				candidate = &value
+			}
+		}
+		if candidate == nil || !candidate.After(now) || (resetAt != nil && !candidate.After(*resetAt)) {
+			continue
+		}
+		value := *candidate
+		resetAt = &value
+	}
+	if resetAt == nil {
+		return
+	}
+	var err error
+	if extendingRepo, ok := repo.(grokRateLimitExtendingRepository); ok {
+		err = extendingRepo.SetRateLimitedIfLater(ctx, accountID, *resetAt)
+	} else {
+		err = repo.SetRateLimited(ctx, accountID, *resetAt)
+	}
+	if err != nil {
+		logger.LegacyPrintf("service.openai_gateway", "Codex quota rate-limit persistence failed: account=%d reset_at=%s error=%v", accountID, resetAt.UTC().Format(time.RFC3339), err)
+	}
+}
+
 // updateCodexUsageSnapshot saves the Codex usage snapshot to account's Extra field
 // updateCodexUsageSnapshot 把 /responses 的 x-codex-* 全局头快照写入账号 codex_* Extra。
 // ⚠️ 调用方必须排除 spark 影子账号(account.IsShadow()):影子的 codex_* 仅由 QueryUsage
@@ -1213,7 +1256,7 @@ func (s *OpenAIGatewayService) publishCodexUsageSnapshots(accountID int64) {
 			}
 		} else {
 			failures = 0
-			notifyOpenAIAutoReset(accountID)
+			persistCodexQuotaRateLimit(updateCtx, s.accountRepo, accountID, updates)
 		}
 		cancel()
 		time.Sleep(time.Second)

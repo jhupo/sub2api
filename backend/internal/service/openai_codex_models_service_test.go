@@ -1692,6 +1692,7 @@ func TestFetchCodexModelsManifestPassthrough(t *testing.T) {
 func TestFetchCodexModelsManifestUsesSingleIdentity(t *testing.T) {
 	const desktopUA = "Codex Desktop/0.153.4 (Mac OS 26.6.1; arm64) unknown (Codex Desktop; 26.903.61454)"
 	const cliUA = "codex-tui/0.150.0 (Linux; x86_64) xterm (codex-tui; 0.149.0)"
+	const macCLIUA = "codex-tui/0.154.0 (Mac OS 15.6.1; arm64) iTerm.app/3.5.14 (codex-tui; 0.154.0)"
 	var gotHeader http.Header
 	var gotQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -1709,6 +1710,7 @@ func TestFetchCodexModelsManifestUsesSingleIdentity(t *testing.T) {
 	}{
 		{"global_desktop", desktopUA, "", desktopUA, "Codex Desktop", "0.153.4", false, false},
 		{"global_cli", cliUA, "", cliUA, "codex-tui", "0.150.0", false, false},
+		{"global_mac_cli", macCLIUA, "", macCLIUA, "codex-tui", "0.154.0", false, false},
 		{"account_cli", desktopUA, cliUA, cliUA, "codex-tui", "0.150.0", false, false},
 		{"account_desktop", cliUA, desktopUA, desktopUA, "Codex Desktop", "0.153.4", false, false},
 		{"force_canonical", desktopUA, cliUA, desktopUA, "Codex Desktop", "0.153.4", true, false},

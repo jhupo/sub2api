@@ -174,7 +174,7 @@ func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) 
 	}
 }
 
-func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *testing.T) {
+func TestAccountUsageService_PersistOpenAICodexProbeSnapshotMarksExhaustedWindow(t *testing.T) {
 	t.Parallel()
 
 	repo := &accountUsageCodexProbeRepo{
@@ -198,12 +198,15 @@ func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *
 
 	select {
 	case got := <-repo.rateLimitCh:
-		t.Fatalf("不应将探测快照写入运行时限流状态: %v", got)
-	case <-time.After(200 * time.Millisecond):
+		if !got.After(time.Now()) {
+			t.Fatalf("expected future rate-limit reset, got %v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("等待 codex 配额限流状态写入超时")
 	}
 }
 
-func TestAccountUsageService_GetOpenAIUsage_DoesNotPromoteCodexExtraToRateLimit(t *testing.T) {
+func TestAccountUsageService_GetOpenAIUsage_PromotesExhaustedCodexExtraToRateLimit(t *testing.T) {
 	t.Parallel()
 
 	resetAt := time.Now().Add(6 * 24 * time.Hour).UTC().Truncate(time.Second)
@@ -212,6 +215,7 @@ func TestAccountUsageService_GetOpenAIUsage_DoesNotPromoteCodexExtraToRateLimit(
 	}
 	svc := &AccountUsageService{accountRepo: repo}
 	account := &Account{
+		ID:       321,
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Extra: map[string]any{
@@ -229,13 +233,13 @@ func TestAccountUsageService_GetOpenAIUsage_DoesNotPromoteCodexExtraToRateLimit(
 	if usage.SevenDay == nil || usage.SevenDay.Utilization != 100.0 {
 		t.Fatalf("预期 7 天用量仍然可见，实际为 %#v", usage.SevenDay)
 	}
-	if account.RateLimitResetAt != nil {
-		t.Fatalf("不应让已耗尽的 codex extra 改写运行时限流状态: %v", account.RateLimitResetAt)
-	}
 	select {
 	case got := <-repo.rateLimitCh:
-		t.Fatalf("不应将已耗尽的 codex extra 持久化为运行时限流状态: %v", got)
-	case <-time.After(200 * time.Millisecond):
+		if !got.Equal(resetAt) {
+			t.Fatalf("rate-limit reset = %v, want %v", got, resetAt)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("等待已耗尽 codex extra 限流状态写入超时")
 	}
 }
 

@@ -4,80 +4,101 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
+
+func queueLength(q *openAI503RetryQueue, accountID int64) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.queues[accountID])
+}
 
 func TestOpenAI503RetryQueueDormantUntilActivated(t *testing.T) {
 	q := newOpenAI503RetryQueue()
-	lease, err := q.enter(context.Background(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lease.active() {
-		t.Fatal("ordinary request should not activate the queue")
-	}
-	lease.complete()
-
-	active, err := q.activate(context.Background(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !active.active() {
-		t.Fatal("explicit 503 should activate the queue")
-	}
-	active.complete()
+	require.NoError(t, q.wait(context.Background(), 1, 0, false))
+	require.Zero(t, queueLength(q, 1))
 }
 
 func TestOpenAI503RetryQueueFIFOAndRequeue(t *testing.T) {
 	q := newOpenAI503RetryQueue()
-	head, err := q.activate(context.Background(), 1)
-	if err != nil {
-		t.Fatal(err)
+	a, err := q.enqueue(1, time.Now(), true)
+	require.NoError(t, err)
+	b, err := q.enqueue(1, time.Now(), true)
+	require.NoError(t, err)
+	c, err := q.enqueue(1, time.Now(), false)
+	require.NoError(t, err)
+	q.remove(1, a)
+	select {
+	case <-b.turn:
+	default:
+		t.Fatal("second attempt must be next")
 	}
-	secondReady := make(chan *openAI503RetryLease, 1)
-	go func() {
-		lease, enterErr := q.enter(context.Background(), 1)
-		if enterErr != nil {
-			return
+	select {
+	case <-c.turn:
+		t.Fatal("third attempt cannot overtake second")
+	default:
+	}
+	// A fails again and joins behind C.
+	a, err = q.enqueue(1, time.Now(), true)
+	require.NoError(t, err)
+	q.remove(1, b)
+	select {
+	case <-c.turn:
+	default:
+		t.Fatal("new arrival must precede requeued attempt")
+	}
+	q.remove(1, c)
+	q.remove(1, a)
+	require.Zero(t, queueLength(q, 1))
+}
+
+func TestOpenAI503RetryQueueDispatchesWithoutWaitingForResponse(t *testing.T) {
+	q := newOpenAI503RetryQueue()
+	gate, err := q.enqueue(1, time.Now(), true)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := make(chan error, 2)
+	for range 2 {
+		go func() { done <- q.wait(ctx, 1, 50*time.Millisecond, true) }()
+	}
+	require.Eventually(t, func() bool { return queueLength(q, 1) == 3 }, time.Second, time.Millisecond)
+	require.NoError(t, q.wait(ctx, 2, 0, false), "another account must stay independent")
+	q.remove(1, gate)
+	// Both attempts may now run. Neither needs a completion callback to let the
+	// other dispatch, and each cooldown started when it entered the queue.
+	for range 2 {
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			t.Fatal("a retry retained its queue position after dispatch")
 		}
-		secondReady <- lease
-	}()
-	time.Sleep(10 * time.Millisecond)
-	head.requeue(0)
-	var second *openAI503RetryLease
-	select {
-	case second = <-secondReady:
-	case <-time.After(time.Second):
-		t.Fatal("second request did not enter queue")
 	}
-	select {
-	case <-second.entry.turn:
-	case <-time.After(time.Second):
-		t.Fatal("second request did not become head after requeue")
-	}
-	head.complete()
-	second.complete()
+	require.Zero(t, queueLength(q, 1))
 }
 
 func TestOpenAI503RetryQueueCancellationUnblocksNext(t *testing.T) {
 	q := newOpenAI503RetryQueue()
-	head, err := q.activate(context.Background(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	gate, err := q.enqueue(1, time.Now(), true)
+	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
-	entered := make(chan *openAI503RetryLease, 1)
-	go func() {
-		canceled, enterErr := q.enter(ctx, 1)
-		if enterErr == nil {
-			entered <- canceled
-		}
-	}()
+	done := make(chan error, 1)
+	go func() { done <- q.wait(ctx, 1, 0, false) }()
+	require.Eventually(t, func() bool { return queueLength(q, 1) == 2 }, time.Second, time.Millisecond)
 	cancel()
-	select {
-	case canceled := <-entered:
-		canceled.complete()
-	case <-time.After(time.Second):
-		// q.enter observes cancellation and removes its entry.
+	require.ErrorIs(t, <-done, context.Canceled)
+	require.Equal(t, 1, queueLength(q, 1))
+	q.remove(1, gate)
+	require.NoError(t, q.wait(context.Background(), 1, 0, false))
+}
+
+func TestOpenAI503RetryQueueCapacity(t *testing.T) {
+	q := newOpenAI503RetryQueue()
+	for range openAI503RetryQueueMaxEntries {
+		_, err := q.enqueue(1, time.Now(), true)
+		require.NoError(t, err)
 	}
-	head.complete()
+	require.ErrorIs(t, q.wait(context.Background(), 1, 0, false), ErrOpenAI503RetryQueueFull)
 }

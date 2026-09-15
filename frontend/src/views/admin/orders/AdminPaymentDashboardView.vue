@@ -1,17 +1,17 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <p class="text-sm text-gray-500 dark:text-gray-400" data-testid="displayed-range" aria-live="polite">
+      <div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p class="min-w-0 break-words text-sm text-gray-500 dark:text-gray-400" data-testid="displayed-range" aria-live="polite">
           {{ displayedRange }}
         </p>
-        <div class="flex flex-wrap items-center gap-2">
-          <div class="inline-flex shrink-0 overflow-hidden rounded-lg border border-gray-200 dark:border-dark-600">
+        <div class="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:shrink-0">
+          <div class="grid min-w-0 flex-1 grid-cols-[repeat(3,minmax(0,1fr))_auto] overflow-hidden rounded-lg border border-gray-200 dark:border-dark-600 sm:flex">
             <button
               v-for="option in periodOptions"
               :key="option.value"
               type="button"
-              class="whitespace-nowrap px-3 py-2 text-sm font-medium transition-colors"
+              class="min-w-0 px-2 py-2.5 text-sm font-medium transition-colors sm:px-3"
               :aria-pressed="period === option.value"
               :data-testid="`period-${option.value}`"
               :class="period === option.value
@@ -22,7 +22,7 @@
               {{ option.label }}
             </button>
           </div>
-          <button @click="loadDashboard" :disabled="loading" class="btn btn-secondary" :title="t('common.refresh')" :aria-label="t('common.refresh')">
+          <button @click="loadDashboard" :disabled="loading" class="btn btn-secondary h-11 w-11 shrink-0 p-2" :title="t('common.refresh')" :aria-label="t('common.refresh')">
             <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
           </button>
         </div>
@@ -75,11 +75,11 @@
       <form id="payment-date-range" class="space-y-4" @submit.prevent="applyCustomRange">
         <div>
           <label for="payment-start-date" class="input-label">{{ t('payment.admin.startDate') }}</label>
-          <input id="payment-start-date" v-model="draftStartDate" type="date" class="input" required :max="draftEndDate || undefined" />
+          <input id="payment-start-date" v-model="draftStartDate" type="date" class="input min-w-0 max-w-full" required :max="draftEndDate || undefined" />
         </div>
         <div>
           <label for="payment-end-date" class="input-label">{{ t('payment.admin.endDate') }}</label>
-          <input id="payment-end-date" v-model="draftEndDate" type="date" class="input" required :min="draftStartDate || undefined" />
+          <input id="payment-end-date" v-model="draftEndDate" type="date" class="input min-w-0 max-w-full" required :min="draftStartDate || undefined" />
         </div>
         <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.dateRangeHint') }}</p>
         <p v-if="rangeError" role="alert" class="text-sm text-red-600">{{ rangeError }}</p>

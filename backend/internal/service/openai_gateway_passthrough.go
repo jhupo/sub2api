@@ -324,6 +324,10 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	openAI503State, err := s.newOpenAI503RetryState(ctx, account)
+	if err != nil {
+		return nil, err
+	}
 
 	if c != nil {
 		c.Set("openai_passthrough", true)
@@ -381,17 +385,19 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		upstreamPassthroughModel = actualModel
 		SetOpsUpstreamModel(c, actualModel)
-		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-		upstreamReq, buildErr := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
-		releaseUpstreamCtx()
-		if buildErr != nil {
-			return nil, buildErr
-		}
-
 		upstreamStart := time.Now()
-		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		resp, err = openAI503State.do(c, func() (*http.Request, error) {
+			upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+			upstreamReq, buildErr := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
+			releaseUpstreamCtx()
+			return upstreamReq, buildErr
+		}, proxyURL)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
+			var failoverErr *UpstreamFailoverError
+			if errors.As(err, &failoverErr) || ctx.Err() != nil {
+				return nil, err
+			}
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
@@ -476,6 +482,10 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 				ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel,
 			)
 			if handleErr != nil {
+				var retry bool
+				if retry, handleErr = openAI503State.handleStreamError(c, resp, handleErr); retry {
+					continue
+				}
 				if retryBody, fallbackModel, retry := s.applyOpenAIPassthroughCompactFallbackFromSignal(
 					c, account, requestedModel, body, handleErr, compactModelFallbackRetried, resp,
 				); retry {
@@ -514,6 +524,10 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		} else {
 			result, handleErr := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
+				var retry bool
+				if retry, handleErr = openAI503State.handleStreamError(c, resp, handleErr); retry {
+					continue
+				}
 				if retryBody, fallbackModel, retry := s.applyOpenAIPassthroughCompactFallbackFromSignal(
 					c, account, requestedModel, body, handleErr, compactModelFallbackRetried, resp,
 				); retry {
@@ -1737,7 +1751,7 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 		classificationHeaders = nil
 	}
 	failoverErr := s.newOpenAIAccountFailoverErrorWithClassificationHeaders(account, statusCode, headers, classificationHeaders, payload, message, shouldDisable, retryableOnSameAccount)
-	if failoverErr.IsCredentialFailure() || failoverErr.RequestScopedTransient {
+	if failoverErr.IsCredentialFailure() || failoverErr.RequestScopedTransient || statusCode == http.StatusServiceUnavailable {
 		return failoverErr
 	}
 	// Preserve the existing generic envelope for unclassified stream failures;
@@ -1884,6 +1898,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	nonBillableUpstreamError := false
 	var bareErrorPayload []byte
 	bareErrorAccountSideEffectsPending := false
+	upstreamErrorRecorded := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 	// 流式预扣补扣：仅当请求持有活动的预扣 guard 且带输出补扣 tracker 时非空。
 	// 逐帧仅做整数累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流。
@@ -2102,6 +2117,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					})
 				}
 				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted)
+				if outputStarted && !cyberHit && !upstreamErrorRecorded {
+					s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "http_error", dataBytes, failedMessage)
+					upstreamErrorRecorded = true
+				}
 				if !outputStarted && !cyberHit && isOpenAINonBillableRequestError(failedMessage, dataBytes) {
 					nonBillableUpstreamError = true
 				}

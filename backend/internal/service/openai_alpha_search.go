@@ -91,6 +91,7 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+		s.recordAlphaSearchUpstreamError(c, account, resp, respBody, upstreamMessage)
 		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMessage, respBody) ||
 			isOpenAIAlphaSearchEndpointUnsupported(account, resp.StatusCode) {
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
@@ -175,6 +176,7 @@ func (s *OpenAIGatewayService) forwardAlphaSearchViaResponsesWebSearch(
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+		s.recordAlphaSearchUpstreamError(c, account, resp, respBody, upstreamMessage)
 		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMessage, respBody) {
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 			// 仍按 alpha/search 工具请求处理：PAT 的工具链路失败不能直接永久置错。
@@ -225,6 +227,23 @@ func (s *OpenAIGatewayService) forwardAlphaSearchViaResponsesWebSearch(
 
 func openAIAlphaSearchSchedulingModel(account *Account, requestedModel string) string {
 	return canonicalOpenAIAccountSchedulingModel(account, requestedModel)
+}
+
+func (s *OpenAIGatewayService) recordAlphaSearchUpstreamError(c *gin.Context, account *Account, resp *http.Response, body []byte, message string) {
+	detail := ""
+	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+		limit := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+		if limit <= 0 {
+			limit = 2048
+		}
+		detail = truncateString(string(body), limit)
+	}
+	setOpsUpstreamError(c, resp.StatusCode, message, detail)
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+		UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"),
+		Passthrough: true, Kind: "http_error", Message: message, Detail: detail,
+	})
 }
 
 func (s *OpenAIGatewayService) buildOpenAIAlphaSearchResponsesWebSearchRequest(ctx context.Context, c *gin.Context, account *Account, alphaBody []byte, body []byte, token string) (*http.Request, error) {

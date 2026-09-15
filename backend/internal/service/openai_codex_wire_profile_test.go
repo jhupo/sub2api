@@ -46,6 +46,29 @@ func TestValidateOpenAICodexUserAgent(t *testing.T) {
 	}
 }
 
+func TestCodexMacCLIUserAgentFromSettings(t *testing.T) {
+	const ua = "codex-tui/0.154.0 (Mac OS 15.6.1; arm64) iTerm.app/3.5.14 (codex-tui; 0.154.0)"
+	require.NoError(t, ValidateOpenAICodexUserAgent(ua))
+	settings := NewSettingService(&codexVersionSettingRepoStub{values: map[string]string{
+		SettingKeyOpenAICodexUserAgent:           ua,
+		SettingKeyOpenAICodexClientVersionSynced: "0.200.1",
+	}}, nil)
+	SetCodexCanonicalUserAgentResolver(func() string {
+		return settings.GetOpenAICodexCanonicalUserAgent(context.Background())
+	})
+	t.Cleanup(func() { SetCodexCanonicalUserAgentResolver(nil) })
+	svc := &OpenAIGatewayService{}
+	account := newTestOAuthAccount(620, nil)
+	c := newFingerprintStageTestContext(t)
+	body := []byte(`{"input":"test"}`)
+	require.NoError(t, svc.prepareCodexAttemptIdentity(context.Background(), c, account, body))
+	req, err := svc.buildUpstreamRequest(context.Background(), c, account, body, "token", true, "cache", false)
+	require.NoError(t, err)
+	require.Equal(t, ua, req.Header.Get("User-Agent"))
+	require.Equal(t, "codex-tui", req.Header.Get("originator"))
+	require.Equal(t, "0.154.0", req.Header.Get("version"))
+}
+
 func TestCodexCustomUASettingsCacheTransition(t *testing.T) {
 	repo := &codexVersionSettingRepoStub{values: map[string]string{
 		SettingKeyOpenAICodexUserAgent:           codexCLIUserAgent,

@@ -434,15 +434,15 @@
                   </div>
                   <Toggle v-model="openai503RetryForm.enabled" />
                 </div>
-                <div v-if="openai503RetryForm.enabled" class="space-y-4 border-t border-gray-100 pt-4 dark:border-dark-700">
+                <div v-if="openai503RetryForm.enabled" class="grid gap-4 border-t border-gray-100 pt-4 sm:grid-cols-2 dark:border-dark-700">
                   <div>
                     <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t("admin.settings.openai503Retry.retryDelaySeconds") }}</label>
-                    <input v-model.number="openai503RetryForm.retry_delay_seconds" type="number" min="1" max="120" class="input w-32" />
+                    <input v-model.number="openai503RetryForm.retry_delay_seconds" type="number" min="1" max="120" class="input w-full sm:max-w-32" />
                     <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">{{ t("admin.settings.openai503Retry.retryDelaySecondsHint") }}</p>
                   </div>
                   <div>
                     <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t("admin.settings.openai503Retry.maxSameAccountRetries") }}</label>
-                    <input v-model.number="openai503RetryForm.max_same_account_retries" type="number" min="0" max="10" class="input w-32" />
+                    <input v-model.number="openai503RetryForm.max_same_account_retries" type="number" min="0" max="10" class="input w-full sm:max-w-32" />
                     <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">{{ t("admin.settings.openai503Retry.maxSameAccountRetriesHint") }}</p>
                   </div>
                 </div>

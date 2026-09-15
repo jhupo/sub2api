@@ -2308,6 +2308,54 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionSticky(t *testin
 	}
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_ExhaustedRetryAccountStaysExcluded(t *testing.T) {
+	for _, advanced := range []string{"false", "true"} {
+		t.Run("advanced="+advanced, func(t *testing.T) {
+			ctx := context.Background()
+			groupID := int64(10)
+			accounts := []Account{
+				{ID: 2001, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1, GroupIDs: []int64{groupID}},
+				{ID: 2002, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1, GroupIDs: []int64{groupID}},
+			}
+			cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{
+				"openai:session_retry": 2001,
+			}}
+			svc := &OpenAIGatewayService{
+				accountRepo:        schedulerTestOpenAIAccountRepo{accounts: accounts},
+				cache:              cache,
+				cfg:                &config.Config{},
+				rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService(advanced),
+				concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+			}
+			excluded := map[int64]struct{}{2001: {}}
+			selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_retry", "gpt-5.1", excluded, OpenAIUpstreamTransportAny, false)
+			require.NoError(t, err)
+			require.NotNil(t, selection)
+			require.Equal(t, int64(2002), selection.Account.ID, "request exclusion must override the sticky binding")
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+
+			excluded[2002] = struct{}{}
+			selection, _, err = svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_retry", "gpt-5.1", excluded, OpenAIUpstreamTransportAny, false)
+			require.Error(t, err)
+			require.Nil(t, selection, "an exhausted pool must not revisit a failed account")
+			require.Len(t, excluded, 2)
+
+			// A fresh request has a fresh exclusion set; capacity errors do not
+			// globally disable accounts or erase a session's affinity.
+			cache.sessionBindings["openai:session_retry"] = 2001
+			selection, _, err = svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_retry", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+			require.NoError(t, err)
+			require.NotNil(t, selection)
+			require.Equal(t, int64(2001), selection.Account.ID)
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+		})
+	}
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyBusyFallsBackToIdleAccount(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10100)

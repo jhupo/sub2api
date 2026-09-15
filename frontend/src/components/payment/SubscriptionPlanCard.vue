@@ -1,9 +1,9 @@
 <template>
   <article class="plan-card" :class="{ 'plan-card--owned': isRenewal }">
-    <span v-if="discountText" class="plan-card__discount">{{ discountText }}</span>
     <div class="plan-card__name min-w-0">
       <span class="plan-card__icon" aria-hidden="true"><Icon name="bolt" size="sm" /></span>
-      <h3 :title="plan.name" class="min-w-0 break-words [overflow-wrap:anywhere] text-base font-semibold">{{ plan.name }}</h3>
+      <h3 :title="plan.name" class="min-w-0 flex-1 break-words [overflow-wrap:anywhere] text-base font-semibold">{{ plan.name }}</h3>
+      <span v-if="discountText" class="plan-card__discount">{{ discountText }}</span>
     </div>
 
     <div class="plan-card__price min-w-0">
@@ -87,11 +87,8 @@ const validitySuffix = computed(() => planValiditySuffix(props.plan, t))
   flex-direction: column;
   overflow: hidden;
   padding: 24px;
-  color: #f1f5ff;
-  border: 1px solid #334b70;
+  @apply border border-gray-200 bg-white text-gray-900 shadow-sm dark:border-dark-600 dark:bg-dark-800 dark:text-gray-100;
   border-radius: 22px;
-  background: radial-gradient(ellipse at 100% 0%, #1a3e60 0%, transparent 60%), #101d33;
-  box-shadow: 0 16px 36px -16px rgb(15 35 70 / 45%);
   transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 .plan-card::before {
@@ -101,14 +98,13 @@ const validitySuffix = computed(() => planValiditySuffix(props.plan, t))
   right: 24px;
   left: 24px;
   height: 1px;
-  background: linear-gradient(90deg, transparent, #7aa5ff, #6be4ea, transparent);
+  @apply bg-primary-200 dark:bg-primary-700;
 }
 .plan-card:hover {
   transform: translateY(-3px);
-  border-color: #638fc4;
-  box-shadow: 0 24px 45px -20px rgb(27 78 157 / 55%);
+  @apply border-primary-400 shadow-md dark:border-primary-500;
 }
-.plan-card--owned { border-color: #398c84; }
+.plan-card--owned { @apply border-emerald-500 dark:border-emerald-600; }
 .plan-card__name { display: flex; align-items: center; gap: 10px; }
 .plan-card__name { min-width: 0; }
 .plan-card__name h3 { overflow-wrap: anywhere; font-size: 18px; font-weight: 650; line-height: 1.4; }
@@ -118,38 +114,32 @@ const validitySuffix = computed(() => planValiditySuffix(props.plan, t))
   height: 32px;
   flex-shrink: 0;
   place-items: center;
-  color: #9ce8f4;
-  border: 1px solid rgb(148 213 245 / 20%);
+  @apply border border-primary-100 bg-primary-50 text-primary-600 dark:border-primary-800 dark:bg-primary-900/30 dark:text-primary-300;
   border-radius: 10px;
-  background: rgb(113 184 247 / 10%);
 }
 .plan-card__discount {
-  position: absolute;
-  top: 24px;
-  right: 24px;
   flex-shrink: 0;
   padding: 4px 9px;
-  color: #9ef0d3;
-  border: 1px solid rgb(89 221 178 / 24%);
+  @apply border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300;
   border-radius: 7px;
-  background: rgb(43 178 143 / 12%);
   font-size: 12px;
   font-weight: 650;
 }
 .plan-card__price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px; margin-top: 20px; }
-.plan-card__currency { font-size: 19px; color: #acd2ff; }
-.plan-card__value { font-size: 42px; font-weight: 700; line-height: 1.15; letter-spacing: -1.5px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.plan-card__period, .plan-card__currency-code { color: #b4c5dd; font-size: 13px; }
-.plan-card__price del { margin-left: auto; color: #a5b6cf; font-size: 13px; }
-.plan-card__description { margin-top: 12px; color: #bdcbe0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
-.plan-card__limits { display: grid; gap: 1px; margin-top: 18px; overflow: hidden; border: 1px solid rgb(155 186 228 / 15%); border-radius: 12px; background: rgb(155 186 228 / 10%); }
-.plan-card__limits > div { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 11px 13px; background: #16283f; }
-.plan-card__limits dt { display: flex; align-items: center; gap: 8px; color: #b8c9df; font-size: 12px; }
-.plan-card__limits dt svg { color: #90b3e4; flex-shrink: 0; }
-.plan-card__limits dd { color: #e0f7ff; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
+.plan-card__currency { font-size: 19px; @apply text-primary-600 dark:text-primary-300; }
+.plan-card__value { font-size: 42px; font-weight: 700; line-height: 1.15; letter-spacing: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.plan-card__period, .plan-card__currency-code { font-size: 13px; @apply text-gray-500 dark:text-gray-400; }
+.plan-card__price del { margin-left: auto; font-size: 13px; @apply text-gray-500 dark:text-gray-400; }
+.plan-card__description { margin-top: 12px; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; @apply text-gray-600 dark:text-gray-300; }
+.plan-card__limits { display: grid; gap: 1px; margin-top: 18px; overflow: hidden; border-radius: 12px; @apply border border-gray-200 bg-gray-200 dark:border-dark-600 dark:bg-dark-600; }
+.plan-card__limits > div { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 11px 13px; @apply bg-gray-50 dark:bg-dark-900; }
+.plan-card__limits dt { display: flex; align-items: center; gap: 8px; font-size: 12px; @apply text-gray-600 dark:text-gray-300; }
+.plan-card__limits dt svg { flex-shrink: 0; @apply text-primary-500 dark:text-primary-400; }
+.plan-card__limits dd { font-size: 15px; font-weight: 650; overflow-wrap: anywhere; @apply text-gray-900 dark:text-gray-100; }
 .plan-card__features { display: grid; gap: 8px; margin-top: 16px; }
-.plan-card__features li { display: flex; align-items: flex-start; gap: 8px; color: #bdcbe0; font-size: 13px; overflow-wrap: anywhere; }
-.plan-card__features svg { flex-shrink: 0; margin-top: 2px; color: #82e3c4; }
+.plan-card__features li { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; overflow-wrap: anywhere; @apply text-gray-600 dark:text-gray-300; }
+.plan-card__features li span { min-width: 0; }
+.plan-card__features svg { flex-shrink: 0; margin-top: 2px; @apply text-emerald-600 dark:text-emerald-400; }
 .plan-card__action { margin-top: auto; padding-top: 18px; }
 .plan-card__action button {
   display: flex;
@@ -159,17 +149,14 @@ const validitySuffix = computed(() => planValiditySuffix(props.plan, t))
   width: 100%;
   min-height: 44px;
   padding: 10px 16px;
-  color: #fff;
-  border: 1px solid rgb(139 174 255 / 50%);
+  @apply border border-primary-600 bg-primary-600 text-white shadow-sm dark:border-primary-500 dark:bg-primary-500;
   border-radius: 11px;
-  background: linear-gradient(105deg, #2860dc, #5550d8);
-  box-shadow: 0 6px 18px rgb(18 37 106 / 30%);
   font-size: 14px;
   font-weight: 600;
   transition: filter 180ms ease;
 }
 .plan-card__action button:hover { filter: brightness(1.15); }
-.plan-card__action button:focus-visible { outline: 2px solid #a1e9ff; outline-offset: 4px; }
+.plan-card__action button:focus-visible { outline-width: 2px; outline-style: solid; outline-offset: 4px; @apply outline-primary-500 dark:outline-primary-300; }
 @media (max-width: 480px) { .plan-card { padding: 20px; } }
 @media (prefers-reduced-motion: reduce) { .plan-card, .plan-card__action button { transition: none; } .plan-card:hover { transform: none; } }
 </style>

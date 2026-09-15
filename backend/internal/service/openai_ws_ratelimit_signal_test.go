@@ -394,7 +394,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ErrorEventUsageL
 	}
 }
 
-func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotDoesNotSetRateLimit(t *testing.T) {
+func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotSetsRateLimit(t *testing.T) {
 	repo := &openAICodexSnapshotAsyncRepo{
 		updateExtraCh: make(chan map[string]any, 1),
 		rateLimitCh:   make(chan time.Time, 1),
@@ -419,8 +419,9 @@ func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotDoesNotS
 
 	select {
 	case resetAt := <-repo.rateLimitCh:
-		t.Fatalf("不应因仅写入快照而生成运行时限流时间: %v", resetAt)
+		require.WithinDuration(t, time.Now().Add(time.Hour), resetAt, 2*time.Second)
 	case <-time.After(2 * time.Second):
+		t.Fatal("等待 Codex 快照限流状态写入超时")
 	}
 }
 

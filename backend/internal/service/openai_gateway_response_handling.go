@@ -228,6 +228,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	suppressCurrentEvent := false
 	var bareErrorPayload []byte
 	bareErrorAccountSideEffectsPending := false
+	upstreamErrorRecorded := false
 	pendingSSEEventType := ""
 	eventInProgress := false
 	eventStartsClientOutput := false
@@ -520,6 +521,10 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 					})
 				}
 				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted)
+				if outputStarted && !cyberHit && !upstreamErrorRecorded {
+					s.recordOpenAIStreamUpstreamError(c, account, false, upstreamRequestID, "http_error", dataBytes, failedMessage)
+					upstreamErrorRecorded = true
+				}
 				if !outputStarted && !cyberHit && isOpenAINonBillableRequestError(failedMessage, dataBytes) {
 					nonBillableUpstreamError = true
 				}

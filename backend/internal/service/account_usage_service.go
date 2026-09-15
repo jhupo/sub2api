@@ -724,6 +724,7 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 	accountCopy.Extra = shallowCopyMap(account.Extra)
 	account = &accountCopy
 	applyExtraToUsage(usage, account.Extra, now)
+	persistCodexQuotaRateLimit(ctx, s.accountRepo, account.ID, account.Extra)
 	if shouldQueryOpenAIQuota(account, now) &&
 		(force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) &&
 		s.shouldQueryOpenAICodexSnapshot(account.ID, now, force) {
@@ -744,9 +745,7 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 		} else if len(updates) > 0 {
 			mergeAccountExtra(account, updates)
 			applyExtraToUsage(usage, account.Extra, now)
-			if account.IsShadow() && account.ParentAccountID != nil {
-				notifyOpenAIAutoReset(*account.ParentAccountID)
-			}
+			persistCodexQuotaRateLimit(ctx, s.accountRepo, account.ID, account.Extra)
 		}
 	}
 	if s.usageLogRepo == nil {
@@ -994,7 +993,7 @@ func (s *AccountUsageService) persistOpenAICodexSnapshot(accountID int64, update
 		updateCtx, updateCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer updateCancel()
 		if err := s.accountRepo.UpdateExtra(updateCtx, accountID, updates); err == nil {
-			notifyOpenAIAutoReset(accountID)
+			persistCodexQuotaRateLimit(updateCtx, s.accountRepo, accountID, updates)
 		}
 	}()
 }

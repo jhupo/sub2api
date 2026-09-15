@@ -36,9 +36,6 @@ func (s *OpenAIGatewayService) observeOpenAIResponseQuota(request *http.Request,
 		return
 	}
 	if account.IsShadow() {
-		if account.ParentAccountID != nil {
-			notifyOpenAIAutoReset(*account.ParentAccountID)
-		}
 		return
 	}
 	s.UpdateCodexUsageSnapshotFromHeaders(request.Context(), account.ID, response.Header)

@@ -1455,6 +1455,7 @@ describe("admin SettingsView payment visible method controls", () => {
   });
 
   it.each([
+    "codex-tui/0.154.0 (Mac OS 15.6.1; arm64) iTerm.app/3.5.14 (codex-tui; 0.154.0)",
     "codex-tui/0.153.4 (Linux; x86_64) xterm (codex-tui; 0.149.0)",
     "Codex Desktop/0.153.4 (Mac OS 26.6.1; arm64) unknown (Codex Desktop; 26.903.61454)",
   ])("preserves custom UA %s and restores version preferences when cleared", async (customUA) => {

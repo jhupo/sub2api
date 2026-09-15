@@ -1045,6 +1045,25 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		require.Len(t, fs.FailedAccountIDs, 2)
 	})
 
+	t.Run("OpenAI 503账号队列耗尽后不得重新选回同一账号", func(t *testing.T) {
+		fs := NewFailoverState(3, false)
+		fs.LastFailoverErr = &service.UpstreamFailoverError{
+			StatusCode:             http.StatusServiceUnavailable,
+			OpenAI503QueueHandled:  true,
+			RetryableOnSameAccount: true,
+		}
+		require.False(t, sameAccountRetryAllowed(fs.LastFailoverErr, 0, 10))
+		require.Equal(t, FailoverContinue, fs.HandleFailoverError(
+			context.Background(), &mockTempUnscheduler{}, 100, service.PlatformOpenAI, 10, fs.LastFailoverErr,
+		))
+		require.Zero(t, fs.SameAccountRetryCount[100])
+
+		action := fs.HandleSelectionExhausted(context.Background())
+
+		require.Equal(t, FailoverExhausted, action)
+		require.Contains(t, fs.FailedAccountIDs, int64(100))
+	})
+
 	t.Run("填充调度不在候选耗尽后绕过账号重试预算", func(t *testing.T) {
 		fs := NewFillFailoverState(10, false)
 		fs.LastFailoverErr = newTestFailoverErr(http.StatusServiceUnavailable, false, false)

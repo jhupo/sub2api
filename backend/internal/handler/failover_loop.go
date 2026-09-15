@@ -364,6 +364,7 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAc
 
 	if s.LastFailoverErr != nil &&
 		s.LastFailoverErr.StatusCode == http.StatusServiceUnavailable &&
+		!s.LastFailoverErr.OpenAI503QueueHandled &&
 		s.SwitchCount <= s.MaxSwitches &&
 		// A multi-account pool must not clear its exclusion set after every
 		// candidate returned 503: doing so revisits already exhausted accounts

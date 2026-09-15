@@ -22,7 +22,7 @@ type openAIQuotaResetWorkflowRecoverer interface {
 	RecoverAccountState(ctx context.Context, accountID int64, options AccountRecoveryOptions) (*SuccessfulTestRecoveryResult, error)
 }
 
-// OpenAIQuotaResetPostProcessResult 汇总手动和自动用卡后的共享恢复结果。
+// OpenAIQuotaResetPostProcessResult 汇总手动重置卡消费后的共享恢复结果。
 // WarningCode 允许上游消费成功但本地恢复部分失败时仍然准确呈现状态。
 type OpenAIQuotaResetPostProcessResult struct {
 	Quota                 *OpenAIQuotaUsage
