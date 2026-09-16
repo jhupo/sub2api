@@ -59,6 +59,27 @@ func TestClassifyOpenAIWSAcquireError(t *testing.T) {
 	})
 }
 
+func TestClassifyOpenAIWSErrorEventCapacityShed(t *testing.T) {
+	cases := []struct {
+		name    string
+		code    string
+		errType string
+		message string
+	}{
+		{name: "structured overload", code: "server_is_overloaded"},
+		{name: "slow down", code: "slow_down"},
+		{name: "service unavailable message", errType: "service_unavailable_error", message: "Our servers are currently overloaded. Please try again later."},
+		{name: "generic server error message", code: "server_error", message: "Our servers are currently overloaded."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reason, recoverable := classifyOpenAIWSErrorEventFromRaw(tc.code, tc.errType, tc.message)
+			require.Equal(t, "capacity_shed", reason)
+			require.True(t, recoverable)
+		})
+	}
+}
+
 func TestClassifyOpenAIWSDialError(t *testing.T) {
 	t.Run("handshake_not_finished", func(t *testing.T) {
 		err := &openAIWSDialError{

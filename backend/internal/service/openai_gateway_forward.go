@@ -700,6 +700,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, err
 	}
 	SetOpsUpstreamModel(c, upstreamModel)
+	openAI503State, err := s.newOpenAI503RetryState(ctx, account)
+	if err != nil {
+		return nil, err
+	}
 
 	// 命中 WS 时仅走 WebSocket Mode；不再自动回退 HTTP。
 	if wsDecision.Transport == OpenAIUpstreamTransportResponsesWebsocketV2 {
@@ -831,8 +835,28 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if wsErr == nil || (wsResult != nil && wsResult.ClientDisconnect) {
 				break
 			}
-			if c != nil && c.Writer != nil && c.Writer.Written() {
+			// A protocol heartbeat can commit the HTTP response without starting
+			// semantic output. Keep the request replayable in that state so a
+			// capacity-shed WS event can enter the configured 503 retry queue.
+			if openAIStreamClientOutputStarted(c, false) {
 				break
+			}
+			var ws503Failure *UpstreamFailoverError
+			if errors.As(wsErr, &ws503Failure) && ws503Failure.IsOpenAICapacityShed() {
+				retry, retryErr := openAI503State.handleStreamError(c, nil, ws503Failure)
+				if retryErr != nil {
+					wsErr = retryErr
+					break
+				}
+				if retry {
+					wsLastFailureReason = "capacity_shed"
+					logOpenAIWSModeInfo(
+						"capacity_retry account_id=%d retry=%d retry_limit=configured",
+						account.ID,
+						openAI503State.retries,
+					)
+					continue
+				}
 			}
 			var taskRecoveredErr *agentIdentityTaskRecoveredError
 			if errors.As(wsErr, &taskRecoveredErr) {
@@ -970,10 +994,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	compactModelFallbackRetried := false
 	agentTaskRecoveryTried := false
 	rejectedFieldRetryState := openAIResponsesRejectedFieldRetryStateForRequest(c, body)
-	openAI503State, err := s.newOpenAI503RetryState(ctx, account)
-	if err != nil {
-		return nil, err
-	}
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()

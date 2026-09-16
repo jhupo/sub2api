@@ -1219,6 +1219,13 @@ func openAIStreamFrameStartsClientOutput(frame openAISSEDataFrame) bool {
 }
 
 func openAIStreamItemHasVisibleOutput(item gjson.Result) bool {
+	itemType := strings.TrimSpace(item.Get("type").String())
+	if itemType == "compaction" || itemType == "compaction_summary" {
+		// A compaction item is semantic output even though it normally carries
+		// encrypted_content rather than visible text. Once delivered, replaying
+		// the request would give the client two competing compaction results.
+		return item.Get("encrypted_content").String() != ""
+	}
 	if item.Get("arguments").String() != "" || item.Get("input").String() != "" || item.Get("result").String() != "" {
 		return true
 	}

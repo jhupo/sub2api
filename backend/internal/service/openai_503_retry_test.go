@@ -70,6 +70,35 @@ func TestOpenAI503StreamNeverReplaysCommittedOutput(t *testing.T) {
 	require.Zero(t, state.retries)
 }
 
+func TestOpenAI503WSCapacityUsesConfiguredRetryBudget(t *testing.T) {
+	svc := &OpenAIGatewayService{settingService: &SettingService{settingRepo: &openAIAdvancedSchedulerSettingRepoStub{
+		values: map[string]string{
+			SettingKeyOpenAI503RetrySettings: `{"enabled":true,"retry_delay_seconds":0,"max_same_account_retries":1}`,
+		},
+	}}}
+	state, err := svc.newOpenAI503RetryState(context.Background(), &Account{ID: 1, Platform: PlatformOpenAI})
+	require.NoError(t, err)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	failure := newOpenAIUpstreamFailoverError(
+		http.StatusServiceUnavailable,
+		http.Header{},
+		[]byte(`{"type":"error","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded"}}`),
+		"Our servers are currently overloaded",
+		true,
+	)
+
+	retry, retryErr := state.handleStreamError(c, nil, failure)
+	require.True(t, retry)
+	require.NoError(t, retryErr)
+	require.Equal(t, 1, state.retries)
+
+	retry, retryErr = state.handleStreamError(c, nil, failure)
+	require.False(t, retry)
+	var exhausted *UpstreamFailoverError
+	require.ErrorAs(t, retryErr, &exhausted)
+	require.True(t, exhausted.OpenAI503QueueHandled)
+}
+
 func TestOpenAI503DisabledAndZeroRetryDoNotFallBackToPoolRetries(t *testing.T) {
 	for _, value := range []string{
 		`{"enabled":false,"max_same_account_retries":3}`,

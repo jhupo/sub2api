@@ -149,6 +149,20 @@ func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarm(
 				errMessage,
 			)
 			lease.MarkBroken()
+			// Capacity shedding is a request-scoped 503 even though the WS
+			// prewarm handshake itself is carried over an otherwise successful
+			// connection. Return the typed error so the caller can apply the
+			// configured account-local 503 retry budget instead of falling back
+			// to the short WS reconnect backoff.
+			if isOpenAIRequestScopedCapacityShed(errMsgRaw, message) {
+				return newOpenAIUpstreamFailoverError(
+					http.StatusServiceUnavailable,
+					lease.HandshakeHeaders(),
+					message,
+					errMsg,
+					true,
+				)
+			}
 			if canFallback {
 				return wrapOpenAIWSFallback("prewarm_"+fallbackReason, errors.New(errMsg))
 			}
@@ -675,6 +689,8 @@ func classifyOpenAIWSErrorEventFromRaw(codeRaw, errTypeRaw, msgRaw string) (stri
 	msg := strings.ToLower(strings.TrimSpace(msgRaw))
 
 	switch code {
+	case "server_is_overloaded", "slow_down":
+		return "capacity_shed", true
 	case "upgrade_required":
 		return "upgrade_required", true
 	case "websocket_not_supported", "websocket_unsupported":
@@ -708,6 +724,12 @@ func classifyOpenAIWSErrorEventFromRaw(codeRaw, errTypeRaw, msgRaw string) (stri
 	if strings.Contains(msg, "previous_response_not_found") ||
 		(strings.Contains(msg, "previous response") && strings.Contains(msg, "not found")) {
 		return "previous_response_not_found", true
+	}
+	if strings.Contains(errType, "service_unavailable") && isOpenAICapacityShedMessage(msg) {
+		return "capacity_shed", true
+	}
+	if isOpenAICapacityShedMessage(msg) && (strings.Contains(code, "server_error") || code == "") {
+		return "capacity_shed", true
 	}
 	if strings.Contains(errType, "server_error") || strings.Contains(code, "server_error") {
 		return "upstream_error_event", true
