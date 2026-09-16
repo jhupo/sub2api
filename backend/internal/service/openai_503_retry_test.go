@@ -72,7 +72,14 @@ func TestOpenAI503RetriesDoNotConsumeGenericTurnBudget(t *testing.T) {
 		}}},
 	}
 	account := &Account{ID: 901, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
-		Credentials: map[string]any{"api_key": "sk-test"}}
+		Credentials: map[string]any{
+			"api_key":                      "sk-test",
+			"pool_mode":                    true,
+			"pool_mode_retry_count":        float64(3),
+			"pool_mode_retry_status_codes": []any{float64(http.StatusServiceUnavailable)},
+		}}
+	require.True(t, account.IsPoolMode())
+	require.True(t, account.IsPoolModeRetryableStatus(http.StatusServiceUnavailable))
 	state, err := svc.newOpenAI503RetryState(ctx, account)
 	require.NoError(t, err)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -88,6 +95,45 @@ func TestOpenAI503RetriesDoNotConsumeGenericTurnBudget(t *testing.T) {
 	budget.mu.Lock()
 	require.Equal(t, 1, budget.count, "503 retries must not consume the generic request budget")
 	budget.mu.Unlock()
+}
+
+func TestOpenAI503PoolAccountExhaustionDoesNotReenterPoolRetry(t *testing.T) {
+	retryBody := `{"error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded"}}`
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(retryBody))},
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(retryBody))},
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(retryBody))},
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(retryBody))},
+	}}
+	svc := &OpenAIGatewayService{
+		httpUpstream: upstream,
+		settingService: &SettingService{settingRepo: &openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{
+			SettingKeyOpenAI503RetrySettings: `{"enabled":true,"retry_delay_seconds":0,"max_same_account_retries":3}`,
+		}}},
+	}
+	account := &Account{ID: 906, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":                      "sk-pool",
+			"pool_mode":                    true,
+			"pool_mode_retry_count":        float64(7),
+			"pool_mode_retry_status_codes": []any{float64(http.StatusServiceUnavailable)},
+		}}
+	state, err := svc.newOpenAI503RetryState(context.Background(), account)
+	require.NoError(t, err)
+
+	resp, err := state.do(nil, func() (*http.Request, error) {
+		return http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", strings.NewReader(`{"model":"gpt-5.5"}`))
+	}, "")
+
+	require.Nil(t, resp)
+	var failure *UpstreamFailoverError
+	require.ErrorAs(t, err, &failure)
+	require.True(t, failure.OpenAI503QueueHandled)
+	require.False(t, failure.RetryableOnSameAccount, "the handler must switch accounts instead of applying pool_mode_retry_count")
+	require.Len(t, upstream.requests, 4, "initial send plus three dedicated retries; no pool retry cycle")
+	for i := 1; i < len(upstream.bodies); i++ {
+		require.Equal(t, upstream.bodies[0], upstream.bodies[i])
+	}
 }
 
 func TestOpenAI503MixedHTTPAndSSEFailuresUseOneConfiguredBudget(t *testing.T) {
