@@ -46,6 +46,14 @@ func (s *openAI503RetryState) do(c *gin.Context, build func() (*http.Request, er
 		if err != nil {
 			return nil, err
 		}
+		if s.retries > 0 {
+			// The first request is part of the normal turn budget. Once it has
+			// returned an OpenAI capacity 503, subsequent requests are governed
+			// exclusively by this state's configured same-account retry count.
+			// The marker is state-based because SSE overloads leave this method
+			// and re-enter it from the outer response-processing loop.
+			req = req.WithContext(withOpenAI503RetryAttempt(req.Context()))
+		}
 		started := time.Now()
 		resp, err := s.service.doOpenAIUpstream(req, proxyURL, s.account)
 		if c != nil {
@@ -62,6 +70,58 @@ func (s *openAI503RetryState) do(c *gin.Context, build func() (*http.Request, er
 			return resp, nil
 		}
 	}
+}
+
+// OpenAI503RetrySession lets non-HTTP ingress paths use the same account-local
+// queue, delay and retry count as HTTP/SSE forwarding.
+type OpenAI503RetrySession struct {
+	state *openAI503RetryState
+}
+
+// NewOpenAI503RetrySession joins an active account queue and creates the retry
+// state used by a client WebSocket account attempt.
+func (s *OpenAIGatewayService) NewOpenAI503RetrySession(ctx context.Context, account *Account) (*OpenAI503RetrySession, error) {
+	state, err := s.newOpenAI503RetryState(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	return &OpenAI503RetrySession{state: state}, nil
+}
+
+// HandleStreamError applies the configured OpenAI capacity retry policy while
+// replay is still safe.
+func (s *OpenAI503RetrySession) HandleStreamError(c *gin.Context, err error) (bool, error) {
+	if s == nil || s.state == nil {
+		return false, err
+	}
+	var failure *UpstreamFailoverError
+	if !errors.As(err, &failure) || failure.OpenAI503QueueHandled ||
+		!isOpenAI503RetrySignal(failure.StatusCode, failure.ResponseBody) {
+		return false, err
+	}
+	// Client WebSocket handshakes commit Gin's HTTP writer before any business
+	// frame is sent. The ingress forwarder returns this failure only while the
+	// current response.create can still be replayed safely.
+	retry, queueErr := s.state.retry(c, failure.StatusCode, failure.ResponseHeaders, failure.ResponseBody)
+	if retry || queueErr != nil {
+		return retry, queueErr
+	}
+	return false, err
+}
+
+// RetryContext exempts exactly one upstream send from the legacy generic turn
+// budget. The 503 session has already charged this attempt to its own budget.
+func (s *OpenAI503RetrySession) RetryContext(ctx context.Context) context.Context {
+	return withOpenAI503RetryAttempt(ctx)
+}
+
+// Reset starts a fresh configured 503 budget after a business turn succeeds.
+// A long-lived client WebSocket can carry multiple independent turns.
+func (s *OpenAI503RetrySession) Reset() {
+	if s == nil || s.state == nil {
+		return
+	}
+	s.state.retries = 0
 }
 
 // Stream readers only return a typed capacity failure while replay is safe.

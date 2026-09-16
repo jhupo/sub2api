@@ -2493,21 +2493,27 @@ func TestOpenAIResponses_APIKeyPassthroughSSERateLimitUsesConfiguredPoolRetry(t 
 }
 
 func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T) {
-	testOpenAIResponsesWebSocketUsageLimitFailover(t, false)
+	testOpenAIResponsesWebSocketUsageLimitFailover(t, false, 0)
 }
 
 func TestOpenAIResponsesWebSocket_ModelSwitchSurvivesAccountFailover(t *testing.T) {
-	testOpenAIResponsesWebSocketUsageLimitFailover(t, true)
+	testOpenAIResponsesWebSocketUsageLimitFailover(t, true, 0)
 }
 
-func testOpenAIResponsesWebSocketUsageLimitFailover(t *testing.T, switchModel bool) {
+func TestOpenAIResponsesWebSocket_503RetriesSameAccountBeforeFailover(t *testing.T) {
+	testOpenAIResponsesWebSocketUsageLimitFailover(t, false, 3)
+}
+
+func testOpenAIResponsesWebSocketUsageLimitFailover(t *testing.T, switchModel bool, capacityRetries int) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	firstHitCh := make(chan []byte, 1)
+	firstHitCh := make(chan []byte, capacityRetries+1)
 	secondHitCh := make(chan []byte, 1)
+	var firstConnections atomic.Int32
 
 	firstUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstConnections.Add(1)
 		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
 		if err != nil {
 			return
@@ -2534,7 +2540,9 @@ func testOpenAIResponsesWebSocketUsageLimitFailover(t *testing.T, switchModel bo
 
 		writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
 		errorEvent := `{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached"}}`
-		if switchModel {
+		if capacityRetries > 0 {
+			errorEvent = `{"type":"error","error":{"code":"server_is_overloaded","type":"service_unavailable_error","message":"Our servers are currently overloaded. Please try again later."}}`
+		} else if switchModel {
 			// Correlate the failure to this turn. An unowned error on a reused
 			// socket must trigger boundary recovery, not account punishment.
 			errorEvent = `{"type":"error","response_id":"resp_switch_failed","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached"}}`
@@ -2625,6 +2633,12 @@ func testOpenAIResponsesWebSocketUsageLimitFailover(t *testing.T, switchModel bo
 	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 	cfg.Gateway.MaxAccountSwitches = 3
+	var settingService *service.SettingService
+	if capacityRetries > 0 {
+		settingService = service.NewSettingService(&contentModerationHandlerSettingRepo{values: map[string]string{
+			service.SettingKeyOpenAI503RetrySettings: fmt.Sprintf(`{"enabled":true,"retry_delay_seconds":0,"max_same_account_retries":%d}`, capacityRetries),
+		}}, cfg)
+	}
 
 	accountRepo := &openAIWSFailoverHandlerAccountRepoStub{accounts: accounts}
 	rateLimitSvc := service.NewRateLimitService(accountRepo, nil, cfg, nil, nil)
@@ -2651,7 +2665,7 @@ func testOpenAIResponsesWebSocketUsageLimitFailover(t *testing.T, switchModel bo
 		nil,
 		nil,
 		nil,
-		nil,
+		settingService,
 		nil,
 	)
 
@@ -2728,10 +2742,22 @@ func testOpenAIResponsesWebSocketUsageLimitFailover(t *testing.T, switchModel bo
 	}
 	require.Equal(t, "resp_ws_failover_ok", gjson.GetBytes(event, "response.id").String())
 
-	select {
-	case <-firstHitCh:
-	case <-time.After(3 * time.Second):
-		t.Fatal("等待第一个上游收到首帧超时")
+	firstAttemptCount := 1
+	if capacityRetries > 0 {
+		firstAttemptCount += capacityRetries
+	}
+	var firstPayload []byte
+	for i := 0; i < firstAttemptCount; i++ {
+		select {
+		case payload := <-firstHitCh:
+			if i == 0 {
+				firstPayload = payload
+			} else {
+				require.Equal(t, firstPayload, payload, "same-account 503 retries must replay the identical response.create payload")
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("等待第一个上游收到首帧超时")
+		}
 	}
 	select {
 	case payload := <-secondHitCh:
@@ -2739,7 +2765,12 @@ func testOpenAIResponsesWebSocketUsageLimitFailover(t *testing.T, switchModel bo
 	case <-time.After(3 * time.Second):
 		t.Fatal("等待第二个上游收到重放首帧超时")
 	}
-	require.Equal(t, []int64{int64(9902)}, accountRepo.rateLimitedIDs)
+	if capacityRetries > 0 {
+		require.Equal(t, int32(capacityRetries+1), firstConnections.Load(), "configured retries must finish on the first account before failover")
+		require.Empty(t, accountRepo.rateLimitedIDs, "request-scoped capacity shedding must not rate-limit the account globally")
+	} else {
+		require.Equal(t, []int64{int64(9902)}, accountRepo.rateLimitedIDs)
+	}
 	logCount := 1
 	if switchModel {
 		logCount = 2

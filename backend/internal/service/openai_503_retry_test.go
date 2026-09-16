@@ -55,6 +55,170 @@ func TestOpenAI503HTTPAndSSEShareRetryBudget(t *testing.T) {
 	}
 }
 
+func TestOpenAI503RetriesDoNotConsumeGenericTurnBudget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	retryBody := `{"type":"error","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded"}}`
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(retryBody))},
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(retryBody))},
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(retryBody))},
+		{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))},
+	}}
+	ctx := withOpenAIRequestAttemptBudget(context.Background())
+	svc := &OpenAIGatewayService{
+		httpUpstream: upstream,
+		settingService: &SettingService{settingRepo: &openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{
+			SettingKeyOpenAI503RetrySettings: `{"enabled":true,"retry_delay_seconds":0,"max_same_account_retries":3}`,
+		}}},
+	}
+	account := &Account{ID: 901, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-test"}}
+	state, err := svc.newOpenAI503RetryState(ctx, account)
+	require.NoError(t, err)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	resp, err := state.do(c, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/responses", strings.NewReader(`{"model":"gpt-5.5"}`))
+	}, "")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, upstream.requests, 4, "three configured 503 retries must allow four total upstream attempts")
+	budget, _ := ctx.Value(openAIRequestAttemptKey{}).(*openAIRequestAttempts)
+	require.NotNil(t, budget)
+	budget.mu.Lock()
+	require.Equal(t, 1, budget.count, "503 retries must not consume the generic request budget")
+	budget.mu.Unlock()
+}
+
+func TestOpenAI503MixedHTTPAndSSEFailuresUseOneConfiguredBudget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-5.5","stream":true,"input":"hello"}`)
+	overload := `{"type":"error","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded"}}`
+	completed := `data: {"type":"response.completed","response":{"id":"resp_mixed_retry","object":"response","model":"gpt-5.5","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}` + "\n\n"
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(overload))},
+		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: " + overload + "\n\n"))},
+		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: " + overload + "\n\n"))},
+		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(completed))},
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}},
+		httpUpstream: upstream,
+		settingService: &SettingService{settingRepo: &openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{
+			SettingKeyOpenAI503RetrySettings: `{"enabled":true,"retry_delay_seconds":0,"max_same_account_retries":3}`,
+		}}},
+	}
+	account := &Account{ID: 905, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token", "chatgpt_account_id": "test-account"}}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(body)))
+	ctx := withOpenAIRequestAttemptBudget(context.Background())
+
+	result, err := svc.Forward(ctx, c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.requests, 4)
+	budget, _ := ctx.Value(openAIRequestAttemptKey{}).(*openAIRequestAttempts)
+	budget.mu.Lock()
+	require.Equal(t, 1, budget.count)
+	budget.mu.Unlock()
+}
+
+func TestOpenAI503CompactUsesConfiguredRetries(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	retryBody := `{"error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded"}}`
+	completed := `{"id":"resp_compact_retry","object":"response","model":"gpt-5.5","status":"completed","output":[{"type":"compaction","encrypted_content":"compact-ok"}],"usage":{"input_tokens":4,"output_tokens":1,"total_tokens":5}}`
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(retryBody))},
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(retryBody))},
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(retryBody))},
+		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(completed))},
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}},
+		httpUpstream: upstream,
+		settingService: &SettingService{settingRepo: &openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{
+			SettingKeyOpenAI503RetrySettings: `{"enabled":true,"retry_delay_seconds":0,"max_same_account_retries":3}`,
+		}}},
+	}
+	body := []byte(`{"model":"gpt-5.5","stream":false,"input":[{"type":"message","role":"user","content":"compact this"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(string(body)))
+	account := &Account{ID: 902, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token", "chatgpt_account_id": "test-account"}}
+
+	result, err := svc.Forward(withOpenAIRequestAttemptBudget(context.Background()), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.requests, 4)
+	require.Equal(t, chatgptCodexURL+"/compact", upstream.lastReq.URL.String())
+	for i := 1; i < len(upstream.bodies); i++ {
+		require.Equal(t, upstream.bodies[0], upstream.bodies[i], "503 retries must rebuild the same compact request")
+	}
+}
+
+func TestOpenAI503AlphaSearchUsesConfiguredRetries(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	retryBody := `{"error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded"}}`
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(retryBody))},
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(retryBody))},
+		{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(retryBody))},
+		{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"output":"search-ok"}`))},
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{},
+		httpUpstream: upstream,
+		settingService: &SettingService{settingRepo: &openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{
+			SettingKeyOpenAI503RetrySettings: `{"enabled":true,"retry_delay_seconds":0,"max_same_account_retries":3}`,
+		}}},
+	}
+	body := []byte(`{"id":"search-retry","model":"gpt-5.5","commands":{"search_query":[{"q":"news"}]}}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", strings.NewReader(string(body)))
+	account := &Account{ID: 903, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token", "chatgpt_account_id": "test-account"}}
+
+	result, err := svc.ForwardAlphaSearch(withOpenAIRequestAttemptBudget(context.Background()), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 1, result.WebSearchCalls)
+	require.Len(t, upstream.requests, 4)
+	for i := 1; i < len(upstream.bodies); i++ {
+		require.Equal(t, upstream.bodies[0], upstream.bodies[i], "503 retries must rebuild the same search request")
+	}
+}
+
+func TestOpenAI503RetrySessionExemptsOneWSAttempt(t *testing.T) {
+	ctx := withOpenAIRequestAttemptBudget(context.Background())
+	require.NoError(t, consumeOpenAIRequestAttempt(ctx))
+	svc := &OpenAIGatewayService{settingService: &SettingService{settingRepo: &openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{
+		SettingKeyOpenAI503RetrySettings: `{"enabled":true,"retry_delay_seconds":0,"max_same_account_retries":1}`,
+	}}}}
+	session, err := svc.NewOpenAI503RetrySession(ctx, &Account{ID: 904, Platform: PlatformOpenAI})
+	require.NoError(t, err)
+	failure := newOpenAIUpstreamFailoverError(
+		http.StatusServiceUnavailable,
+		nil,
+		[]byte(`{"type":"error","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded"}}`),
+		"Our servers are currently overloaded",
+		true,
+	)
+
+	retry, err := session.HandleStreamError(nil, failure)
+	require.True(t, retry)
+	require.NoError(t, err)
+	retryCtx := session.RetryContext(ctx)
+	require.NoError(t, consumeOpenAIRequestAttempt(retryCtx), "the configured 503 retry owns its first WS send")
+	require.NoError(t, consumeOpenAIRequestAttempt(retryCtx), "the exemption is one-shot; the next send uses the generic budget")
+	budget, _ := ctx.Value(openAIRequestAttemptKey{}).(*openAIRequestAttempts)
+	budget.mu.Lock()
+	require.Equal(t, 2, budget.count)
+	budget.mu.Unlock()
+}
+
 func TestOpenAI503StreamNeverReplaysCommittedOutput(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
