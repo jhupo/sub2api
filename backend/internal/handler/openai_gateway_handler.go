@@ -2617,8 +2617,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	billingAdmissionTurn := 1
 	securityClientIP := ip.GetSecurityClientIP(c, h.cfg.TrustForwardedIPForAPIKeyACL())
 	waitForWSSameAccountRetry := func(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
-		legacyRateLimitRetry := failoverErr != nil && failoverErr.StatusCode == http.StatusTooManyRequests && !failoverErr.SameAccountRetryDeadline.IsZero()
-		if account == nil || failoverErr == nil || !legacyRateLimitRetry {
+		if !openAIWSSameAccountRetryEligible(account, failoverErr) {
 			return false
 		}
 		retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
@@ -3228,14 +3227,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			accountMaxConcurrency: accountMaxConcurrency,
 		})
 
-		openAI503RetryAttempt := false
+		sameAccountRetryAttempt := false
 		for {
 			relayTurnBase = currentBusinessTurn - 1
 			hooks.InitialRequestModel = reqModel
 			proxyCtx := ctx
-			if openAI503RetryAttempt {
+			if sameAccountRetryAttempt {
 				proxyCtx = openAI503Session.RetryContext(ctx)
-				openAI503RetryAttempt = false
+				sameAccountRetryAttempt = false
 			}
 			err := h.gatewayService.ProxyResponsesWebSocketFromClient(proxyCtx, c, wsConn, account, token, wsFirstMessage, hooks)
 			// A transport attempt may have advanced through several business
@@ -3292,7 +3291,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						}
 					}
 					if retry {
-						openAI503RetryAttempt = true
+						sameAccountRetryAttempt = true
 						if !ensureUserSlotHeld() {
 							return
 						}
@@ -3309,6 +3308,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					}
 				}
 				if waitForWSSameAccountRetry(account, failoverErr) {
+					sameAccountRetryAttempt = true
 					if !ensureUserSlotHeld() {
 						return
 					}

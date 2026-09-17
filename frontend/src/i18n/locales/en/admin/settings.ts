@@ -1019,10 +1019,10 @@ export default {
         saveFailed: 'Failed to save 429 default cooldown settings'
       },
       openai503Retry: {
-        title: 'OpenAI 503 Account Retry',
-        description: 'Queue explicit server_is_overloaded or slow_down responses within the account without changing quota state',
+        title: 'OpenAI OAuth 503 Account Retry',
+        description: 'Queue explicit server_is_overloaded or slow_down responses for OAuth and setup-token accounts; API key accounts keep their own pool-mode retry settings',
         enabled: 'Enable 503 account retry',
-        enabledHint: 'Keep the account slot and retry explicit OpenAI capacity 503 responses in FIFO order',
+        enabledHint: 'Keep the OAuth-like account slot and retry explicit OpenAI capacity 503 responses in FIFO order',
         retryDelaySeconds: 'Retry delay (seconds)',
         retryDelaySecondsHint: 'Wait before each 503 retry (1-120 seconds)',
         maxSameAccountRetries: 'Maximum same-account retries',

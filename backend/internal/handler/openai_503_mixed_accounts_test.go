@@ -113,7 +113,7 @@ func TestOpenAI503MixedOAuthAndPoolAccountsRetryThenFailover(t *testing.T) {
 					"api_key":                      "sk-pool",
 					"base_url":                     "https://api.example.test",
 					"pool_mode":                    true,
-					"pool_mode_retry_count":        float64(7),
+					"pool_mode_retry_count":        float64(1),
 					"pool_mode_retry_status_codes": []any{float64(http.StatusServiceUnavailable)},
 				}
 				account.Extra = map[string]any{"openai_passthrough": true}
@@ -194,10 +194,19 @@ func TestOpenAI503MixedOAuthAndPoolAccountsRetryThenFailover(t *testing.T) {
 			h.Responses(c)
 
 			calls, retryBodies := upstream.snapshot(firstID)
-			require.Equal(t, []int64{firstID, firstID, firstID, firstID, secondID}, calls)
-			require.Len(t, retryBodies, 4, "pool_mode_retry_count must not add retries after the dedicated 503 budget")
+			expectedFirstAttempts := 4
+			if tt.firstType == service.AccountTypeAPIKey {
+				expectedFirstAttempts = 2
+			}
+			expectedCalls := make([]int64, expectedFirstAttempts+1)
+			for i := range expectedFirstAttempts {
+				expectedCalls[i] = firstID
+			}
+			expectedCalls[expectedFirstAttempts] = secondID
+			require.Equal(t, expectedCalls, calls)
+			require.Len(t, retryBodies, expectedFirstAttempts)
 			for i := 1; i < len(retryBodies); i++ {
-				require.Equal(t, retryBodies[0], retryBodies[i], "each dedicated retry must replay the identical request")
+				require.Equal(t, retryBodies[0], retryBodies[i], "each same-account retry must replay the identical request")
 			}
 			require.Equal(t, http.StatusOK, rec.Code)
 			require.Equal(t, "resp_mixed_503_ok", gjson.GetBytes(rec.Body.Bytes(), "id").String())

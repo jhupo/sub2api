@@ -2500,7 +2500,7 @@ func TestOpenAIResponsesWebSocket_ModelSwitchSurvivesAccountFailover(t *testing.
 	testOpenAIResponsesWebSocketUsageLimitFailover(t, true, 0)
 }
 
-func TestOpenAIResponsesWebSocket_503RetriesSameAccountBeforeFailover(t *testing.T) {
+func TestOpenAIResponsesWebSocket_Pool503RetriesSameAccountBeforeFailover(t *testing.T) {
 	testOpenAIResponsesWebSocketUsageLimitFailover(t, false, 3)
 }
 
@@ -2619,6 +2619,11 @@ func testOpenAIResponsesWebSocketUsageLimitFailover(t *testing.T, switchModel bo
 			accounts[i].Extra["openai_apikey_responses_websockets_v2_mode"] = service.OpenAIWSIngressModeCtxPool
 		}
 	}
+	if capacityRetries > 0 {
+		accounts[0].Credentials["pool_mode"] = true
+		accounts[0].Credentials["pool_mode_retry_count"] = float64(capacityRetries)
+		accounts[0].Credentials["pool_mode_retry_status_codes"] = []any{float64(http.StatusServiceUnavailable)}
+	}
 
 	cfg := &config.Config{}
 	cfg.RunMode = config.RunModeSimple
@@ -2633,13 +2638,6 @@ func testOpenAIResponsesWebSocketUsageLimitFailover(t *testing.T, switchModel bo
 	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 	cfg.Gateway.MaxAccountSwitches = 3
-	var settingService *service.SettingService
-	if capacityRetries > 0 {
-		settingService = service.NewSettingService(&contentModerationHandlerSettingRepo{values: map[string]string{
-			service.SettingKeyOpenAI503RetrySettings: fmt.Sprintf(`{"enabled":true,"retry_delay_seconds":0,"max_same_account_retries":%d}`, capacityRetries),
-		}}, cfg)
-	}
-
 	accountRepo := &openAIWSFailoverHandlerAccountRepoStub{accounts: accounts}
 	rateLimitSvc := service.NewRateLimitService(accountRepo, nil, cfg, nil, nil)
 	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, cfg, nil)
@@ -2665,7 +2663,7 @@ func testOpenAIResponsesWebSocketUsageLimitFailover(t *testing.T, switchModel bo
 		nil,
 		nil,
 		nil,
-		settingService,
+		nil,
 		nil,
 	)
 

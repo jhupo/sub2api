@@ -196,6 +196,27 @@ func TestPoolModeSameAccountRetryUsesAccountBudget(t *testing.T) {
 	require.False(t, ok, "the account must be excluded only after its configured retries are used")
 }
 
+func TestOpenAIWSSameAccountRetryEligible(t *testing.T) {
+	pool := &service.Account{Type: service.AccountTypeAPIKey, Credentials: map[string]any{
+		"pool_mode":                    true,
+		"pool_mode_retry_status_codes": []any{float64(http.StatusServiceUnavailable)},
+	}}
+	require.True(t, openAIWSSameAccountRetryEligible(pool, &service.UpstreamFailoverError{
+		StatusCode: http.StatusServiceUnavailable, RetryableOnSameAccount: true,
+	}))
+	require.False(t, openAIWSSameAccountRetryEligible(pool, &service.UpstreamFailoverError{
+		StatusCode: http.StatusBadGateway, RetryableOnSameAccount: true,
+	}))
+
+	oauth := &service.Account{Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth}
+	require.True(t, openAIWSSameAccountRetryEligible(oauth, &service.UpstreamFailoverError{
+		StatusCode: http.StatusTooManyRequests, RetryableOnSameAccount: true, SameAccountRetryDeadline: time.Now().Add(time.Second),
+	}))
+	require.False(t, openAIWSSameAccountRetryEligible(oauth, &service.UpstreamFailoverError{
+		StatusCode: http.StatusServiceUnavailable, RetryableOnSameAccount: true,
+	}))
+}
+
 // ---------------------------------------------------------------------------
 // sleepWithContext 测试
 // ---------------------------------------------------------------------------

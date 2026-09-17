@@ -13,8 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// One state owns the retry budget for an account attempt, including HTTP and
-// pre-output SSE failures. The handler keeps the account concurrency slot.
+// One state owns the dedicated retry budget for an OAuth-like account attempt,
+// including HTTP and pre-output SSE failures. API key accounts keep using their
+// existing pool-mode retry policy.
 type openAI503RetryState struct {
 	service *OpenAIGatewayService
 	account *Account
@@ -22,12 +23,16 @@ type openAI503RetryState struct {
 	retries int
 }
 
+func usesDedicatedOpenAI503Retry(account *Account) bool {
+	return account != nil && account.IsOpenAIOAuthLike()
+}
+
 func (s *OpenAIGatewayService) newOpenAI503RetryState(ctx context.Context, account *Account) (*openAI503RetryState, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	state := &openAI503RetryState{service: s, account: account, ctx: ctx}
-	if s == nil || account == nil || account.ID <= 0 || account.Platform != PlatformOpenAI {
+	if s == nil || !usesDedicatedOpenAI503Retry(account) || account.ID <= 0 {
 		return state, nil
 	}
 	if err := s.getOpenAI503RetryQueue().wait(ctx, account.ID, 0, false); err != nil {
@@ -72,8 +77,8 @@ func (s *openAI503RetryState) do(c *gin.Context, build func() (*http.Request, er
 	}
 }
 
-// OpenAI503RetrySession lets non-HTTP ingress paths use the same account-local
-// queue, delay and retry count as HTTP/SSE forwarding.
+// OpenAI503RetrySession lets OAuth-like non-HTTP ingress paths use the same
+// account-local queue, delay and retry count as HTTP/SSE forwarding.
 type OpenAI503RetrySession struct {
 	state *openAI503RetryState
 }
@@ -110,7 +115,7 @@ func (s *OpenAI503RetrySession) HandleStreamError(c *gin.Context, err error) (bo
 }
 
 // RetryContext exempts exactly one upstream send from the legacy generic turn
-// budget. The 503 session has already charged this attempt to its own budget.
+// budget after a dedicated OAuth or API pool policy charged the retry.
 func (s *OpenAI503RetrySession) RetryContext(ctx context.Context) context.Context {
 	return withOpenAI503RetryAttempt(ctx)
 }
@@ -155,7 +160,7 @@ func (s *openAI503RetryState) handle503(c *gin.Context, resp *http.Response) (bo
 }
 
 func (s *openAI503RetryState) retry(c *gin.Context, status int, headers http.Header, body []byte) (bool, error) {
-	if s.account == nil || s.account.Platform != PlatformOpenAI || !isOpenAI503RetrySignal(status, body) {
+	if !usesDedicatedOpenAI503Retry(s.account) || !isOpenAI503RetrySignal(status, body) {
 		return false, nil
 	}
 	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))

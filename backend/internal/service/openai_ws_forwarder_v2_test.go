@@ -177,7 +177,7 @@ func TestForwardOpenAIWSV2_CapacityShedUsesConfigured503Retry(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.StreamKeepaliveInterval = 1
 	cfg.Gateway.OpenAIWS.Enabled = true
-	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
 	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
 	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
 	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 5
@@ -200,8 +200,8 @@ func TestForwardOpenAIWSV2_CapacityShedUsesConfigured503Retry(t *testing.T) {
 		toolCorrector:    NewCodexToolCorrector(),
 		openaiWSPool:     pool,
 	}
-	account := &Account{ID: 5900, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1,
-		Credentials: map[string]any{"api_key": "sk-test"}, Extra: map[string]any{"responses_websockets_v2_enabled": true}}
+	account := &Account{ID: 5900, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token"}, Extra: map[string]any{"responses_websockets_v2_enabled": true}}
 
 	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":"hello"}`))
 	require.NoError(t, err)
@@ -211,12 +211,51 @@ func TestForwardOpenAIWSV2_CapacityShedUsesConfigured503Retry(t *testing.T) {
 	require.True(t, OpenAIStreamAttemptCommitted(c))
 }
 
+func TestForwardOpenAIWSV2_APIKeyCapacityShedReturnsToPoolRetry(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := newTurnStateTestContext(t, 102, "ws-api-pool-capacity")
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 5
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+	capacity := []byte(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded."}}`)
+	dialer := &openAIWSRetrySequenceDialer{conns: []*openAIWSCaptureConn{{events: [][]byte{capacity}}}}
+	pool := newOpenAIWSConnPool(cfg)
+	pool.setClientDialerForTest(dialer)
+	svc := &OpenAIGatewayService{
+		cfg:              cfg,
+		cache:            &stubGatewayCache{},
+		settingService:   &SettingService{settingRepo: &openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{SettingKeyOpenAI503RetrySettings: `{"enabled":true,"retry_delay_seconds":0,"max_same_account_retries":3}`}}},
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:    NewCodexToolCorrector(),
+		openaiWSPool:     pool,
+	}
+	account := &Account{ID: 5902, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":                      "sk-test",
+			"pool_mode":                    true,
+			"pool_mode_retry_count":        float64(3),
+			"pool_mode_retry_status_codes": []any{float64(http.StatusServiceUnavailable)},
+		}, Extra: map[string]any{"responses_websockets_v2_enabled": true}}
+
+	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":"hello"}`))
+	require.Nil(t, result)
+	var failure *UpstreamFailoverError
+	require.ErrorAs(t, err, &failure)
+	require.False(t, failure.OpenAI503QueueHandled)
+	require.True(t, failure.RetryableOnSameAccount)
+	require.Equal(t, 1, dialer.DialCount(), "the API key attempt must return to the handler's pool-mode retry loop")
+}
+
 func TestForwardOpenAIWSV2_ThreeConfiguredRetriesExceedGenericTurnBudget(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := newTurnStateTestContext(t, 101, "ws-capacity-three-retries")
 	cfg := &config.Config{}
 	cfg.Gateway.OpenAIWS.Enabled = true
-	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
 	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
 	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
 	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 5
@@ -240,8 +279,8 @@ func TestForwardOpenAIWSV2_ThreeConfiguredRetriesExceedGenericTurnBudget(t *test
 		toolCorrector:    NewCodexToolCorrector(),
 		openaiWSPool:     pool,
 	}
-	account := &Account{ID: 5901, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1,
-		Credentials: map[string]any{"api_key": "sk-test"}, Extra: map[string]any{"responses_websockets_v2_enabled": true}}
+	account := &Account{ID: 5901, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token"}, Extra: map[string]any{"responses_websockets_v2_enabled": true}}
 
 	ctx := withOpenAIRequestAttemptBudget(context.Background())
 	result, err := svc.Forward(ctx, c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":"hello"}`))

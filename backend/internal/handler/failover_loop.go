@@ -176,6 +176,16 @@ func poolModeSameAccountRetry(account *service.Account, failoverErr *service.Ups
 	return nextCount, sameAccountRetryDelayFor(failoverErr, nextCount), true
 }
 
+func openAIWSSameAccountRetryEligible(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
+	if account == nil || failoverErr == nil || !failoverErr.RetryableOnSameAccount {
+		return false
+	}
+	if account.IsPoolMode() {
+		return account.IsPoolModeRetryableStatus(failoverErr.StatusCode)
+	}
+	return failoverErr.StatusCode == http.StatusTooManyRequests && !failoverErr.SameAccountRetryDeadline.IsZero()
+}
+
 // FailoverState 跨循环迭代共享的 failover 状态
 type FailoverState struct {
 	SwitchCount           int

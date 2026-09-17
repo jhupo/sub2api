@@ -1013,10 +1013,10 @@ export default {
         saveFailed: '保存 429 默认回避设置失败'
       },
       openai503Retry: {
-        title: 'OpenAI 503 账号内重试',
-        description: '明确的 server_is_overloaded 或 slow_down 只在当前账号内排队重试，不改变额度状态',
+        title: 'OpenAI OAuth 503 账号内重试',
+        description: 'OAuth 与 Setup Token 账号遇到明确的 server_is_overloaded 或 slow_down 时在当前账号内排队重试；API Key 账号仍使用各自的池模式重试设置',
         enabled: '启用 503 账号内重试',
-        enabledHint: '收到明确的 OpenAI 容量 503 后保留账号槽位并按 FIFO 排队',
+        enabledHint: 'OAuth 类账号收到明确的 OpenAI 容量 503 后保留账号槽位并按 FIFO 排队',
         retryDelaySeconds: '重试等待时间（秒）',
         retryDelaySecondsHint: '每次 503 重试前的等待时间（1-120 秒）',
         maxSameAccountRetries: '同账号最大重试次数',
