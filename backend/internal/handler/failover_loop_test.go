@@ -196,27 +196,6 @@ func TestPoolModeSameAccountRetryUsesAccountBudget(t *testing.T) {
 	require.False(t, ok, "the account must be excluded only after its configured retries are used")
 }
 
-func TestOpenAIWSSameAccountRetryEligible(t *testing.T) {
-	pool := &service.Account{Type: service.AccountTypeAPIKey, Credentials: map[string]any{
-		"pool_mode":                    true,
-		"pool_mode_retry_status_codes": []any{float64(http.StatusServiceUnavailable)},
-	}}
-	require.True(t, openAIWSSameAccountRetryEligible(pool, &service.UpstreamFailoverError{
-		StatusCode: http.StatusServiceUnavailable, RetryableOnSameAccount: true,
-	}))
-	require.False(t, openAIWSSameAccountRetryEligible(pool, &service.UpstreamFailoverError{
-		StatusCode: http.StatusBadGateway, RetryableOnSameAccount: true,
-	}))
-
-	oauth := &service.Account{Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth}
-	require.True(t, openAIWSSameAccountRetryEligible(oauth, &service.UpstreamFailoverError{
-		StatusCode: http.StatusTooManyRequests, RetryableOnSameAccount: true, SameAccountRetryDeadline: time.Now().Add(time.Second),
-	}))
-	require.False(t, openAIWSSameAccountRetryEligible(oauth, &service.UpstreamFailoverError{
-		StatusCode: http.StatusServiceUnavailable, RetryableOnSameAccount: true,
-	}))
-}
-
 // ---------------------------------------------------------------------------
 // sleepWithContext 测试
 // ---------------------------------------------------------------------------
@@ -1064,31 +1043,6 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		action := fs.HandleSelectionExhausted(context.Background())
 		require.Equal(t, FailoverExhausted, action)
 		require.Len(t, fs.FailedAccountIDs, 2)
-	})
-
-	t.Run("OpenAI 503账号队列耗尽后不得重新选回同一账号", func(t *testing.T) {
-		fs := NewFailoverState(3, false)
-		account := &service.Account{Type: service.AccountTypeAPIKey, Credentials: map[string]any{
-			"pool_mode":                    true,
-			"pool_mode_retry_count":        float64(7),
-			"pool_mode_retry_status_codes": []any{float64(http.StatusServiceUnavailable)},
-		}}
-		fs.LastFailoverErr = &service.UpstreamFailoverError{
-			StatusCode:             http.StatusServiceUnavailable,
-			OpenAI503QueueHandled:  true,
-			RetryableOnSameAccount: true,
-		}
-		require.True(t, account.IsPoolModeRetryableStatus(http.StatusServiceUnavailable))
-		require.False(t, sameAccountRetryAllowed(fs.LastFailoverErr, 0, account.GetPoolModeRetryCount()))
-		require.Equal(t, FailoverContinue, fs.HandleFailoverError(
-			context.Background(), &mockTempUnscheduler{}, 100, service.PlatformOpenAI, 10, fs.LastFailoverErr,
-		))
-		require.Zero(t, fs.SameAccountRetryCount[100])
-
-		action := fs.HandleSelectionExhausted(context.Background())
-
-		require.Equal(t, FailoverExhausted, action)
-		require.Contains(t, fs.FailedAccountIDs, int64(100))
 	})
 
 	t.Run("填充调度不在候选耗尽后绕过账号重试预算", func(t *testing.T) {

@@ -2617,7 +2617,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	billingAdmissionTurn := 1
 	securityClientIP := ip.GetSecurityClientIP(c, h.cfg.TrustForwardedIPForAPIKeyACL())
 	waitForWSSameAccountRetry := func(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
-		if !openAIWSSameAccountRetryEligible(account, failoverErr) {
+		if account == nil || failoverErr == nil || failoverErr.StatusCode != http.StatusTooManyRequests || failoverErr.SameAccountRetryDeadline.IsZero() {
 			return false
 		}
 		retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
@@ -2826,19 +2826,6 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "failed to get access token")
 			return
 		}
-		openAI503Session, err := h.gatewayService.NewOpenAI503RetrySession(ctx, account)
-		if err != nil {
-			var failoverErr *service.UpstreamFailoverError
-			if errors.As(err, &failoverErr) && handleWSFailover(account, failoverErr) {
-				continue
-			}
-			if failoverErr != nil {
-				return
-			}
-			closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "upstream retry queue is unavailable")
-			return
-		}
-
 		reqLog.Debug("openai.websocket_account_selected",
 			zap.Int64("account_id", account.ID),
 			zap.String("account_name", account.Name),
@@ -3143,7 +3130,6 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				forwardSucceeded := turnErr == nil && openAIForwardSucceededForScheduling(result)
 				if forwardSucceeded {
 					delete(sameAccountRetryCount, turnAccount.ID)
-					openAI503Session.Reset()
 				}
 				result.BillingModel = openAIWSTurnBillingModel(result, turnMapping, turnRequestedModel, turnUpstreamModel)
 				reqLog.Debug("openai.websocket_turn_billing",
@@ -3227,16 +3213,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			accountMaxConcurrency: accountMaxConcurrency,
 		})
 
-		sameAccountRetryAttempt := false
 		for {
 			relayTurnBase = currentBusinessTurn - 1
 			hooks.InitialRequestModel = reqModel
-			proxyCtx := ctx
-			if sameAccountRetryAttempt {
-				proxyCtx = openAI503Session.RetryContext(ctx)
-				sameAccountRetryAttempt = false
-			}
-			err := h.gatewayService.ProxyResponsesWebSocketFromClient(proxyCtx, c, wsConn, account, token, wsFirstMessage, hooks)
+			err := h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks)
 			// A transport attempt may have advanced through several business
 			// turns. Retry selection and pricing must follow its last admitted
 			// model, not the model that originally opened the connection.
@@ -3282,33 +3262,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						zap.Int("retry_payload_bytes", len(retryPayload)),
 					)
 				}
-				if failoverErr.IsOpenAICapacityShed() {
-					retry, retryErr := openAI503Session.HandleStreamError(c, failoverErr)
-					if retryErr != nil {
-						if !errors.As(retryErr, &failoverErr) {
-							closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "upstream retry failed")
-							return
-						}
-					}
-					if retry {
-						sameAccountRetryAttempt = true
-						if !ensureUserSlotHeld() {
-							return
-						}
-						if currentAccountRelease == nil {
-							accountRelease, acquired, acquireErr := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, accountMaxConcurrency)
-							if acquireErr != nil || !acquired {
-								closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account is busy, please retry later")
-								return
-							}
-							currentAccountRelease = wrapReleaseOnDone(ctx, accountRelease)
-						}
-						wsFirstMessage = wsAttemptMessage
-						continue
-					}
-				}
 				if waitForWSSameAccountRetry(account, failoverErr) {
-					sameAccountRetryAttempt = true
 					if !ensureUserSlotHeld() {
 						return
 					}

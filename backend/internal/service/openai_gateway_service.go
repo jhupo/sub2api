@@ -470,8 +470,6 @@ type OpenAIGatewayService struct {
 	openaiWSSessionPreemptions     openAIWSSessionPreemptRegistry
 	openaiAccountStats             *openAIAccountRuntimeStats
 	openaiModelTransient           *openAIAccountModelTransientState
-	openai503RetryQueueMu          sync.Mutex
-	openai503RetryQueue            *openAI503RetryQueue
 	openaiProxyStreamCircuit       *openAIProxyStreamCircuit
 	openaiProxyStreamFailOpenLogAt atomic.Int64
 
@@ -498,18 +496,10 @@ type OpenAIGatewayService struct {
 	// 剥离跨账号回带（openai_codex_turn_state.go）。
 	openaiCodexTurnStateOrigins sync.Map
 	openaiCodexTurnStateWrites  atomic.Uint64
-}
 
-func (s *OpenAIGatewayService) getOpenAI503RetryQueue() *openAI503RetryQueue {
-	if s == nil {
-		return nil
-	}
-	s.openai503RetryQueueMu.Lock()
-	defer s.openai503RetryQueueMu.Unlock()
-	if s.openai503RetryQueue == nil {
-		s.openai503RetryQueue = newOpenAI503RetryQueue()
-	}
-	return s.openai503RetryQueue
+	upstreamStateRunnerMu     sync.Mutex
+	upstreamStateRunnerCancel context.CancelFunc
+	upstreamStateRunnerWG     sync.WaitGroup
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService

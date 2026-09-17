@@ -43,6 +43,7 @@ func extractCodexIdentityInput(headers http.Header, body []byte) codexIdentityIn
 // Account failover publishes a replacement from the original ingress metadata.
 // Authentication remains outside this snapshot and is resolved at send/dial time.
 type codexAttemptIdentity struct {
+	clientSession   string
 	accountID       int64
 	deviceID        string
 	promptCacheKey  string
@@ -58,7 +59,7 @@ func (s *OpenAIGatewayService) resolveCodexAttemptIdentity(account, source *Acco
 		return nil
 	}
 	client := s.resolveCodexAccountClientIdentity(account, source, input.userAgent)
-	identity := &codexAttemptIdentity{accountID: account.ID, deviceID: source.GetOpenAIDeviceID(), promptCacheKey: input.promptCacheKey, client: client, scope: newCodexAccountIdentityScope(source, apiKeyID), turn: 1}
+	identity := &codexAttemptIdentity{clientSession: input.clientSession, accountID: account.ID, deviceID: source.GetOpenAIDeviceID(), promptCacheKey: input.promptCacheKey, client: client, scope: newCodexAccountIdentityScope(source, apiKeyID), turn: 1}
 	if !compact {
 		// The selected row owns policy; the actual credential owns its device seed.
 		identity.fingerprint = resolveCodexFingerprintIDsForInput(source, input, apiKeyID, account.GetCodexFingerprintMode())

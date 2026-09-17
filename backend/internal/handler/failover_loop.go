@@ -122,7 +122,7 @@ func sameAccountRetryDelayFor(failoverErr *service.UpstreamFailoverError, retryC
 }
 
 func sameAccountRetryAllowed(failoverErr *service.UpstreamFailoverError, retryCount, retryLimit int) bool {
-	if failoverErr == nil || failoverErr.OpenAI503QueueHandled || !failoverErr.RetryableOnSameAccount {
+	if failoverErr == nil || !failoverErr.RetryableOnSameAccount {
 		return false
 	}
 	// The account setting is the attempt budget. A deadline only shortens the
@@ -174,16 +174,6 @@ func poolModeSameAccountRetry(account *service.Account, failoverErr *service.Ups
 	}
 	nextCount = retryCount + 1
 	return nextCount, sameAccountRetryDelayFor(failoverErr, nextCount), true
-}
-
-func openAIWSSameAccountRetryEligible(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
-	if account == nil || failoverErr == nil || !failoverErr.RetryableOnSameAccount {
-		return false
-	}
-	if account.IsPoolMode() {
-		return account.IsPoolModeRetryableStatus(failoverErr.StatusCode)
-	}
-	return failoverErr.StatusCode == http.StatusTooManyRequests && !failoverErr.SameAccountRetryDeadline.IsZero()
 }
 
 // FailoverState 跨循环迭代共享的 failover 状态
@@ -374,7 +364,6 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAc
 
 	if s.LastFailoverErr != nil &&
 		s.LastFailoverErr.StatusCode == http.StatusServiceUnavailable &&
-		!s.LastFailoverErr.OpenAI503QueueHandled &&
 		s.SwitchCount <= s.MaxSwitches &&
 		// A multi-account pool must not clear its exclusion set after every
 		// candidate returned 503: doing so revisits already exhausted accounts

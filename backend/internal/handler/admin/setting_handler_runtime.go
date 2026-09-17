@@ -154,54 +154,6 @@ func (h *SettingHandler) UpdateRateLimit429CooldownSettings(c *gin.Context) {
 	})
 }
 
-// GetOpenAI503RetrySettings 获取 OpenAI 503 显式过载的账号内重试配置
-func (h *SettingHandler) GetOpenAI503RetrySettings(c *gin.Context) {
-	settings, err := h.settingService.GetOpenAI503RetrySettings(c.Request.Context())
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, dto.OpenAI503RetrySettings{
-		Enabled:               settings.Enabled,
-		RetryDelaySeconds:     settings.RetryDelaySeconds,
-		MaxSameAccountRetries: settings.MaxSameAccountRetries,
-	})
-}
-
-type UpdateOpenAI503RetrySettingsRequest struct {
-	Enabled               bool `json:"enabled"`
-	RetryDelaySeconds     int  `json:"retry_delay_seconds"`
-	MaxSameAccountRetries int  `json:"max_same_account_retries"`
-}
-
-// UpdateOpenAI503RetrySettings 更新 OpenAI 503 显式过载的账号内重试配置
-func (h *SettingHandler) UpdateOpenAI503RetrySettings(c *gin.Context) {
-	var req UpdateOpenAI503RetrySettingsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request: "+err.Error())
-		return
-	}
-	settings := &service.OpenAI503RetrySettings{
-		Enabled:               req.Enabled,
-		RetryDelaySeconds:     req.RetryDelaySeconds,
-		MaxSameAccountRetries: req.MaxSameAccountRetries,
-	}
-	if err := h.settingService.SetOpenAI503RetrySettings(c.Request.Context(), settings); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-	updatedSettings, err := h.settingService.GetOpenAI503RetrySettings(c.Request.Context())
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	response.Success(c, dto.OpenAI503RetrySettings{
-		Enabled:               updatedSettings.Enabled,
-		RetryDelaySeconds:     updatedSettings.RetryDelaySeconds,
-		MaxSameAccountRetries: updatedSettings.MaxSameAccountRetries,
-	})
-}
-
 // GetPanelRateLimitSettings 获取面板 API 限流配置
 // GET /api/v1/admin/settings/panel-rate-limit
 func (h *SettingHandler) GetPanelRateLimitSettings(c *gin.Context) {

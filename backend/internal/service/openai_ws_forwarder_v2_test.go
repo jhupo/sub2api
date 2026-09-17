@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 	"time"
 
@@ -13,39 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
-
-type openAIWSRetrySequenceDialer struct {
-	mu        sync.Mutex
-	conns     []*openAIWSCaptureConn
-	handshake http.Header
-	dialCount int
-}
-
-func (d *openAIWSRetrySequenceDialer) Dial(
-	ctx context.Context,
-	wsURL string,
-	headers http.Header,
-	proxyURL string,
-) (openAIWSClientConn, int, http.Header, error) {
-	_ = ctx
-	_ = wsURL
-	_ = headers
-	_ = proxyURL
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.dialCount++
-	index := d.dialCount - 1
-	if index >= len(d.conns) {
-		index = len(d.conns) - 1
-	}
-	return d.conns[index], 0, cloneHeader(d.handshake), nil
-}
-
-func (d *openAIWSRetrySequenceDialer) DialCount() int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.dialCount
-}
 
 // HTTP POST /v1/responses -> forwardOpenAIWSV2 keeps the canonical outbound
 // tier separate from response.completed.service_tier for usage-time billing.
@@ -130,7 +96,7 @@ func TestForwardOpenAIWSV2_KeepsOutboundAndObservedServiceTiersSeparate(t *testi
 	}
 }
 
-func TestForwardOpenAIWSV2_HeartbeatDoesNotCommitSemanticOutput(t *testing.T) {
+func TestForwardOpenAIWSV2_HeartbeatCommitsHeadersWithoutTTFTOrReplay(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, rec := newTurnStateTestContext(t, 99, "ws-heartbeat")
 	RequireOpenAIResponseHeaders(c)
@@ -161,140 +127,11 @@ func TestForwardOpenAIWSV2_HeartbeatDoesNotCommitSemanticOutput(t *testing.T) {
 	if result != nil {
 		require.Nil(t, result.FirstTokenMs)
 	}
-	require.Nil(t, upstream.lastReq, "WS v2 remains on its WS retry path")
-	// The heartbeat commits transport headers but must remain replayable when
-	// the upstream fails before any semantic output is produced.
-	require.False(t, OpenAIStreamAttemptCommitted(c))
+	require.Nil(t, upstream.lastReq, "committed WS protocol headers forbid HTTP replay")
+	require.True(t, OpenAIStreamAttemptCommitted(c))
 	require.Equal(t, "state-ws", rec.Result().Header.Get("X-Codex-Turn-State"))
 	require.Equal(t, "req-ws", rec.Result().Header.Get("X-Request-Id"))
 	require.Contains(t, rec.Body.String(), ":\n\n")
-}
-
-func TestForwardOpenAIWSV2_CapacityShedUsesConfigured503Retry(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c, rec := newTurnStateTestContext(t, 100, "ws-capacity-retry")
-	RequireOpenAIResponseHeaders(c)
-	cfg := &config.Config{}
-	cfg.Gateway.StreamKeepaliveInterval = 1
-	cfg.Gateway.OpenAIWS.Enabled = true
-	cfg.Gateway.OpenAIWS.OAuthEnabled = true
-	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
-	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
-	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 5
-	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
-	first := &openAIWSCaptureConn{
-		readDelays: []time.Duration{1100 * time.Millisecond},
-		events:     [][]byte{[]byte(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`)},
-	}
-	second := &openAIWSCaptureConn{
-		events: [][]byte{[]byte(`{"type":"response.completed","response":{"id":"resp_retry","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1}}}`)},
-	}
-	dialer := &openAIWSRetrySequenceDialer{conns: []*openAIWSCaptureConn{first, second}, handshake: http.Header{"X-Request-Id": []string{"retry-rid"}}}
-	pool := newOpenAIWSConnPool(cfg)
-	pool.setClientDialerForTest(dialer)
-	svc := &OpenAIGatewayService{
-		cfg:              cfg,
-		cache:            &stubGatewayCache{},
-		settingService:   &SettingService{settingRepo: &openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{SettingKeyOpenAI503RetrySettings: `{"enabled":true,"retry_delay_seconds":0,"max_same_account_retries":1}`}}},
-		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
-		toolCorrector:    NewCodexToolCorrector(),
-		openaiWSPool:     pool,
-	}
-	account := &Account{ID: 5900, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1,
-		Credentials: map[string]any{"access_token": "test-token"}, Extra: map[string]any{"responses_websockets_v2_enabled": true}}
-
-	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":"hello"}`))
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, 2, dialer.DialCount(), "capacity shedding must use one configured same-account retry")
-	require.Contains(t, rec.Body.String(), `"text":"ok"`)
-	require.True(t, OpenAIStreamAttemptCommitted(c))
-}
-
-func TestForwardOpenAIWSV2_APIKeyCapacityShedReturnsToPoolRetry(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c, _ := newTurnStateTestContext(t, 102, "ws-api-pool-capacity")
-	cfg := &config.Config{}
-	cfg.Gateway.OpenAIWS.Enabled = true
-	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
-	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
-	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
-	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 5
-	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
-	capacity := []byte(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded."}}`)
-	dialer := &openAIWSRetrySequenceDialer{conns: []*openAIWSCaptureConn{{events: [][]byte{capacity}}}}
-	pool := newOpenAIWSConnPool(cfg)
-	pool.setClientDialerForTest(dialer)
-	svc := &OpenAIGatewayService{
-		cfg:              cfg,
-		cache:            &stubGatewayCache{},
-		settingService:   &SettingService{settingRepo: &openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{SettingKeyOpenAI503RetrySettings: `{"enabled":true,"retry_delay_seconds":0,"max_same_account_retries":3}`}}},
-		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
-		toolCorrector:    NewCodexToolCorrector(),
-		openaiWSPool:     pool,
-	}
-	account := &Account{ID: 5902, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1,
-		Credentials: map[string]any{
-			"api_key":                      "sk-test",
-			"pool_mode":                    true,
-			"pool_mode_retry_count":        float64(3),
-			"pool_mode_retry_status_codes": []any{float64(http.StatusServiceUnavailable)},
-		}, Extra: map[string]any{"responses_websockets_v2_enabled": true}}
-
-	result, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":"hello"}`))
-	require.Nil(t, result)
-	var failure *UpstreamFailoverError
-	require.ErrorAs(t, err, &failure)
-	require.False(t, failure.OpenAI503QueueHandled)
-	require.True(t, failure.RetryableOnSameAccount)
-	require.Equal(t, 1, dialer.DialCount(), "the API key attempt must return to the handler's pool-mode retry loop")
-}
-
-func TestForwardOpenAIWSV2_ThreeConfiguredRetriesExceedGenericTurnBudget(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c, _ := newTurnStateTestContext(t, 101, "ws-capacity-three-retries")
-	cfg := &config.Config{}
-	cfg.Gateway.OpenAIWS.Enabled = true
-	cfg.Gateway.OpenAIWS.OAuthEnabled = true
-	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
-	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
-	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 5
-	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
-	capacity := []byte(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded."}}`)
-	completed := []byte(`{"type":"response.completed","response":{"id":"resp_retry_three","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1}}}`)
-	conns := []*openAIWSCaptureConn{
-		{events: [][]byte{capacity}},
-		{events: [][]byte{capacity}},
-		{events: [][]byte{capacity}},
-		{events: [][]byte{completed}},
-	}
-	dialer := &openAIWSRetrySequenceDialer{conns: conns}
-	pool := newOpenAIWSConnPool(cfg)
-	pool.setClientDialerForTest(dialer)
-	svc := &OpenAIGatewayService{
-		cfg:              cfg,
-		cache:            &stubGatewayCache{},
-		settingService:   &SettingService{settingRepo: &openAIAdvancedSchedulerSettingRepoStub{values: map[string]string{SettingKeyOpenAI503RetrySettings: `{"enabled":true,"retry_delay_seconds":0,"max_same_account_retries":3}`}}},
-		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
-		toolCorrector:    NewCodexToolCorrector(),
-		openaiWSPool:     pool,
-	}
-	account := &Account{ID: 5901, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1,
-		Credentials: map[string]any{"access_token": "test-token"}, Extra: map[string]any{"responses_websockets_v2_enabled": true}}
-
-	ctx := withOpenAIRequestAttemptBudget(context.Background())
-	result, err := svc.Forward(ctx, c, account, []byte(`{"model":"gpt-5.5","stream":true,"input":"hello"}`))
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, 4, dialer.DialCount(), "three configured same-account retries must not be truncated by the generic turn budget")
-}
-
-func TestOpenAIWSCompactionItemCommitsSemanticOutput(t *testing.T) {
-	payload := `{"type":"response.output_item.done","item":{"type":"compaction","encrypted_content":"compact-payload"}}`
-	require.True(t, openAIStreamDataStartsVisibleOutput(payload, "response.output_item.done"))
-	require.True(t, openAIStreamDataStartsVisibleOutput(payload, ""))
-	completed := `{"type":"response.completed","response":{"output":[{"type":"compaction_summary","encrypted_content":"compact-payload"}]}}`
-	require.True(t, openAIStreamDataStartsVisibleOutput(completed, "response.completed"))
 }
 
 func TestForwardOpenAIWSV2_CancellationClosesConnectionWithoutReplay(t *testing.T) {

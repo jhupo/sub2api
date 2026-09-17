@@ -39,14 +39,14 @@ func openAIPlanScores(plan openAIAccountLoadPlan) map[int64]float64 {
 	return scores
 }
 
-// Reset 权重 > 0 时，会话窗口最早重置的账号应获得更高分。
+// Reset 权重 > 0 时，规范 Codex 5h 窗口最早重置的账号应获得更高分。
 func TestBuildOpenAIAccountLoadPlan_ResetWeightPrefersSoonestReset(t *testing.T) {
 	now := time.Now()
 	soon := now.Add(1 * time.Hour)
 	later := now.Add(20 * time.Hour)
 	filtered := []*Account{
-		{ID: 1, Priority: 0, SessionWindowEnd: &later},
-		{ID: 2, Priority: 0, SessionWindowEnd: &soon},
+		{ID: 1, Priority: 0, Extra: map[string]any{"codex_5h_reset_at": later.Format(time.RFC3339)}},
+		{ID: 2, Priority: 0, Extra: map[string]any{"codex_5h_reset_at": soon.Format(time.RFC3339)}},
 	}
 	sched := openAIResetTestScheduler(5.0)
 
@@ -76,8 +76,8 @@ func TestBuildOpenAIAccountLoadPlan_ResetWeightIgnoresNilWindow(t *testing.T) {
 	now := time.Now()
 	soon := now.Add(2 * time.Hour)
 	filtered := []*Account{
-		{ID: 1, Priority: 0, SessionWindowEnd: nil},
-		{ID: 2, Priority: 0, SessionWindowEnd: &soon},
+		{ID: 1, Priority: 0},
+		{ID: 2, Priority: 0, Extra: map[string]any{"codex_5h_reset_at": soon.Format(time.RFC3339)}},
 	}
 	sched := openAIResetTestScheduler(5.0)
 
@@ -86,20 +86,20 @@ func TestBuildOpenAIAccountLoadPlan_ResetWeightIgnoresNilWindow(t *testing.T) {
 	require.Greater(t, scores[2], scores[1], "拥有活跃窗口的账号得分高于无窗口账号")
 }
 
-func TestOpenAIQuotaHeadroomFactor_PrimaryUsedPercent(t *testing.T) {
+func TestOpenAIQuotaHeadroomFactor_SevenDayUsedPercent(t *testing.T) {
 	now := time.Date(2026, 3, 11, 10, 0, 0, 0, time.UTC)
 	account := &Account{
 		Extra: map[string]any{
-			"codex_primary_used_percent": 20.0,
-			"codex_primary_reset_at":     now.Add(24 * time.Hour).Format(time.RFC3339),
-			"codex_usage_updated_at":     now.Add(-time.Minute).Format(time.RFC3339),
+			"codex_7d_used_percent":  20.0,
+			"codex_7d_reset_at":      now.Add(24 * time.Hour).Format(time.RFC3339),
+			"codex_usage_updated_at": now.Add(-time.Minute).Format(time.RFC3339),
 		},
 	}
 
 	require.InDelta(t, 0.8, openAIQuotaHeadroomFactor(account, now), 0.0001)
 }
 
-func TestOpenAIQuotaHeadroomFactor_PrimaryMissingIsNeutral(t *testing.T) {
+func TestOpenAIQuotaHeadroomFactor_SevenDayMissingIsNeutral(t *testing.T) {
 	now := time.Date(2026, 3, 11, 10, 0, 0, 0, time.UTC)
 	account := &Account{
 		Extra: map[string]any{
@@ -110,28 +110,28 @@ func TestOpenAIQuotaHeadroomFactor_PrimaryMissingIsNeutral(t *testing.T) {
 	require.Equal(t, openAIQuotaHeadroomNeutralFactor, openAIQuotaHeadroomFactor(account, now))
 }
 
-func TestOpenAIQuotaHeadroomFactor_PrimaryResetExpiredIsNeutral(t *testing.T) {
+func TestOpenAIQuotaHeadroomFactor_SevenDayResetExpiredIsNeutral(t *testing.T) {
 	now := time.Date(2026, 3, 11, 10, 0, 0, 0, time.UTC)
 	account := &Account{
 		Extra: map[string]any{
-			"codex_primary_used_percent": 20.0,
-			"codex_primary_reset_at":     now.Add(-time.Minute).Format(time.RFC3339),
-			"codex_usage_updated_at":     now.Add(-time.Minute).Format(time.RFC3339),
+			"codex_7d_used_percent":  20.0,
+			"codex_7d_reset_at":      now.Add(-time.Minute).Format(time.RFC3339),
+			"codex_usage_updated_at": now.Add(-time.Minute).Format(time.RFC3339),
 		},
 	}
 
 	require.Equal(t, openAIQuotaHeadroomNeutralFactor, openAIQuotaHeadroomFactor(account, now))
 }
 
-func TestOpenAIQuotaHeadroomFactor_SecondaryLowHeadroomDiscountsPrimary(t *testing.T) {
+func TestOpenAIQuotaHeadroomFactor_FiveHourLowHeadroomDiscountsSevenDay(t *testing.T) {
 	now := time.Date(2026, 3, 11, 10, 0, 0, 0, time.UTC)
 	account := &Account{
 		Extra: map[string]any{
-			"codex_primary_used_percent":   20.0,
-			"codex_primary_reset_at":       now.Add(24 * time.Hour).Format(time.RFC3339),
-			"codex_secondary_used_percent": 95.0,
-			"codex_secondary_reset_at":     now.Add(time.Hour).Format(time.RFC3339),
-			"codex_usage_updated_at":       now.Add(-time.Minute).Format(time.RFC3339),
+			"codex_7d_used_percent":  20.0,
+			"codex_7d_reset_at":      now.Add(24 * time.Hour).Format(time.RFC3339),
+			"codex_5h_used_percent":  95.0,
+			"codex_5h_reset_at":      now.Add(time.Hour).Format(time.RFC3339),
+			"codex_usage_updated_at": now.Add(-time.Minute).Format(time.RFC3339),
 		},
 	}
 
@@ -145,18 +145,18 @@ func TestBuildOpenAIAccountLoadPlan_QuotaHeadroomPrefersHigher7dRemaining(t *tes
 			ID:       1,
 			Priority: 0,
 			Extra: map[string]any{
-				"codex_primary_used_percent": 80.0,
-				"codex_primary_reset_at":     now.Add(24 * time.Hour).Format(time.RFC3339),
-				"codex_usage_updated_at":     now.Add(-time.Minute).Format(time.RFC3339),
+				"codex_7d_used_percent":  80.0,
+				"codex_7d_reset_at":      now.Add(24 * time.Hour).Format(time.RFC3339),
+				"codex_usage_updated_at": now.Add(-time.Minute).Format(time.RFC3339),
 			},
 		},
 		{
 			ID:       2,
 			Priority: 0,
 			Extra: map[string]any{
-				"codex_primary_used_percent": 20.0,
-				"codex_primary_reset_at":     now.Add(24 * time.Hour).Format(time.RFC3339),
-				"codex_usage_updated_at":     now.Add(-time.Minute).Format(time.RFC3339),
+				"codex_7d_used_percent":  20.0,
+				"codex_7d_reset_at":      now.Add(24 * time.Hour).Format(time.RFC3339),
+				"codex_usage_updated_at": now.Add(-time.Minute).Format(time.RFC3339),
 			},
 		},
 	}
@@ -174,18 +174,18 @@ func TestBuildOpenAIAccountLoadPlan_QuotaHeadroomZeroNoEffect(t *testing.T) {
 			ID:       1,
 			Priority: 0,
 			Extra: map[string]any{
-				"codex_primary_used_percent": 80.0,
-				"codex_primary_reset_at":     now.Add(24 * time.Hour).Format(time.RFC3339),
-				"codex_usage_updated_at":     now.Add(-time.Minute).Format(time.RFC3339),
+				"codex_7d_used_percent":  80.0,
+				"codex_7d_reset_at":      now.Add(24 * time.Hour).Format(time.RFC3339),
+				"codex_usage_updated_at": now.Add(-time.Minute).Format(time.RFC3339),
 			},
 		},
 		{
 			ID:       2,
 			Priority: 0,
 			Extra: map[string]any{
-				"codex_primary_used_percent": 20.0,
-				"codex_primary_reset_at":     now.Add(24 * time.Hour).Format(time.RFC3339),
-				"codex_usage_updated_at":     now.Add(-time.Minute).Format(time.RFC3339),
+				"codex_7d_used_percent":  20.0,
+				"codex_7d_reset_at":      now.Add(24 * time.Hour).Format(time.RFC3339),
+				"codex_usage_updated_at": now.Add(-time.Minute).Format(time.RFC3339),
 			},
 		},
 	}
@@ -194,4 +194,36 @@ func TestBuildOpenAIAccountLoadPlan_QuotaHeadroomZeroNoEffect(t *testing.T) {
 	plan := sched.buildOpenAIAccountLoadPlan(context.Background(), OpenAIAccountScheduleRequest{}, filtered, map[int64]*AccountLoadInfo{})
 	scores := openAIPlanScores(plan)
 	require.Equal(t, scores[1], scores[2], "quota_headroom 权重为 0 时不应影响打分")
+}
+
+func TestOpenAICodexWindowResetAtRelativeCountdownRequiresSnapshotTime(t *testing.T) {
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	resetAt, ok := openAICodexWindowResetAt(map[string]any{
+		"codex_5h_reset_after_seconds": 3600,
+		"codex_usage_updated_at":       now.Add(-30 * time.Minute).Format(time.RFC3339),
+	}, "5h")
+	require.True(t, ok)
+	require.Equal(t, now.Add(30*time.Minute), resetAt)
+
+	_, ok = openAICodexWindowResetAt(map[string]any{
+		"codex_5h_reset_after_seconds": 3600,
+	}, "5h")
+	require.False(t, ok)
+}
+
+func TestOpenAISchedulingResetWindowEndUsesCanonicalCodexWindow(t *testing.T) {
+	now := time.Now()
+	end := now.Add(time.Hour)
+	account := &Account{Extra: map[string]any{
+		"codex_5h_reset_at": end.Format(time.RFC3339),
+	}}
+	got, ok := openAISchedulingResetWindowEnd(account, now)
+	require.True(t, ok)
+	require.WithinDuration(t, end, got, time.Second)
+
+	sessionEnd := now.Add(2 * time.Hour)
+	account.SessionWindowEnd = &sessionEnd
+	delete(account.Extra, "codex_5h_reset_at")
+	_, ok = openAISchedulingResetWindowEnd(account, now)
+	require.False(t, ok)
 }

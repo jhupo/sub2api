@@ -438,6 +438,12 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/upstream-state',
+    name: 'AdminUpstreamState',
+    component: () => import('@/views/admin/UpstreamStateView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, requiresUpstreamState: true, title: 'State Management', titleKey: 'admin.settings.upstreamState.title' }
+  },
+  {
     path: '/admin/access-blocks',
     name: 'AdminAccessBlocks',
     component: () => import('@/views/admin/AccessBlocksView.vue'),
@@ -912,6 +918,14 @@ router.beforeEach(async (to, _from, next) => {
           adminComplianceStore.requireAcknowledgement(err.metadata)
         }
       }
+    }
+  }
+
+  if (to.meta.requiresUpstreamState === true && authStore.isAdmin) {
+    await adminSettingsStore.fetch()
+    if (!adminSettingsStore.upstreamStateEnabled) {
+      next({ path: '/admin/settings', hash: '#features' })
+      return
     }
   }
 

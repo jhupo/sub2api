@@ -10,16 +10,6 @@ const openAIRequestAttemptLimit = 3
 
 type openAIRequestAttemptKey struct{}
 
-// openAI503RetryAttemptKey marks an attempt that is already governed by the
-// account-scoped OpenAI 503 retry state. These attempts must not consume the
-// legacy generic turn budget: max_same_account_retries=3 means one initial
-// request plus three 503 retries.
-type openAI503RetryAttemptKey struct{}
-
-type openAI503RetryAttempt struct {
-	mu        sync.Mutex
-	available bool
-}
 type openAIRequestAttempts struct {
 	mu    sync.Mutex
 	count int
@@ -35,15 +25,6 @@ func withOpenAIRequestAttemptBudget(ctx context.Context) context.Context {
 }
 
 func consumeOpenAIRequestAttempt(ctx context.Context) error {
-	if retry, _ := ctx.Value(openAI503RetryAttemptKey{}).(*openAI503RetryAttempt); retry != nil {
-		retry.mu.Lock()
-		if retry.available {
-			retry.available = false
-			retry.mu.Unlock()
-			return nil
-		}
-		retry.mu.Unlock()
-	}
 	budget, _ := ctx.Value(openAIRequestAttemptKey{}).(*openAIRequestAttempts)
 	if budget == nil {
 		return nil
@@ -67,13 +48,6 @@ func consumeOpenAIRequestAttempt(ctx context.Context) error {
 	failure.RetryableOnSameAccount = false
 	failure.RequestScopedTransient = true
 	return &failure
-}
-
-func withOpenAI503RetryAttempt(ctx context.Context) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return context.WithValue(ctx, openAI503RetryAttemptKey{}, &openAI503RetryAttempt{available: true})
 }
 
 func recordOpenAIRequestFailure(ctx context.Context, failure *UpstreamFailoverError) {

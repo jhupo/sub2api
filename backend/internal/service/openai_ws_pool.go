@@ -67,10 +67,11 @@ func (e *openAIWSDialError) Unwrap() error {
 }
 
 type openAIWSAcquireRequest struct {
-	Account  *Account
-	identity *codexAttemptIdentity
-	WSURL    string
-	Headers  http.Header
+	upstreamState *upstreamStateScope
+	Account       *Account
+	identity      *codexAttemptIdentity
+	WSURL         string
+	Headers       http.Header
 	// HeadersFactory is evaluated inside dialConn. It exists so credentials
 	// whose authorization is per-dial (Agent Identity) are never cached in
 	// lastAcquire or delayed prewarm state.
@@ -84,6 +85,7 @@ type openAIWSAcquireRequest struct {
 }
 
 type openAIWSHandshakeCompatibilityKey struct {
+	managedStateScope   string
 	identity            openAIWSHandshakeIdentity
 	credentialPrincipal string
 	acceptLanguage      string
@@ -1941,6 +1943,7 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 			return nil, err
 		}
 	}
+	stateAttempt := req.upstreamState.begin(ctx, headers)
 	conn, status, handshakeHeaders, err := p.clientDialer.Dial(ctx, req.WSURL, headers, req.ProxyURL)
 	if err != nil {
 		var handshakeErr *openAIWSHandshakeError
@@ -1962,6 +1965,7 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 			Err:             errors.New("openai ws dialer returned nil connection"),
 		}
 	}
+	stateAttempt.capture(ctx, http.StatusSwitchingProtocols, handshakeHeaders)
 	id := p.nextConnID(req.Account.ID)
 	pooledConn := newOpenAIWSConn(id, req.Account.ID, conn, handshakeHeaders)
 	pooledConn.handshakeCompatibility = req.handshakeCompatibility(headers)
@@ -2202,6 +2206,9 @@ func (r openAIWSAcquireRequest) handshakeCompatibility(headers http.Header) open
 		}
 	}
 	key := normalizeOpenAIWSHandshakeCompatibility(r.Account, headers, mode)
+	if r.upstreamState != nil {
+		key.managedStateScope = r.upstreamState.poolKey()
+	}
 	if r.identity != nil {
 		key.credentialPrincipal = r.identity.scope.namespace
 	}

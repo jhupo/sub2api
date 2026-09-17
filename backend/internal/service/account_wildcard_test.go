@@ -232,6 +232,36 @@ func TestAccountIsModelSupported(t *testing.T) {
 			requestedModel: "gemini-3-flash",
 			expected:       false,
 		},
+		{
+			name:           "deepseek empty mapping allows official flash",
+			platform:       PlatformDeepseek,
+			credentials:    map[string]any{},
+			requestedModel: "deepseek-flash",
+			expected:       true,
+		},
+		{
+			name:           "deepseek empty mapping accepts claude code suffix",
+			platform:       PlatformDeepseek,
+			credentials:    map[string]any{},
+			requestedModel: "deepseek-flash[1m]",
+			expected:       true,
+		},
+		{
+			name:           "deepseek empty mapping rejects unknown model",
+			platform:       PlatformDeepseek,
+			credentials:    map[string]any{},
+			requestedModel: "deepseek-chat",
+			expected:       false,
+		},
+		{
+			name:     "deepseek explicit mapping wins over whitelist",
+			platform: PlatformDeepseek,
+			credentials: map[string]any{
+				"model_mapping": map[string]any{"custom": "deepseek-flash"},
+			},
+			requestedModel: "custom",
+			expected:       true,
+		},
 	}
 
 	for _, tt := range tests {

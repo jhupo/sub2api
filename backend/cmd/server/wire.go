@@ -337,6 +337,7 @@ func provideCleanup(
 			}},
 			{"OpenAIWSPool", func() error {
 				if openAIGateway != nil {
+					openAIGateway.StopManagedUpstreamStateRunner()
 					openAIGateway.CloseOpenAIWSPool()
 				}
 				return nil

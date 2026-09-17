@@ -62,6 +62,11 @@ type SettingHandler struct {
 	notificationEmailService *service.NotificationEmailService
 	totpService              *service.TotpService
 	userService              *service.UserService
+	upstreamStateManager     *service.OpenAIGatewayService
+}
+
+func (h *SettingHandler) SetUpstreamStateManager(manager *service.OpenAIGatewayService) {
+	h.upstreamStateManager = manager
 }
 
 // NewSettingHandler 创建系统设置处理器

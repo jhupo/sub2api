@@ -82,6 +82,27 @@ func isOpenAIOAuthServableModel(requestedModel string) bool {
 	return true
 }
 
+var deepseekServableModels = []string{
+	"deepseek-flash",
+	"deepseek-v4-pro",
+	"deepseek-v4-flash",
+	"deepseek-v4-flash-vision-exp",
+	"deepseek-v4-pro-0813",
+}
+
+func isDeepseekServableModel(requestedModel string) bool {
+	model := strings.ToLower(normalizeClaudeCodeLongContextModel(strings.TrimSpace(requestedModel)))
+	if model == "" {
+		return true
+	}
+	for _, servable := range deepseekServableModels {
+		if model == servable {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveOpenAICompactForwardModel determines the compact-only upstream model
 // for /responses/compact requests. It never affects normal /responses traffic.
 // When no compact-specific mapping matches, the input model is returned as-is.

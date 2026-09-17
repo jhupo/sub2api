@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { adminAPI } from '@/api'
+import { upstreamStateApi } from '@/api/admin/upstreamState'
 import type { CustomMenuItem } from '@/types'
 
 export const useAdminSettingsStore = defineStore('adminSettings', () => {
@@ -49,6 +50,7 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
   const opsRealtimeMonitoringEnabled = ref(readCachedBool('ops_realtime_monitoring_enabled_cached', true))
   const opsQueryModeDefault = ref(readCachedString('ops_query_mode_default_cached', 'auto'))
   const paymentEnabled = ref(readCachedBool('payment_enabled_cached', false))
+  const upstreamStateEnabled = ref(readCachedBool('upstream_state_enabled_cached', false))
   const customMenuItems = ref<CustomMenuItem[]>([])
 
   async function fetch(force = false): Promise<void> {
@@ -57,23 +59,37 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
 
     loading.value = true
     try {
-      const [settings, paymentConfigResp] = await Promise.all([
+      const [settingsResult, paymentResult, upstreamStateResult] = await Promise.allSettled([
         adminAPI.settings.getSettings(),
-        adminAPI.payment.getConfig()
+        adminAPI.payment.getConfig(),
+        upstreamStateApi.settings()
       ])
-      opsMonitoringEnabled.value = settings.ops_monitoring_enabled ?? true
-      writeCachedBool('ops_monitoring_enabled_cached', opsMonitoringEnabled.value)
+      if (settingsResult.status === 'fulfilled') {
+        const settings = settingsResult.value
+        opsMonitoringEnabled.value = settings.ops_monitoring_enabled ?? true
+        writeCachedBool('ops_monitoring_enabled_cached', opsMonitoringEnabled.value)
+        opsRealtimeMonitoringEnabled.value = settings.ops_realtime_monitoring_enabled ?? true
+        writeCachedBool('ops_realtime_monitoring_enabled_cached', opsRealtimeMonitoringEnabled.value)
+        opsQueryModeDefault.value = settings.ops_query_mode_default || 'auto'
+        writeCachedString('ops_query_mode_default_cached', opsQueryModeDefault.value)
+        customMenuItems.value = Array.isArray(settings.custom_menu_items) ? settings.custom_menu_items : []
+      } else {
+        console.error('[adminSettings] Failed to fetch system settings:', settingsResult.reason)
+      }
 
-      opsRealtimeMonitoringEnabled.value = settings.ops_realtime_monitoring_enabled ?? true
-      writeCachedBool('ops_realtime_monitoring_enabled_cached', opsRealtimeMonitoringEnabled.value)
+      if (paymentResult.status === 'fulfilled') {
+        paymentEnabled.value = paymentResult.value.data?.enabled ?? false
+        writeCachedBool('payment_enabled_cached', paymentEnabled.value)
+      } else {
+        console.error('[adminSettings] Failed to fetch payment settings:', paymentResult.reason)
+      }
 
-      opsQueryModeDefault.value = settings.ops_query_mode_default || 'auto'
-      writeCachedString('ops_query_mode_default_cached', opsQueryModeDefault.value)
-
-      customMenuItems.value = Array.isArray(settings.custom_menu_items) ? settings.custom_menu_items : []
-
-      paymentEnabled.value = paymentConfigResp.data?.enabled ?? false
-      writeCachedBool('payment_enabled_cached', paymentEnabled.value)
+      if (upstreamStateResult.status === 'fulfilled') {
+        upstreamStateEnabled.value = upstreamStateResult.value.enabled
+        writeCachedBool('upstream_state_enabled_cached', upstreamStateEnabled.value)
+      } else {
+        console.error('[adminSettings] Failed to fetch state settings:', upstreamStateResult.reason)
+      }
 
       loaded.value = true
     } catch (err) {
@@ -100,6 +116,12 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
   function setPaymentEnabledLocal(value: boolean) {
     paymentEnabled.value = value
     writeCachedBool('payment_enabled_cached', value)
+    loaded.value = true
+  }
+
+  function setUpstreamStateEnabledLocal(value: boolean) {
+    upstreamStateEnabled.value = value
+    writeCachedBool('upstream_state_enabled_cached', value)
     loaded.value = true
   }
 
@@ -140,11 +162,13 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
     opsRealtimeMonitoringEnabled,
     opsQueryModeDefault,
     paymentEnabled,
+    upstreamStateEnabled,
     customMenuItems,
     fetch,
     setOpsMonitoringEnabledLocal,
     setOpsRealtimeMonitoringEnabledLocal,
     setPaymentEnabledLocal,
+    setUpstreamStateEnabledLocal,
     setOpsQueryModeDefaultLocal
   }
 })

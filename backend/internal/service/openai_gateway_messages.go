@@ -321,8 +321,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, fmt.Errorf("get access token: %w", err)
 	}
 
-	// 6. Build and send the upstream request. A fresh request is required after
-	// a 503 because the previous request body has been consumed.
+	// 6. Build and send the upstream request.
 	if account.UsesOpenAICodexProtocol() && account.Platform != PlatformGrok {
 		// Messages 兼容桥即使 body 未带 todo-guard/prompt_cache_key 标记（如映射到非
 		// gpt-5/codex 模型），也必须让 buildUpstreamRequest 走 bridge 分支，以保留
@@ -333,10 +332,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	proxyURL := ""
 	if account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
-	}
-	openAI503State, err := s.newOpenAI503RetryState(ctx, account)
-	if err != nil {
-		return nil, err
 	}
 	buildUpstreamRequest := func() (*http.Request, error) {
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
@@ -389,12 +384,12 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	var resp *http.Response
 	for {
 		for {
-			resp, err = openAI503State.do(c, buildUpstreamRequest, proxyURL)
+			upstreamReq, buildErr := buildUpstreamRequest()
+			if buildErr != nil {
+				return nil, buildErr
+			}
+			resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 			if err != nil {
-				var failoverErr *UpstreamFailoverError
-				if errors.As(err, &failoverErr) {
-					return nil, err
-				}
 				if resp != nil && resp.Body != nil {
 					_ = resp.Body.Close()
 				}
@@ -497,13 +492,6 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			// Client wants JSON: buffer the streaming response and assemble a JSON reply.
 			result, handleErr = s.handleAnthropicBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
 		}
-		if handleErr != nil {
-			var retry bool
-			if retry, handleErr = openAI503State.handleStreamError(c, resp, handleErr); retry {
-				continue
-			}
-		}
-
 		// cyber_policy：标记已设、error 已按 Anthropic 格式发给客户端。丢弃 result、返回哨兵，
 		// 使 handler 落入 tokens=0 免费用量行（对齐 /v1/responses），不计费、不 failover。
 		if GetOpsCyberPolicy(c) != nil {

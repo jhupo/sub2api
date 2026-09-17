@@ -567,16 +567,6 @@ type RateLimit429CooldownSettings struct {
 	CooldownSeconds int `json:"cooldown_seconds"`
 }
 
-// OpenAI503RetrySettings controls account-local retries for explicit OpenAI
-// capacity-shed responses (server_is_overloaded / slow_down). It is separate
-// from quota rate limiting: a 503 does not prove that an account exhausted a
-// usage window.
-type OpenAI503RetrySettings struct {
-	Enabled               bool `json:"enabled"`
-	RetryDelaySeconds     int  `json:"retry_delay_seconds"`
-	MaxSameAccountRetries int  `json:"max_same_account_retries"`
-}
-
 // OpenAIAPIKeyHealthBreakerSettings controls cross-instance failure counting for OpenAI pool API keys.
 type OpenAIAPIKeyHealthBreakerSettings struct {
 	Enabled          bool `json:"enabled"`
@@ -607,14 +597,6 @@ func DefaultRateLimit429CooldownSettings() *RateLimit429CooldownSettings {
 	return &RateLimit429CooldownSettings{
 		Enabled:         true,
 		CooldownSeconds: 5,
-	}
-}
-
-func DefaultOpenAI503RetrySettings() *OpenAI503RetrySettings {
-	return &OpenAI503RetrySettings{
-		Enabled:               true,
-		RetryDelaySeconds:     2,
-		MaxSameAccountRetries: 1,
 	}
 }
 

@@ -324,11 +324,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	openAI503State, err := s.newOpenAI503RetryState(ctx, account)
-	if err != nil {
-		return nil, err
-	}
-
 	if c != nil {
 		c.Set("openai_passthrough", true)
 	}
@@ -385,17 +380,17 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 		upstreamPassthroughModel = actualModel
 		SetOpsUpstreamModel(c, actualModel)
+		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+		upstreamReq, buildErr := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
+		releaseUpstreamCtx()
+		if buildErr != nil {
+			return nil, buildErr
+		}
 		upstreamStart := time.Now()
-		resp, err = openAI503State.do(c, func() (*http.Request, error) {
-			upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-			upstreamReq, buildErr := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
-			releaseUpstreamCtx()
-			return upstreamReq, buildErr
-		}, proxyURL)
+		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
-			var failoverErr *UpstreamFailoverError
-			if errors.As(err, &failoverErr) || ctx.Err() != nil {
+			if ctx.Err() != nil {
 				return nil, err
 			}
 			if resp != nil && resp.Body != nil {
@@ -482,10 +477,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 				ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel,
 			)
 			if handleErr != nil {
-				var retry bool
-				if retry, handleErr = openAI503State.handleStreamError(c, resp, handleErr); retry {
-					continue
-				}
 				if retryBody, fallbackModel, retry := s.applyOpenAIPassthroughCompactFallbackFromSignal(
 					c, account, requestedModel, body, handleErr, compactModelFallbackRetried, resp,
 				); retry {
@@ -524,10 +515,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		} else {
 			result, handleErr := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account, reqModel, upstreamPassthroughModel)
 			if handleErr != nil {
-				var retry bool
-				if retry, handleErr = openAI503State.handleStreamError(c, resp, handleErr); retry {
-					continue
-				}
 				if retryBody, fallbackModel, retry := s.applyOpenAIPassthroughCompactFallbackFromSignal(
 					c, account, requestedModel, body, handleErr, compactModelFallbackRetried, resp,
 				); retry {
@@ -740,7 +727,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http_passthrough", req.Header, body, "not_applicable")
 
-	return req, nil
+	return s.attachUpstreamStateScope(req, c, account, body), nil
 }
 
 func stripOpenAILegacyResponsesBeta(headers http.Header) {
@@ -1758,7 +1745,7 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 		classificationHeaders = nil
 	}
 	failoverErr := s.newOpenAIAccountFailoverErrorWithClassificationHeaders(account, statusCode, headers, classificationHeaders, payload, message, shouldDisable, retryableOnSameAccount)
-	if failoverErr.IsCredentialFailure() || failoverErr.RequestScopedTransient || statusCode == http.StatusServiceUnavailable {
+	if failoverErr.IsCredentialFailure() || failoverErr.RequestScopedTransient {
 		return failoverErr
 	}
 	// Preserve the existing generic envelope for unclassified stream failures;

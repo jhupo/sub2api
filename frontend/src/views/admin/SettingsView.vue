@@ -411,50 +411,6 @@
             </div>
           </div>
 
-          <!-- OpenAI explicit 503 retry settings -->
-          <div class="card">
-            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
-              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-                {{ t("admin.settings.openai503Retry.title") }}
-              </h2>
-              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                {{ t("admin.settings.openai503Retry.description") }}
-              </p>
-            </div>
-            <div class="space-y-5 p-6">
-              <div v-if="openai503RetryLoading" class="flex items-center gap-2 text-gray-500">
-                <div class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600"></div>
-                {{ t("common.loading") }}
-              </div>
-              <template v-else>
-                <div class="flex items-center justify-between">
-                  <div>
-                    <label class="font-medium text-gray-900 dark:text-white">{{ t("admin.settings.openai503Retry.enabled") }}</label>
-                    <p class="text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.openai503Retry.enabledHint") }}</p>
-                  </div>
-                  <Toggle v-model="openai503RetryForm.enabled" />
-                </div>
-                <div v-if="openai503RetryForm.enabled" class="grid gap-4 border-t border-gray-100 pt-4 sm:grid-cols-2 dark:border-dark-700">
-                  <div>
-                    <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t("admin.settings.openai503Retry.retryDelaySeconds") }}</label>
-                    <input v-model.number="openai503RetryForm.retry_delay_seconds" type="number" min="1" max="120" class="input w-full sm:max-w-32" />
-                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">{{ t("admin.settings.openai503Retry.retryDelaySecondsHint") }}</p>
-                  </div>
-                  <div>
-                    <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{{ t("admin.settings.openai503Retry.maxSameAccountRetries") }}</label>
-                    <input v-model.number="openai503RetryForm.max_same_account_retries" type="number" min="0" max="10" class="input w-full sm:max-w-32" />
-                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">{{ t("admin.settings.openai503Retry.maxSameAccountRetriesHint") }}</p>
-                  </div>
-                </div>
-                <div class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700">
-                  <button type="button" @click="saveOpenAI503RetrySettings" :disabled="openai503RetrySaving" class="btn btn-primary btn-sm">
-                    {{ openai503RetrySaving ? t("common.saving") : t("common.save") }}
-                  </button>
-                </div>
-              </template>
-            </div>
-          </div>
-
           <!-- Stream Timeout Settings -->
           <div class="card">
             <div
@@ -6887,6 +6843,74 @@
 
 	        <!-- Tab: Features (功能开关) -->
         <div v-show="activeTab === 'features'" class="space-y-6">
+          <div class="card p-6">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('admin.settings.upstreamState.title') }}</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.description') }}</p>
+            <div class="mt-4 flex items-center justify-between gap-4">
+              <div>
+                <label for="feature-upstream-state" class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.settings.upstreamState.enabled') }}</label>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.enabledHint') }}</p>
+              </div>
+              <Toggle id="feature-upstream-state" data-testid="feature-upstream-state" v-model="upstreamStateEnabled" :disabled="!upstreamStateSettings" />
+            </div>
+            <div v-if="upstreamStateEnabled && upstreamStateSettings" class="mt-5 space-y-5 border-t border-gray-100 pt-5 dark:border-dark-700">
+              <div class="grid gap-4 md:grid-cols-2">
+                <label class="block">
+                  <span class="input-label">{{ t('admin.settings.upstreamState.ttl') }}</span>
+                  <input v-model.number="upstreamStateSettings.ttl_minutes" data-testid="feature-upstream-state-ttl" type="number" min="1" max="60" step="1" class="input" required />
+                  <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.ttlHint') }}</span>
+                </label>
+                <label class="block">
+                  <span class="input-label">{{ t('admin.settings.upstreamState.length') }}</span>
+                  <input v-model.number="upstreamStateSettings.expected_length" data-testid="feature-upstream-state-length" type="number" min="1" max="8192" step="1" class="input" required />
+                  <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.lengthHint') }}</span>
+                </label>
+              </div>
+
+              <div class="flex items-start justify-between gap-4 rounded-2xl border border-gray-200 bg-gray-50/70 p-4 dark:border-dark-700 dark:bg-dark-900/30">
+                <div>
+                  <label for="feature-upstream-state-auto-replace" class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.settings.upstreamState.autoReplace') }}</label>
+                  <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.autoReplaceHint') }}</p>
+                </div>
+                <Toggle id="feature-upstream-state-auto-replace" data-testid="feature-upstream-state-auto-replace" v-model="upstreamStateSettings.auto_replace_enabled" />
+              </div>
+
+              <div class="rounded-2xl border border-gray-200 bg-gray-50/70 p-4 dark:border-dark-700 dark:bg-dark-900/30">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <label for="feature-upstream-state-webshare" class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.settings.upstreamState.webshareEnabled') }}</label>
+                    <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.webshareHint') }}</p>
+                  </div>
+                  <Toggle id="feature-upstream-state-webshare" data-testid="feature-upstream-state-webshare" v-model="upstreamStateSettings.webshare_enabled" />
+                </div>
+                <div v-if="upstreamStateSettings.webshare_enabled" class="mt-4 grid gap-4 md:grid-cols-2">
+                  <label class="block">
+                    <span class="input-label">{{ t('admin.settings.upstreamState.webshareApiKey') }}</span>
+                    <input v-model.trim="upstreamStateAPIKeyDraft" data-testid="feature-upstream-state-webshare-key" type="password" autocomplete="new-password" class="input" :placeholder="upstreamStateSettings.webshare_api_key_configured ? t('admin.settings.upstreamState.webshareKeyConfigured') : t('admin.settings.upstreamState.webshareKeyPlaceholder')" />
+                    <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.webshareApiKeyHint') }}</span>
+                  </label>
+                  <label class="block">
+                    <span class="input-label">{{ t('admin.settings.upstreamState.webshareCountryMode') }}</span>
+                    <select v-model="upstreamStateSettings.webshare_country_mode" data-testid="feature-upstream-state-webshare-country-mode" class="input">
+                      <option value="random">{{ t('admin.settings.upstreamState.webshareCountryRandom') }}</option>
+                      <option value="specified">{{ t('admin.settings.upstreamState.webshareCountrySpecified') }}</option>
+                    </select>
+                    <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.webshareCountryModeHint') }}</span>
+                  </label>
+                  <label v-if="upstreamStateSettings.webshare_country_mode === 'specified'" class="block md:col-span-2">
+                    <span class="input-label">{{ t('admin.settings.upstreamState.webshareCountries') }}</span>
+                    <input v-model="upstreamStateCountryDraft" data-testid="feature-upstream-state-webshare-countries" type="text" class="input font-mono uppercase" placeholder="US, JP, DE" />
+                    <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.webshareCountriesHint') }}</span>
+                  </label>
+                </div>
+              </div>
+
+              <router-link to="/admin/upstream-state" class="inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:underline dark:text-primary-400">
+                {{ t('admin.settings.upstreamState.configure') }} <span aria-hidden="true">→</span>
+              </router-link>
+            </div>
+          </div>
+
 
           <div class="card">
             <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
@@ -8704,6 +8728,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from "vue";
+import { upstreamStateApi, type UpstreamStateSettings } from "@/api/admin/upstreamState";
 import { useI18n } from "vue-i18n";
 import { adminAPI } from "@/api";
 import {
@@ -8876,6 +8901,11 @@ const loading = ref(true);
 const loadFailed = ref(false);
 const saving = ref(false);
 const accessBlockEnabled = ref(true);
+const upstreamStateEnabled = ref(false);
+const upstreamStateSettings = ref<UpstreamStateSettings | null>(null);
+const upstreamStateAPIKeyDraft = ref("");
+const upstreamStateCountryDraft = ref("");
+const upstreamStateInitialSignature = ref("");
 const accessBlockInitialEnabled = ref(true);
 const accessBlockSettingsLoaded = ref(false);
 const testingSmtp = ref(false);
@@ -8925,14 +8955,6 @@ const rateLimit429CooldownSaving = ref(false);
 const rateLimit429CooldownForm = reactive({
   enabled: true,
   cooldown_seconds: 5,
-});
-
-const openai503RetryLoading = ref(true);
-const openai503RetrySaving = ref(false);
-const openai503RetryForm = reactive({
-  enabled: true,
-  retry_delay_seconds: 2,
-  max_same_account_retries: 1,
 });
 
 // Panel API Rate Limit 状态
@@ -10699,18 +10721,73 @@ const codexSyncedVersionLabel = computed(() => {
   });
 });
 
+function upstreamStateSignature(settings: UpstreamStateSettings | null, enabled = upstreamStateEnabled.value): string {
+  if (!settings) return "";
+  return JSON.stringify({
+    enabled,
+    auto_replace_enabled: settings.auto_replace_enabled,
+    ttl_minutes: settings.ttl_minutes,
+    expected_length: settings.expected_length,
+    webshare_enabled: settings.webshare_enabled,
+    webshare_country_mode: settings.webshare_country_mode,
+    webshare_countries: settings.webshare_countries,
+    webshare_api_key_configured: settings.webshare_api_key_configured,
+    revision: settings.revision,
+    state_revision: settings.state_revision,
+    pairs: settings.pairs || [],
+  });
+}
+
+function normalizeUpstreamStateCountries(value: string): string[] {
+  return [...new Set(value.split(/[\s,;]+/).map((entry) => entry.trim().toUpperCase()).filter(Boolean))];
+}
+
+function upstreamStateConfigurationValid(): boolean {
+  const settings = upstreamStateSettings.value;
+  if (!settings) return true;
+  if (!Number.isInteger(settings.ttl_minutes) || settings.ttl_minutes < 1 || settings.ttl_minutes > 60) {
+    appStore.showError(t("admin.settings.upstreamState.ttlInvalid"));
+    return false;
+  }
+  if (!Number.isInteger(settings.expected_length) || settings.expected_length < 1 || settings.expected_length > 8192) {
+    appStore.showError(t("admin.settings.upstreamState.lengthInvalid"));
+    return false;
+  }
+  if (settings.webshare_enabled && !settings.webshare_api_key_configured && !upstreamStateAPIKeyDraft.value.trim()) {
+    appStore.showError(t("admin.settings.upstreamState.webshareKeyRequired"));
+    return false;
+  }
+  const countries = normalizeUpstreamStateCountries(upstreamStateCountryDraft.value);
+  if (settings.webshare_country_mode === "specified" && (countries.length === 0 || countries.some((country) => !/^[A-Z]{2}$/.test(country)))) {
+    appStore.showError(t("admin.settings.upstreamState.webshareCountriesInvalid"));
+    return false;
+  }
+  return true;
+}
+
 async function loadSettings() {
   loading.value = true;
   loadFailed.value = false;
   try {
-    const [settingsResult, accessBlockSettingsResult] = await Promise.allSettled([
+    const [settingsResult, accessBlockSettingsResult, upstreamStateResult] = await Promise.allSettled([
       adminAPI.settings.getSettings(),
       adminAPI.accessBlocks.getSettings(),
+      upstreamStateApi.settings(),
     ]);
     if (settingsResult.status === "rejected") {
       throw settingsResult.reason;
     }
     const settings = settingsResult.value;
+    if (upstreamStateResult.status === "fulfilled") {
+      upstreamStateSettings.value = upstreamStateResult.value;
+      upstreamStateEnabled.value = upstreamStateResult.value.enabled;
+      upstreamStateAPIKeyDraft.value = "";
+      upstreamStateCountryDraft.value = upstreamStateResult.value.webshare_countries.join(", ");
+      upstreamStateInitialSignature.value = upstreamStateSignature(upstreamStateResult.value, upstreamStateResult.value.enabled);
+    } else {
+      upstreamStateSettings.value = null;
+      appStore.showError(t("admin.settings.upstreamState.loadFailed"));
+    }
     if (accessBlockSettingsResult.status === "fulfilled") {
       accessBlockEnabled.value = accessBlockSettingsResult.value.enabled;
       accessBlockInitialEnabled.value = accessBlockSettingsResult.value.enabled;
@@ -10958,6 +11035,9 @@ function findDuplicateDefaultSubscription(
 async function saveSettings() {
   saving.value = true;
   try {
+    if (!upstreamStateConfigurationValid()) {
+      return;
+    }
     const normalizedTableDefaultPageSize = Math.floor(
       Number(form.table_default_page_size),
     );
@@ -11461,6 +11541,26 @@ async function saveSettings() {
     const updated = await settingsStepUp.run(() =>
       adminAPI.settings.updateSettings(payload),
     );
+    const upstreamStateChanged = upstreamStateSettings.value && (
+      upstreamStateSignature(upstreamStateSettings.value) !== upstreamStateInitialSignature.value ||
+      upstreamStateAPIKeyDraft.value.trim() !== "" ||
+      normalizeUpstreamStateCountries(upstreamStateCountryDraft.value).join(",") !== upstreamStateSettings.value.webshare_countries.join(",")
+    );
+    if (upstreamStateSettings.value && upstreamStateChanged) {
+      upstreamStateSettings.value = await upstreamStateApi.save({
+        ...upstreamStateSettings.value,
+        enabled: upstreamStateEnabled.value,
+        webshare_countries: upstreamStateSettings.value.webshare_country_mode === "specified"
+          ? normalizeUpstreamStateCountries(upstreamStateCountryDraft.value)
+          : [],
+        webshare_api_key: upstreamStateAPIKeyDraft.value.trim() || undefined,
+      });
+      upstreamStateEnabled.value = upstreamStateSettings.value.enabled;
+      upstreamStateAPIKeyDraft.value = "";
+      upstreamStateCountryDraft.value = upstreamStateSettings.value.webshare_countries.join(", ");
+      upstreamStateInitialSignature.value = upstreamStateSignature(upstreamStateSettings.value, upstreamStateSettings.value.enabled);
+      adminSettingsStore.setUpstreamStateEnabledLocal(upstreamStateSettings.value.enabled);
+    }
     if (
       accessBlockSettingsLoaded.value &&
       accessBlockEnabled.value !== accessBlockInitialEnabled.value
@@ -11866,37 +11966,6 @@ async function saveRateLimit429CooldownSettings() {
     );
   } finally {
     rateLimit429CooldownSaving.value = false;
-  }
-}
-
-async function loadOpenAI503RetrySettings() {
-  openai503RetryLoading.value = true;
-  try {
-    const settings = await adminAPI.settings.getOpenAI503RetrySettings();
-    Object.assign(openai503RetryForm, settings);
-  } catch (_error: unknown) {
-    // Keep defaults when the endpoint is unavailable.
-  } finally {
-    openai503RetryLoading.value = false;
-  }
-}
-
-async function saveOpenAI503RetrySettings() {
-  openai503RetrySaving.value = true;
-  try {
-    const updated = await adminAPI.settings.updateOpenAI503RetrySettings({
-      enabled: openai503RetryForm.enabled,
-      retry_delay_seconds: openai503RetryForm.retry_delay_seconds,
-      max_same_account_retries: openai503RetryForm.max_same_account_retries,
-    });
-    Object.assign(openai503RetryForm, updated);
-    appStore.showSuccess(t("admin.settings.openai503Retry.saved"));
-  } catch (error: unknown) {
-    appStore.showError(
-      extractApiErrorMessage(error, t("admin.settings.openai503Retry.saveFailed")),
-    );
-  } finally {
-    openai503RetrySaving.value = false;
   }
 }
 
@@ -12548,7 +12617,6 @@ onMounted(() => {
   loadOllamaCloudUsageSettings();
   loadOverloadCooldownSettings();
   loadRateLimit429CooldownSettings();
-  loadOpenAI503RetrySettings();
   loadPanelRateLimitSettings();
   loadStreamTimeoutSettings();
   loadRectifierSettings();

@@ -105,6 +105,16 @@ const {
   showSuccess: vi.fn(),
 }));
 
+const stateSettings = vi.hoisted(() => ({
+  settings: vi.fn().mockResolvedValue({
+    enabled: false, auto_replace_enabled: true, ttl_minutes: 40, expected_length: 292,
+    webshare_enabled: false, webshare_api_key_configured: false, webshare_country_mode: 'random', webshare_countries: [],
+    revision: '', state_revision: '', pairs: []
+  }),
+  save: vi.fn().mockImplementation(async (payload) => payload),
+}));
+vi.mock("@/api/admin/upstreamState", () => ({ upstreamStateApi: stateSettings }));
+
 const localeRef = vi.hoisted(() => ({ value: "zh-CN" }));
 
 vi.mock("@/api", () => ({
@@ -663,6 +673,7 @@ describe("admin SettingsView email domain quota copy", () => {
 
 describe("admin SettingsView payment visible method controls", () => {
   beforeEach(() => {
+    stateSettings.save.mockClear();
     getPlans.mockReset().mockResolvedValue({ data: [] });
     getSettings.mockReset();
     updateSettings.mockReset();
@@ -873,6 +884,48 @@ describe("admin SettingsView payment visible method controls", () => {
 
     expect(updateSettings).toHaveBeenCalled();
     expect(updateAccessBlockSettings).not.toHaveBeenCalled();
+    expect(stateSettings.save).not.toHaveBeenCalled();
+  });
+
+  it("saves the upstream state global switch while preserving pair policies", async () => {
+    const cfg = {
+      enabled: false, auto_replace_enabled: true, ttl_minutes: 30, expected_length: 292,
+      webshare_enabled: false, webshare_api_key_configured: false, webshare_country_mode: 'random' as const, webshare_countries: [],
+      revision: 'current', state_revision: 'state-current', pairs: [{ account_id: 42, model: 'gpt-5.5' }]
+    };
+    stateSettings.settings.mockResolvedValueOnce(cfg);
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.get('[data-testid="feature-upstream-state"]').setValue(true);
+    await wrapper.find('form').trigger('submit.prevent');
+    await flushPromises();
+    expect(stateSettings.save).toHaveBeenCalledWith({ ...cfg, enabled: true, webshare_api_key: undefined });
+  });
+
+  it("saves Webshare rotating residential credentials with the state settings", async () => {
+    const cfg = {
+      enabled: true, auto_replace_enabled: true, ttl_minutes: 40, expected_length: 292,
+      webshare_enabled: false, webshare_api_key_configured: false, webshare_country_mode: 'random' as const, webshare_countries: [],
+      revision: 'current', state_revision: 'state-current', pairs: []
+    };
+    stateSettings.settings.mockResolvedValueOnce(cfg);
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.get('[data-testid="feature-upstream-state-webshare"]').setValue(true);
+    await wrapper.get('[data-testid="feature-upstream-state-webshare-key"]').setValue('api-secret');
+    await wrapper.get('[data-testid="feature-upstream-state-webshare-country-mode"]').setValue('specified');
+    await wrapper.get('[data-testid="feature-upstream-state-webshare-countries"]').setValue('us, jp');
+    await wrapper.find('form').trigger('submit.prevent');
+    await flushPromises();
+
+    expect(stateSettings.save).toHaveBeenCalledWith({
+      ...cfg,
+      webshare_enabled: true,
+      webshare_country_mode: 'specified',
+      webshare_countries: ['US', 'JP'],
+      webshare_api_key: 'api-secret'
+    });
   });
 
   it("keeps the settings page usable when access blocking cannot be loaded", async () => {

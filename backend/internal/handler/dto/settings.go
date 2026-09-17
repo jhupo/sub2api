@@ -449,13 +449,6 @@ type RateLimit429CooldownSettings struct {
 	CooldownSeconds int  `json:"cooldown_seconds"`
 }
 
-// OpenAI503RetrySettings OpenAI 503 显式过载的账号内重试配置 DTO
-type OpenAI503RetrySettings struct {
-	Enabled               bool `json:"enabled"`
-	RetryDelaySeconds     int  `json:"retry_delay_seconds"`
-	MaxSameAccountRetries int  `json:"max_same_account_retries"`
-}
-
 // PanelRateLimitSettings 面板 API 限流配置 DTO
 type PanelRateLimitSettings struct {
 	Enabled     bool `json:"enabled"`

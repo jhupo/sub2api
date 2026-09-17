@@ -754,8 +754,10 @@ func ProvideOpsIngressRejectAggregator(opsRepo OpsRepository, opsService *OpsSer
 }
 
 // ProvideSettingService wires settings validation and runtime dependencies.
-func ProvideSettingService(settingRepo SettingRepository, planReader *PaymentConfigService, proxyRepo ProxyRepository, cfg *config.Config) *SettingService {
+func ProvideSettingService(settingRepo SettingRepository, planReader *PaymentConfigService, proxyRepo ProxyRepository, cfg *config.Config, upstreamStateStore UpstreamStateStore, accountRepo AccountRepository) *SettingService {
 	svc := NewSettingService(settingRepo, cfg)
+	svc.upstreamStateStore = upstreamStateStore
+	svc.upstreamStateAccounts = accountRepo
 	svc.SetDefaultSubscriptionPlanReader(planReader)
 	svc.SetProxyRepository(proxyRepo)
 	if err := svc.LoadForwardedClientIPSettings(context.Background()); err != nil {

@@ -116,6 +116,11 @@ type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[i
 
 // SettingService 系统设置服务
 type SettingService struct {
+	upstreamStateStore          UpstreamStateStore
+	upstreamStateAccounts       AccountRepository
+	upstreamStateSettingsCache  atomic.Value
+	upstreamStateSettingsSF     singleflight.Group
+	upstreamStateSettingsMu     sync.Mutex
 	settingRepo                 SettingRepository
 	defaultSubPlanReader        DefaultSubscriptionPlanReader
 	proxyRepo                   ProxyRepository // for resolving websearch provider proxy URLs

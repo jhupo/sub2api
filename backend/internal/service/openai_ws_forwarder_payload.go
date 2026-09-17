@@ -189,6 +189,7 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 		"soft_routing_hint",
 	)
 
+	sessionResolution.upstreamState = s.newUpstreamStateScope(ctx, c, account, headers, routingModel, "ws")
 	return headers, sessionResolution, nil
 }
 

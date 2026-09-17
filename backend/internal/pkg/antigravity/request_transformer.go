@@ -88,11 +88,12 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
 	// 用于存储 tool_use id -> name 映射
 	toolIDToName := make(map[string]string)
 
-	// 检测是否有 web_search 工具
-	hasWebSearchTool := hasWebSearchTool(claudeReq.Tools)
+	// Antigravity v1internal rejects built-in tools mixed with client function
+	// declarations. Keep the web-search fallback only for web-search-only calls.
+	useWebSearchRequest := hasWebSearchTool(claudeReq.Tools) && !hasClientFunctionTools(claudeReq.Tools)
 	requestType := "agent"
 	targetModel := mappedModel
-	if hasWebSearchTool {
+	if useWebSearchRequest {
 		requestType = "web_search"
 		if targetModel != webSearchFallbackModel {
 			targetModel = webSearchFallbackModel
@@ -154,14 +155,6 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
 			Mode: "VALIDATED",
 		},
 	}
-	// 内置工具（googleSearch）与函数调用混用时，上游要求显式开启
-	// includeServerSideToolInvocations，否则返回 400（issue #5709）。
-	// 与 raw 透传路的 enableMixedGeminiToolInvocations 注入保持同一语义。
-	if hasMixedToolInvocations(tools) {
-		enabled := true
-		innerRequest.ToolConfig.IncludeServerSideToolInvocations = &enabled
-	}
-
 	if systemInstruction != nil {
 		innerRequest.SystemInstruction = systemInstruction
 	}
@@ -708,23 +701,20 @@ func isWebSearchTool(tool ClaudeTool) bool {
 	}
 }
 
-func isCodeExecutionTool(tool ClaudeTool) bool {
-	return strings.TrimSpace(tool.Type) == "code_execution"
-}
-
-// hasMixedToolInvocations 判断构建后的工具声明是否同时包含函数声明与内置工具
-// （googleSearch）。仅在两者并存时需要开启 includeServerSideToolInvocations。
-func hasMixedToolInvocations(declarations []GeminiToolDeclaration) bool {
-	hasFunc, hasBuiltin := false, false
-	for _, d := range declarations {
-		if len(d.FunctionDeclarations) > 0 {
-			hasFunc = true
+func hasClientFunctionTools(tools []ClaudeTool) bool {
+	for _, tool := range tools {
+		if isWebSearchTool(tool) || isCodeExecutionTool(tool) {
+			continue
 		}
-		if d.GoogleSearch != nil || d.CodeExecution != nil {
-			hasBuiltin = true
+		if strings.TrimSpace(tool.Name) != "" {
+			return true
 		}
 	}
-	return hasFunc && hasBuiltin
+	return false
+}
+
+func isCodeExecutionTool(tool ClaudeTool) bool {
+	return strings.TrimSpace(tool.Type) == "code_execution"
 }
 
 // buildTools 构建 tools
@@ -793,6 +783,12 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
 	}
 
 	var declarations []GeminiToolDeclaration
+	if len(funcDecls) > 0 {
+		// Built-in tools cannot coexist with functionDeclarations on v1internal.
+		hasWebSearch = false
+		hasCodeExecution = false
+	}
+
 	if len(funcDecls) > 0 {
 		declarations = append(declarations, GeminiToolDeclaration{
 			FunctionDeclarations: funcDecls,

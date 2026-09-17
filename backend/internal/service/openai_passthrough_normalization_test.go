@@ -52,6 +52,19 @@ func TestNormalizeOpenAIOAuthResponsesCompatibilityBody_PreservesExplicitInput(t
 	require.False(t, gjson.GetBytes(normalized, "prompt").Exists())
 }
 
+func TestNormalizeOpenAIOAuthResponsesCompatibilityBody_RemovesInternalInputMetadataOnly(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","input":[` +
+		`{"type":"message","internal_chat_message_metadata_passthrough":{"source":"codex"},"content":[{"type":"input_text","text":"internal_chat_message_metadata_passthrough"}]},` +
+		`{"type":"function_call","arguments":"internal_chat_message_metadata_passthrough"}]}`)
+
+	normalized, changed, err := normalizeOpenAIOAuthResponsesCompatibilityBody(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(normalized, "input.0.internal_chat_message_metadata_passthrough").Exists())
+	require.Equal(t, "internal_chat_message_metadata_passthrough", gjson.GetBytes(normalized, "input.0.content.0.text").String())
+	require.Equal(t, "internal_chat_message_metadata_passthrough", gjson.GetBytes(normalized, "input.1.arguments").String())
+}
+
 func TestNormalizeOpenAIResponsesWebSocketCompatibilityBody_OnlyStripsOAuthFields(t *testing.T) {
 	body := []byte(`{"type":"response.create","prompt":"hello","commands":{},"truncation":"auto","stop_sequences":["END"],"chat_template_kwargs":{"enable_thinking":true}}`)
 

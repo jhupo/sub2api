@@ -210,10 +210,11 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	defer acquireCancel()
 
 	lease, err := s.getOpenAIWSConnPool().Acquire(acquireCtx, openAIWSAcquireRequest{
-		Account:  account,
-		identity: s.codexAttemptIdentity(c, account),
-		WSURL:    wsURL,
-		Headers:  wsHeaders,
+		upstreamState: sessionResolution.upstreamState,
+		Account:       account,
+		identity:      s.codexAttemptIdentity(c, account),
+		WSURL:         wsURL,
+		Headers:       wsHeaders,
 		HeadersFactory: func(factoryCtx context.Context, headers http.Header) (http.Header, error) {
 			return s.refreshOpenAIAgentIdentityHeaders(factoryCtx, account, headers)
 		},
@@ -340,14 +341,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		c.Header("X-Request-Id", lease.HandshakeHeader("X-Request-Id"))
 	}
 
-	// Capacity-shed retries have their own configured account-local budget in
-	// openAI503RetryState. Do not spend the generic turn-attempt budget on those
-	// retries, otherwise the legacy limit of three total attempts would silently
-	// truncate a configured three-retry (four-attempt) 503 policy.
-	if strings.TrimSpace(lastFailureReason) != "capacity_shed" {
-		if err := consumeOpenAIRequestAttempt(ctx); err != nil {
-			return nil, err
-		}
+	if err := consumeOpenAIRequestAttempt(ctx); err != nil {
+		return nil, err
 	}
 	if err := s.performOpenAIWSGeneratePrewarm(
 		ctx,
@@ -406,7 +401,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	firstEventType := ""
 	lastEventType := ""
 	upstreamTerminalEvent := ""
-	semanticOutputStarted := false
 
 	var flusher http.Flusher
 	if reqStream {
@@ -457,9 +451,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		frame = append(frame, '\n', '\n')
 		_, wErr := c.Writer.Write(frame)
 		if wErr == nil {
-			if reqStream && !semanticOutputStarted && openAIStreamDataStartsVisibleOutput(string(message), "") {
-				semanticOutputStarted = true
-			}
 			wroteDownstream = true
 			pendingFlushEvents++
 			flushStreamWriter(forceFlush)
@@ -506,6 +497,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			return
 		}
 		applyAttemptHeaders()
+		c.Set(openAIStreamAttemptCommittedKey, true)
+		wroteDownstream = true
 		n, err := c.Writer.Write([]byte(":\n\n"))
 		recordOpenAIStreamKeepaliveBytes(c, n)
 		if err != nil {
@@ -689,21 +682,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 					UpstreamOutTok: usage.OutputTokens,
 				})
 			}
-			if !semanticOutputStarted && isOpenAIRequestScopedCapacityShed("", message) {
-				lease.MarkBroken()
-				failedMessage := extractOpenAISSEErrorMessage(message)
-				failoverErr := s.newOpenAIStreamFailoverError(
-					c,
-					account,
-					true,
-					lease.HandshakeHeader("x-request-id"),
-					message,
-					failedMessage,
-					lease.HandshakeHeaders(),
-				)
-				failoverErr.SafeToFailoverAfterWrite = wroteDownstream
-				return nil, failoverErr
-			}
 		}
 
 		if eventType == "error" {
@@ -727,22 +705,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				errType,
 				errMessage,
 			)
-			if !semanticOutputStarted && isOpenAIRequestScopedCapacityShed(errMsgRaw, message) {
-				lease.MarkBroken()
-				failoverErr := s.newOpenAIStreamFailoverError(
-					c,
-					account,
-					true,
-					lease.HandshakeHeader("x-request-id"),
-					message,
-					errMsg,
-					lease.HandshakeHeaders(),
-				)
-				// A protocol heartbeat may already have committed HTTP headers,
-				// but it is not semantic output and remains safe to replay.
-				failoverErr.SafeToFailoverAfterWrite = wroteDownstream
-				return nil, failoverErr
-			}
 			if fallbackReason == "previous_response_not_found" {
 				logOpenAIWSModeInfo(
 					"previous_response_not_found_diag account_id=%d account_type=%s conn_id=%s previous_response_id=%s previous_response_id_kind=%s response_id=%s event_idx=%d req_stream=%v store_disabled=%v conn_reused=%v session_hash=%s header_session_id=%s header_conversation_id=%s session_id_source=%s conversation_id_source=%s has_turn_state=%v turn_state_len=%d has_prompt_cache_key=%v err_code=%s err_type=%s err_message=%s",

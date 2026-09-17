@@ -700,10 +700,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, err
 	}
 	SetOpsUpstreamModel(c, upstreamModel)
-	openAI503State, err := s.newOpenAI503RetryState(ctx, account)
-	if err != nil {
-		return nil, err
-	}
 
 	// 命中 WS 时仅走 WebSocket Mode；不再自动回退 HTTP。
 	if wsDecision.Transport == OpenAIUpstreamTransportResponsesWebsocketV2 {
@@ -835,28 +831,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if wsErr == nil || (wsResult != nil && wsResult.ClientDisconnect) {
 				break
 			}
-			// A protocol heartbeat can commit the HTTP response without starting
-			// semantic output. Keep the request replayable in that state so a
-			// capacity-shed WS event can enter the configured 503 retry queue.
-			if openAIStreamClientOutputStarted(c, false) {
+			if c != nil && c.Writer != nil && c.Writer.Written() {
 				break
-			}
-			var ws503Failure *UpstreamFailoverError
-			if errors.As(wsErr, &ws503Failure) && ws503Failure.IsOpenAICapacityShed() {
-				retry, retryErr := openAI503State.handleStreamError(c, nil, ws503Failure)
-				if retryErr != nil {
-					wsErr = retryErr
-					break
-				}
-				if retry {
-					wsLastFailureReason = "capacity_shed"
-					logOpenAIWSModeInfo(
-						"capacity_retry account_id=%d retry=%d retry_limit=configured",
-						account.ID,
-						openAI503State.retries,
-					)
-					continue
-				}
 			}
 			var taskRecoveredErr *agentIdentityTaskRecoveredError
 			if errors.As(wsErr, &taskRecoveredErr) {
@@ -999,17 +975,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		proxyURL = account.Proxy.URL()
 	}
 	for {
-		resp, err := openAI503State.do(c, func() (*http.Request, error) {
-			upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-			upstreamReq, buildErr := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
-			releaseUpstreamCtx()
-			return upstreamReq, buildErr
-		}, proxyURL)
+		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
+		releaseUpstreamCtx()
 		if err != nil {
-			var failoverErr *UpstreamFailoverError
-			if errors.As(err, &failoverErr) {
-				return nil, err
-			}
+			return nil, err
+		}
+		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
@@ -1205,10 +1178,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				clientDisconnect = streamResult.clientDisconnect
 			}
 			if err != nil {
-				var retry bool
-				if retry, err = openAI503State.handleStreamError(c, resp, err); retry {
-					continue
-				}
 				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 						c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
@@ -1248,10 +1217,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
-				var retry bool
-				if retry, err = openAI503State.handleStreamError(c, resp, err); retry {
-					continue
-				}
 				if signal, ok := asOpenAICompactFallbackSignal(err); ok {
 					if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 						c, account, requestedModel, body, http.StatusBadRequest, signal.message, signal.payload, compactModelFallbackRetried,
@@ -1450,5 +1415,5 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http", req.Header, body, "not_applicable")
 
-	return req, nil
+	return s.attachUpstreamStateScope(req, c, account, body), nil
 }

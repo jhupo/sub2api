@@ -1311,31 +1311,6 @@ export async function updateRateLimit429CooldownSettings(
   return data;
 }
 
-// ==================== OpenAI 503 Retry Settings ====================
-
-export interface OpenAI503RetrySettings {
-  enabled: boolean;
-  retry_delay_seconds: number;
-  max_same_account_retries: number;
-}
-
-export async function getOpenAI503RetrySettings(): Promise<OpenAI503RetrySettings> {
-  const { data } = await apiClient.get<OpenAI503RetrySettings>(
-    "/admin/settings/openai-503-retry",
-  );
-  return data;
-}
-
-export async function updateOpenAI503RetrySettings(
-  settings: OpenAI503RetrySettings,
-): Promise<OpenAI503RetrySettings> {
-  const { data } = await apiClient.put<OpenAI503RetrySettings>(
-    "/admin/settings/openai-503-retry",
-    settings,
-  );
-  return data;
-}
-
 // ==================== Panel Rate Limit Settings ====================
 
 /**
@@ -1595,8 +1570,6 @@ export const settingsAPI = {
   updateOverloadCooldownSettings,
   getRateLimit429CooldownSettings,
   updateRateLimit429CooldownSettings,
-  getOpenAI503RetrySettings,
-  updateOpenAI503RetrySettings,
   getPanelRateLimitSettings,
   updatePanelRateLimitSettings,
   getStreamTimeoutSettings,

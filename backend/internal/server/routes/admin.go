@@ -565,6 +565,12 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		adminSettings.GET("/email-templates/:event/:locale", h.Admin.Setting.GetEmailTemplate)
 		adminSettings.PUT("/email-templates/:event/:locale", h.Admin.Setting.UpdateEmailTemplate)
 		adminSettings.POST("/email-templates/:event/:locale/restore-official", h.Admin.Setting.RestoreOfficialEmailTemplate)
+		adminSettings.GET("/upstream-state", h.Admin.Setting.GetUpstreamStateSettings)
+		adminSettings.PUT("/upstream-state", h.Admin.Setting.SetUpstreamStateSettings)
+		adminSettings.GET("/upstream-state/matrix", h.Admin.Setting.UpstreamStateMatrix)
+		adminSettings.PUT("/upstream-state/pair", h.Admin.Setting.SetUpstreamStatePair)
+		adminSettings.PUT("/upstream-state/state", h.Admin.Setting.SetUpstreamState)
+		adminSettings.POST("/upstream-state/refresh", h.Admin.Setting.RefreshUpstreamState)
 		// Admin API Key 管理
 		adminSettings.GET("/admin-api-key", h.Admin.Setting.GetAdminAPIKey)
 		adminSettings.POST("/admin-api-key/regenerate", h.Admin.Setting.RegenerateAdminAPIKey)
@@ -575,8 +581,6 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// 429默认回避配置
 		adminSettings.GET("/rate-limit-429-cooldown", h.Admin.Setting.GetRateLimit429CooldownSettings)
 		adminSettings.PUT("/rate-limit-429-cooldown", h.Admin.Setting.UpdateRateLimit429CooldownSettings)
-		adminSettings.GET("/openai-503-retry", h.Admin.Setting.GetOpenAI503RetrySettings)
-		adminSettings.PUT("/openai-503-retry", h.Admin.Setting.UpdateOpenAI503RetrySettings)
 		// 面板 API 限流配置
 		adminSettings.GET("/panel-rate-limit", h.Admin.Setting.GetPanelRateLimitSettings)
 		adminSettings.PUT("/panel-rate-limit", h.Admin.Setting.UpdatePanelRateLimitSettings)

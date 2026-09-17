@@ -839,6 +839,7 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 // 会把未知模型原样透传，Codex 上游对这类模型必然返回不可重试的 400，导致
 // 请求卡死在该账号上、无法 failover 到真正支持该模型的 API Key 账号（#3662）。
 // 未知/自定义别名仍保持允许（兼容渠道级映射），见 isOpenAIOAuthServableModel。
+// DeepSeek 平台的空映射按官方模型名单判定，避免未知模型被透传后触发上游错误。
 func (a *Account) IsModelSupported(requestedModel string) bool {
 	if a.Platform == PlatformGemini && a.Type == AccountTypeOAuth {
 		if !a.HasSupportedGeminiOAuthType() {
@@ -856,6 +857,9 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 	if len(mapping) == 0 {
 		if a.IsOpenAIOAuth() {
 			return isOpenAIOAuthServableModel(requestedModel)
+		}
+		if a.Platform == PlatformDeepseek {
+			return isDeepseekServableModel(requestedModel)
 		}
 		return true // 无映射 = 允许所有
 	}

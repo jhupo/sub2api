@@ -824,64 +824,6 @@ func (s *SettingService) SetRateLimit429CooldownSettings(ctx context.Context, se
 	return s.settingRepo.Set(ctx, SettingKeyRateLimit429CooldownSettings, string(data))
 }
 
-// GetOpenAI503RetrySettings returns the account-local retry policy for
-// explicit OpenAI capacity-shed responses.
-func (s *SettingService) GetOpenAI503RetrySettings(ctx context.Context) (*OpenAI503RetrySettings, error) {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAI503RetrySettings)
-	if err != nil {
-		if errors.Is(err, ErrSettingNotFound) {
-			return DefaultOpenAI503RetrySettings(), nil
-		}
-		return nil, fmt.Errorf("get OpenAI 503 retry settings: %w", err)
-	}
-	if value == "" {
-		return DefaultOpenAI503RetrySettings(), nil
-	}
-
-	settings := *DefaultOpenAI503RetrySettings()
-	if err := json.Unmarshal([]byte(value), &settings); err != nil {
-		return DefaultOpenAI503RetrySettings(), nil
-	}
-	if settings.RetryDelaySeconds < 1 {
-		settings.RetryDelaySeconds = 1
-	}
-	if settings.RetryDelaySeconds > 120 {
-		settings.RetryDelaySeconds = 120
-	}
-	if settings.MaxSameAccountRetries < 0 {
-		settings.MaxSameAccountRetries = 0
-	}
-	if settings.MaxSameAccountRetries > 10 {
-		settings.MaxSameAccountRetries = 10
-	}
-	return &settings, nil
-}
-
-// SetOpenAI503RetrySettings persists the account-local retry policy for
-// explicit OpenAI capacity-shed responses.
-func (s *SettingService) SetOpenAI503RetrySettings(ctx context.Context, settings *OpenAI503RetrySettings) error {
-	if settings == nil {
-		return fmt.Errorf("settings cannot be nil")
-	}
-	if settings.RetryDelaySeconds < 1 || settings.RetryDelaySeconds > 120 {
-		if settings.Enabled {
-			return fmt.Errorf("retry_delay_seconds must be between 1-120")
-		}
-		settings.RetryDelaySeconds = 2
-	}
-	if settings.MaxSameAccountRetries < 0 || settings.MaxSameAccountRetries > 10 {
-		if settings.Enabled {
-			return fmt.Errorf("max_same_account_retries must be between 0-10")
-		}
-		settings.MaxSameAccountRetries = 1
-	}
-	data, err := json.Marshal(settings)
-	if err != nil {
-		return fmt.Errorf("marshal OpenAI 503 retry settings: %w", err)
-	}
-	return s.settingRepo.Set(ctx, SettingKeyOpenAI503RetrySettings, string(data))
-}
-
 // GetStreamTimeoutSettings 获取流超时处理配置
 func (s *SettingService) GetStreamTimeoutSettings(ctx context.Context) (*StreamTimeoutSettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyStreamTimeoutSettings)

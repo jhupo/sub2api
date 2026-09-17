@@ -350,12 +350,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return nil, fmt.Errorf("get access token: %w", err)
 	}
 
-	// 6. Build and send the upstream request. The retry state rebuilds a fresh
-	// request after a 503 because the previous body has been consumed.
-	openAI503State, err := s.newOpenAI503RetryState(ctx, account)
-	if err != nil {
-		return nil, err
-	}
+	// 6. Build and send the upstream request.
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
@@ -400,12 +395,12 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return upstreamReq, nil
 	}
 	for {
-		resp, err := openAI503State.do(c, buildUpstreamRequest, proxyURL)
+		upstreamReq, err := buildUpstreamRequest()
 		if err != nil {
-			var failoverErr *UpstreamFailoverError
-			if errors.As(err, &failoverErr) {
-				return nil, err
-			}
+			return nil, err
+		}
+		resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
@@ -458,13 +453,6 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		} else {
 			result, handleErr = s.handleChatBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
 		}
-		if handleErr != nil {
-			var retry bool
-			if retry, handleErr = openAI503State.handleStreamError(c, resp, handleErr); retry {
-				continue
-			}
-		}
-
 		// cyber_policy：标记已设、error 已按 Chat Completions 格式发给客户端。丢弃 result、
 		// 返回哨兵，使 handler 落入 tokens=0 免费用量行（对齐 /v1/responses），不计费、不 failover。
 		if GetOpsCyberPolicy(c) != nil {
