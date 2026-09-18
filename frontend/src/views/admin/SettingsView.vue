@@ -10734,7 +10734,7 @@ function upstreamStateSignature(settings: UpstreamStateSettings | null, enabled 
     webshare_api_key_configured: settings.webshare_api_key_configured,
     revision: settings.revision,
     state_revision: settings.state_revision,
-    pairs: settings.pairs || [],
+    pairs: settings.pairs,
   });
 }
 

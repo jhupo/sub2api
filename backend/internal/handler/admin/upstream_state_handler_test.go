@@ -18,4 +18,6 @@ func TestPublicUpstreamStateSettingsNeverReturnsWebshareAPIKey(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "secret-api-key")
 	require.NotContains(t, string(raw), "webshare_api_key\"")
+	require.Contains(t, string(raw), `"webshare_countries":[]`)
+	require.Contains(t, string(raw), `"pairs":[]`)
 }

@@ -12,7 +12,7 @@ export interface UpstreamStateSettings {
   webshare_countries: string[]
   revision: string
   state_revision: string
-  pairs: { account_id: number; model: string }[] | null
+  pairs: { account_id: number; model: string }[]
 }
 
 export interface UpstreamStateMatrixRow {

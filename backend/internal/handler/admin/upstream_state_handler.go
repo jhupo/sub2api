@@ -24,11 +24,13 @@ type upstreamStateSettingsResponse struct {
 }
 
 func publicUpstreamStateSettings(v service.UpstreamStateSettings) upstreamStateSettingsResponse {
+	webshareCountries := append([]string{}, v.WebshareCountries...)
+	pairs := append([]service.UpstreamStatePair{}, v.Pairs...)
 	return upstreamStateSettingsResponse{
 		Enabled: v.Enabled, AutoReplaceEnabled: v.AutoReplaceEnabled, TTLMinutes: v.TTLMinutes, ExpectedLength: v.ExpectedLength,
 		WebshareEnabled: v.WebshareEnabled, WebshareAPIKeyConfigured: v.WebshareAPIKey != "",
-		WebshareCountryMode: v.WebshareCountryMode, WebshareCountries: v.WebshareCountries,
-		Revision: v.Revision, StateRevision: v.StateRevision, Pairs: v.Pairs,
+		WebshareCountryMode: v.WebshareCountryMode, WebshareCountries: webshareCountries,
+		Revision: v.Revision, StateRevision: v.StateRevision, Pairs: pairs,
 	}
 }
 
