@@ -45,7 +45,7 @@ func TestFetchWebshareRotatingProxyURLRejectsFailedLookup(t *testing.T) {
 	defer server.Close()
 
 	_, err := fetchWebshareRotatingProxyURL(context.Background(), UpstreamStateSettings{WebshareAPIKey: "bad", WebshareCountryMode: webshareCountryModeRandom}, server.URL, server.Client())
-	require.EqualError(t, err, "Webshare proxy lookup returned HTTP 401")
+	require.EqualError(t, err, "webshare proxy lookup returned HTTP 401")
 	require.NotContains(t, err.Error(), "bad token")
 }
 

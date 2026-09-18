@@ -123,7 +123,7 @@ func (v UpstreamStateSettings) Validate() error {
 		return errors.New("invalid Webshare API key")
 	}
 	if v.WebshareEnabled && v.WebshareAPIKey == "" {
-		return errors.New("Webshare API key is required when Webshare refresh is enabled")
+		return errors.New("webshare API key is required when Webshare refresh is enabled")
 	}
 	switch v.WebshareCountryMode {
 	case webshareCountryModeRandom:
@@ -650,7 +650,7 @@ func (scope *upstreamStateScope) begin(ctx context.Context, headers http.Header)
 }
 
 func (a *upstreamStateAttempt) capture(ctx context.Context, status int, headers http.Header) {
-	if a == nil || !((status >= 200 && status < 300) || status == http.StatusSwitchingProtocols) {
+	if a == nil || ((status < 200 || status >= 300) && status != http.StatusSwitchingProtocols) {
 		return
 	}
 	current := a.scope.settings.upstreamStateSettings(ctx)

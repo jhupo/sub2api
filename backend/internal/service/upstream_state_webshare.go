@@ -40,10 +40,10 @@ type webshareProxyList struct {
 func fetchWebshareRotatingProxyURL(ctx context.Context, cfg UpstreamStateSettings, baseURL string, client *http.Client) (string, error) {
 	apiKey := strings.TrimSpace(cfg.WebshareAPIKey)
 	if apiKey == "" {
-		return "", errors.New("Webshare API key is not configured")
+		return "", errors.New("webshare API key is not configured")
 	}
 	if client == nil {
-		return "", errors.New("Webshare HTTP client is unavailable")
+		return "", errors.New("webshare HTTP client is unavailable")
 	}
 	base, err := url.Parse(strings.TrimRight(baseURL, "/"))
 	if err != nil {
@@ -64,12 +64,12 @@ func fetchWebshareRotatingProxyURL(ctx context.Context, cfg UpstreamStateSetting
 	req.Header.Set("Authorization", "Token "+apiKey)
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("Webshare proxy lookup failed: %w", err)
+		return "", fmt.Errorf("webshare proxy lookup failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, upstreamStateWebshareBodyLimit))
-		return "", fmt.Errorf("Webshare proxy lookup returned HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("webshare proxy lookup returned HTTP %d", resp.StatusCode)
 	}
 	var payload webshareProxyList
 	decoder := json.NewDecoder(io.LimitReader(resp.Body, upstreamStateWebshareBodyLimit))
@@ -77,18 +77,18 @@ func fetchWebshareRotatingProxyURL(ctx context.Context, cfg UpstreamStateSetting
 		return "", fmt.Errorf("invalid Webshare proxy response: %w", err)
 	}
 	if len(payload.Results) == 0 {
-		return "", errors.New("Webshare returned no backbone proxy credentials")
+		return "", errors.New("webshare returned no backbone proxy credentials")
 	}
 	credential := payload.Results[0]
 	if strings.TrimSpace(credential.Username) == "" || credential.Password == "" {
-		return "", errors.New("Webshare returned incomplete backbone credentials")
+		return "", errors.New("webshare returned incomplete backbone credentials")
 	}
 	username := credential.Username
 	switch cfg.WebshareCountryMode {
 	case webshareCountryModeRandom:
 	case webshareCountryModeSpecified:
 		if len(cfg.WebshareCountries) == 0 {
-			return "", errors.New("Webshare specified-country mode has no country codes")
+			return "", errors.New("webshare specified-country mode has no country codes")
 		}
 		index, randomErr := rand.Int(rand.Reader, big.NewInt(int64(len(cfg.WebshareCountries))))
 		if randomErr != nil {

@@ -383,148 +383,146 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// treating the 400 as a hard failure / failover trigger.
 	var resp *http.Response
 	for {
-		for {
-			upstreamReq, buildErr := buildUpstreamRequest()
-			if buildErr != nil {
-				return nil, buildErr
-			}
-			resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
-			if err != nil {
-				if resp != nil && resp.Body != nil {
-					_ = resp.Body.Close()
-				}
-				return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
-			}
-			if account.Platform != PlatformGrok || resp.StatusCode != http.StatusBadRequest {
-				break
-			}
-			respBody := s.readUpstreamErrorBody(resp)
-			if resp.Body != nil {
+		upstreamReq, buildErr := buildUpstreamRequest()
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		if err != nil {
+			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
-			// Prefer explicit decrypt errors; also strip once on any 400 when the
-			// outbound body still carries reasoning.encrypted_content (account
-			// switch often returns opaque "Upstream error: 400").
-			shouldStrip := isGrokInvalidEncryptedContentResponse(resp.StatusCode, respBody) ||
-				requestHasGrokEncryptedReasoning(responsesBody)
-			if !shouldStrip {
-				resp.Body = io.NopCloser(bytes.NewReader(respBody))
-				break
-			}
-			retryBody, changed, trimErr := trimGrokInvalidEncryptedContentRetryBody(responsesBody)
-			if trimErr != nil {
-				return nil, fmt.Errorf("prepare Grok invalid encrypted_content retry: %w", trimErr)
-			}
-			if !changed {
-				resp.Body = io.NopCloser(bytes.NewReader(respBody))
-				break
-			}
-			responsesBody = retryBody
-			logger.L().Info("openai messages: retrying after stripping invalid Grok encrypted_content",
-				zap.Int64("account_id", account.ID),
-				zap.Bool("cache_identity_present", strings.TrimSpace(grokCacheIdentity) != ""),
-				zap.String("upstream_error_preview", truncateOpenAIWSLogValue(string(respBody), 240)),
-			)
+			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 		}
-
-		// 7. Handle error response with failover
-		if resp.StatusCode >= 400 {
-			respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
-			if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
-				expectedTaskID := account.GetCredential("task_id")
-				if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {
-					return nil, fmt.Errorf("agent identity task recovery failed: %w", err)
-				}
-				return s.ForwardAsAnthropic(markAgentIdentityTaskRecoveryTried(ctx), c, account, body, promptCacheKey, defaultMappedModel)
-			}
-			if previousResponseID != "" && (isOpenAICompatPreviousResponseNotFound(resp.StatusCode, upstreamMsg, respBody) || isOpenAICompatPreviousResponseUnsupported(resp.StatusCode, upstreamMsg, respBody)) {
-				if isOpenAICompatPreviousResponseUnsupported(resp.StatusCode, upstreamMsg, respBody) {
-					s.disableOpenAICompatSessionContinuation(ctx, c, account, promptCacheKey)
-				} else {
-					s.deleteOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey)
-				}
-				logger.L().Info("openai messages: previous_response_id unavailable, retrying without continuation",
-					zap.Int64("account_id", account.ID),
-					zap.String("previous_response_id", truncateOpenAIWSLogValue(previousResponseID, openAIWSIDValueMaxLen)),
-					zap.String("upstream_model", upstreamModel),
-				)
-				return s.ForwardAsAnthropic(ctx, c, account, body, promptCacheKey, defaultMappedModel)
-			}
-			// Grok account-switched history often fails decrypt; strip encrypted
-			// reasoning once at the client-body level so failover accounts can accept
-			// the multi-turn tool continuation instead of cascading 400s.
-			if account.Platform == PlatformGrok &&
-				isGrokInvalidEncryptedContentResponse(resp.StatusCode, respBody) &&
-				!grokEncryptedContentStripRetried(ctx) {
-				if strippedBody, ok := stripAnthropicThinkingSignatures(body); ok {
-					logger.L().Info("openai messages: stripping thinking signatures for Grok failover retry",
-						zap.Int64("account_id", account.ID),
-					)
-					return s.ForwardAsAnthropic(markGrokEncryptedContentStripRetried(ctx), c, account, strippedBody, promptCacheKey, defaultMappedModel)
-				}
-			}
-			if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
-				return nil, foErr
-			}
-			// Non-failover error: return Anthropic-formatted error to client
-			return s.handleAnthropicErrorResponse(resp, c, account, billingModel)
+		if account.Platform != PlatformGrok || resp.StatusCode != http.StatusBadRequest {
+			break
 		}
-		if account.Platform == PlatformGrok && account.Type == AccountTypeOAuth && !account.IsShadow() {
-			s.updateGrokUsageFromResponse(withGrokTeamRateLimitModel(ctx, upstreamModel), account, resp.Header, resp.StatusCode)
-		}
-
-		if account.UsesOpenAICodexProtocol() && promptCacheKey != "" {
-			if turnState := strings.TrimSpace(resp.Header.Get("x-codex-turn-state")); turnState != "" {
-				s.bindOpenAICompatSessionTurnState(ctx, c, account, promptCacheKey, turnState)
-			}
-		}
-
-		// 9. Handle normal response
-		// Upstream is always streaming; choose response format based on client preference.
-		var result *OpenAIForwardResult
-		var handleErr error
-		if clientStream {
-			result, handleErr = s.handleAnthropicStreamingResponse(
-				ctx, resp, c, account, originalModel, billingModel, upstreamModel,
-				startTime,
-			)
-		} else {
-			// Client wants JSON: buffer the streaming response and assemble a JSON reply.
-			result, handleErr = s.handleAnthropicBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
-		}
-		// cyber_policy：标记已设、error 已按 Anthropic 格式发给客户端。丢弃 result、返回哨兵，
-		// 使 handler 落入 tokens=0 免费用量行（对齐 /v1/responses），不计费、不 failover。
-		if GetOpsCyberPolicy(c) != nil {
-			if handleErr == nil {
-				handleErr = errOpenAICyberPolicyForwarded
-			}
-			return nil, handleErr
-		}
-
-		// Propagate ServiceTier and ReasoningEffort to result for billing
-		if handleErr == nil && result != nil {
-			if compatContinuationEnabled && promptCacheKey != "" && result.ResponseID != "" {
-				s.bindOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey, result.ResponseID)
-			}
-			if promptCacheKey != "" && anthropicDigestChain != "" {
-				s.bindOpenAICompatAnthropicDigestPromptCacheKey(account, apiKeyID, anthropicDigestChain, promptCacheKey, anthropicMatchedDigestChain)
-			}
-			// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过
-			// fast policy filter/force 之后）里的 tier。
-			if tier := resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(responsesBody)); tier != nil {
-				result.ServiceTier = tier
-			}
-			if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
-				re := responsesReq.Reasoning.Effort
-				result.ReasoningEffort = &re
-			}
-		}
-
-		if resp != nil && resp.Body != nil {
+		respBody := s.readUpstreamErrorBody(resp)
+		if resp.Body != nil {
 			_ = resp.Body.Close()
 		}
-		return result, handleErr
+		// Prefer explicit decrypt errors; also strip once on any 400 when the
+		// outbound body still carries reasoning.encrypted_content (account
+		// switch often returns opaque "Upstream error: 400").
+		shouldStrip := isGrokInvalidEncryptedContentResponse(resp.StatusCode, respBody) ||
+			requestHasGrokEncryptedReasoning(responsesBody)
+		if !shouldStrip {
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			break
+		}
+		retryBody, changed, trimErr := trimGrokInvalidEncryptedContentRetryBody(responsesBody)
+		if trimErr != nil {
+			return nil, fmt.Errorf("prepare Grok invalid encrypted_content retry: %w", trimErr)
+		}
+		if !changed {
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			break
+		}
+		responsesBody = retryBody
+		logger.L().Info("openai messages: retrying after stripping invalid Grok encrypted_content",
+			zap.Int64("account_id", account.ID),
+			zap.Bool("cache_identity_present", strings.TrimSpace(grokCacheIdentity) != ""),
+			zap.String("upstream_error_preview", truncateOpenAIWSLogValue(string(respBody), 240)),
+		)
 	}
+
+	// 7. Handle error response with failover
+	if resp.StatusCode >= 400 {
+		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+		if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
+			expectedTaskID := account.GetCredential("task_id")
+			if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {
+				return nil, fmt.Errorf("agent identity task recovery failed: %w", err)
+			}
+			return s.ForwardAsAnthropic(markAgentIdentityTaskRecoveryTried(ctx), c, account, body, promptCacheKey, defaultMappedModel)
+		}
+		if previousResponseID != "" && (isOpenAICompatPreviousResponseNotFound(resp.StatusCode, upstreamMsg, respBody) || isOpenAICompatPreviousResponseUnsupported(resp.StatusCode, upstreamMsg, respBody)) {
+			if isOpenAICompatPreviousResponseUnsupported(resp.StatusCode, upstreamMsg, respBody) {
+				s.disableOpenAICompatSessionContinuation(ctx, c, account, promptCacheKey)
+			} else {
+				s.deleteOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey)
+			}
+			logger.L().Info("openai messages: previous_response_id unavailable, retrying without continuation",
+				zap.Int64("account_id", account.ID),
+				zap.String("previous_response_id", truncateOpenAIWSLogValue(previousResponseID, openAIWSIDValueMaxLen)),
+				zap.String("upstream_model", upstreamModel),
+			)
+			return s.ForwardAsAnthropic(ctx, c, account, body, promptCacheKey, defaultMappedModel)
+		}
+		// Grok account-switched history often fails decrypt; strip encrypted
+		// reasoning once at the client-body level so failover accounts can accept
+		// the multi-turn tool continuation instead of cascading 400s.
+		if account.Platform == PlatformGrok &&
+			isGrokInvalidEncryptedContentResponse(resp.StatusCode, respBody) &&
+			!grokEncryptedContentStripRetried(ctx) {
+			if strippedBody, ok := stripAnthropicThinkingSignatures(body); ok {
+				logger.L().Info("openai messages: stripping thinking signatures for Grok failover retry",
+					zap.Int64("account_id", account.ID),
+				)
+				return s.ForwardAsAnthropic(markGrokEncryptedContentStripRetried(ctx), c, account, strippedBody, promptCacheKey, defaultMappedModel)
+			}
+		}
+		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
+			return nil, foErr
+		}
+		// Non-failover error: return Anthropic-formatted error to client
+		return s.handleAnthropicErrorResponse(resp, c, account, billingModel)
+	}
+	if account.Platform == PlatformGrok && account.Type == AccountTypeOAuth && !account.IsShadow() {
+		s.updateGrokUsageFromResponse(withGrokTeamRateLimitModel(ctx, upstreamModel), account, resp.Header, resp.StatusCode)
+	}
+
+	if account.UsesOpenAICodexProtocol() && promptCacheKey != "" {
+		if turnState := strings.TrimSpace(resp.Header.Get("x-codex-turn-state")); turnState != "" {
+			s.bindOpenAICompatSessionTurnState(ctx, c, account, promptCacheKey, turnState)
+		}
+	}
+
+	// 9. Handle normal response
+	// Upstream is always streaming; choose response format based on client preference.
+	var result *OpenAIForwardResult
+	var handleErr error
+	if clientStream {
+		result, handleErr = s.handleAnthropicStreamingResponse(
+			ctx, resp, c, account, originalModel, billingModel, upstreamModel,
+			startTime,
+		)
+	} else {
+		// Client wants JSON: buffer the streaming response and assemble a JSON reply.
+		result, handleErr = s.handleAnthropicBufferedStreamingResponse(resp, c, account, originalModel, billingModel, upstreamModel, startTime)
+	}
+	// cyber_policy：标记已设、error 已按 Anthropic 格式发给客户端。丢弃 result、返回哨兵，
+	// 使 handler 落入 tokens=0 免费用量行（对齐 /v1/responses），不计费、不 failover。
+	if GetOpsCyberPolicy(c) != nil {
+		if handleErr == nil {
+			handleErr = errOpenAICyberPolicyForwarded
+		}
+		return nil, handleErr
+	}
+
+	// Propagate ServiceTier and ReasoningEffort to result for billing
+	if handleErr == nil && result != nil {
+		if compatContinuationEnabled && promptCacheKey != "" && result.ResponseID != "" {
+			s.bindOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey, result.ResponseID)
+		}
+		if promptCacheKey != "" && anthropicDigestChain != "" {
+			s.bindOpenAICompatAnthropicDigestPromptCacheKey(account, apiKeyID, anthropicDigestChain, promptCacheKey, anthropicMatchedDigestChain)
+		}
+		// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过
+		// fast policy filter/force 之后）里的 tier。
+		if tier := resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(responsesBody)); tier != nil {
+			result.ServiceTier = tier
+		}
+		if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
+			re := responsesReq.Reasoning.Effort
+			result.ReasoningEffort = &re
+		}
+	}
+
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	return result, handleErr
 }
 
 func ensureCodexOAuthInstructionsField(reqBody map[string]any) {
