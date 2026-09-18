@@ -30,13 +30,13 @@ type webshareBackboneProxy struct {
 }
 
 type webshareProxyList struct {
+	Count   int                     `json:"count"`
 	Results []webshareBackboneProxy `json:"results"`
 }
 
-// fetchWebshareRotatingProxyURL follows Webshare's residential connection
-// model: discover the plan credentials through the authenticated list API,
-// then connect through p.webshare.io with the -rotate username suffix. A
-// residential result can legitimately have a null proxy_address.
+// fetchWebshareRotatingProxyURL selects one residential backbone credential
+// from Webshare's proxy list. Each list item identifies one exit; appending a
+// rotation suffix to these credentials makes Webshare reject CONNECT with 400.
 func fetchWebshareRotatingProxyURL(ctx context.Context, cfg UpstreamStateSettings, baseURL string, client *http.Client) (string, error) {
 	apiKey := strings.TrimSpace(cfg.WebshareAPIKey)
 	if apiKey == "" {
@@ -52,38 +52,7 @@ func fetchWebshareRotatingProxyURL(ctx context.Context, cfg UpstreamStateSetting
 	base.Path = "/api/v2/proxy/list/"
 	query := base.Query()
 	query.Set("mode", "backbone")
-	query.Set("page", "1")
 	query.Set("page_size", "1")
-	base.RawQuery = query.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Token "+apiKey)
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("webshare proxy lookup failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, upstreamStateWebshareBodyLimit))
-		return "", fmt.Errorf("webshare proxy lookup returned HTTP %d", resp.StatusCode)
-	}
-	var payload webshareProxyList
-	decoder := json.NewDecoder(io.LimitReader(resp.Body, upstreamStateWebshareBodyLimit))
-	if err = decoder.Decode(&payload); err != nil {
-		return "", fmt.Errorf("invalid Webshare proxy response: %w", err)
-	}
-	if len(payload.Results) == 0 {
-		return "", errors.New("webshare returned no backbone proxy credentials")
-	}
-	credential := payload.Results[0]
-	if strings.TrimSpace(credential.Username) == "" || credential.Password == "" {
-		return "", errors.New("webshare returned incomplete backbone credentials")
-	}
-	username := credential.Username
 	switch cfg.WebshareCountryMode {
 	case webshareCountryModeRandom:
 	case webshareCountryModeSpecified:
@@ -94,9 +63,61 @@ func fetchWebshareRotatingProxyURL(ctx context.Context, cfg UpstreamStateSetting
 		if randomErr != nil {
 			return "", fmt.Errorf("select Webshare country: %w", randomErr)
 		}
-		username += "-" + strings.ToLower(cfg.WebshareCountries[index.Int64()])
+		query.Set("country_code__in", cfg.WebshareCountries[index.Int64()])
 	default:
 		return "", errors.New("invalid Webshare country mode")
+	}
+
+	fetchPage := func(page int64) (webshareProxyList, error) {
+		query.Set("page", strconv.FormatInt(page, 10))
+		base.RawQuery = query.Encode()
+		req, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
+		if requestErr != nil {
+			return webshareProxyList{}, requestErr
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Authorization", "Token "+apiKey)
+		resp, requestErr := client.Do(req)
+		if requestErr != nil {
+			return webshareProxyList{}, fmt.Errorf("webshare proxy lookup failed: %w", requestErr)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, upstreamStateWebshareBodyLimit))
+			return webshareProxyList{}, fmt.Errorf("webshare proxy lookup returned HTTP %d", resp.StatusCode)
+		}
+		var payload webshareProxyList
+		decoder := json.NewDecoder(io.LimitReader(resp.Body, upstreamStateWebshareBodyLimit))
+		if decodeErr := decoder.Decode(&payload); decodeErr != nil {
+			return webshareProxyList{}, fmt.Errorf("invalid Webshare proxy response: %w", decodeErr)
+		}
+		return payload, nil
+	}
+
+	payload, err := fetchPage(1)
+	if err != nil {
+		return "", err
+	}
+	if payload.Count <= 0 || len(payload.Results) == 0 {
+		return "", errors.New("webshare returned no backbone proxy credentials")
+	}
+	page, err := rand.Int(rand.Reader, big.NewInt(int64(payload.Count)))
+	if err != nil {
+		return "", fmt.Errorf("select Webshare proxy: %w", err)
+	}
+	selectedPage := page.Int64() + 1
+	if selectedPage != 1 {
+		payload, err = fetchPage(selectedPage)
+		if err != nil {
+			return "", err
+		}
+		if len(payload.Results) == 0 {
+			return "", errors.New("webshare returned no proxy for selected page")
+		}
+	}
+	credential := payload.Results[0]
+	if strings.TrimSpace(credential.Username) == "" || credential.Password == "" {
+		return "", errors.New("webshare returned incomplete backbone credentials")
 	}
 	proxy := &url.URL{
 		Scheme: "http",
@@ -107,7 +128,7 @@ func fetchWebshareRotatingProxyURL(ctx context.Context, cfg UpstreamStateSetting
 			upstreamStateWebshareBackbone,
 			strconv.Itoa(upstreamStateWebshareAuthPort),
 		),
-		User: url.UserPassword(username+"-rotate", credential.Password),
+		User: url.UserPassword(credential.Username, credential.Password),
 	}
 	return proxy.String(), nil
 }

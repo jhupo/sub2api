@@ -15,6 +15,7 @@ func TestFetchWebshareRotatingProxyURL(t *testing.T) {
 		require.Equal(t, "/api/v2/proxy/list/", r.URL.Path)
 		require.Equal(t, "backbone", r.URL.Query().Get("mode"))
 		require.Empty(t, r.URL.Query().Get("plan_id"))
+		require.Equal(t, "US", r.URL.Query().Get("country_code__in"))
 		require.Equal(t, "Token secret-api-key", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
 		// Residential backbone results expose the IP-authorization port even
@@ -32,7 +33,7 @@ func TestFetchWebshareRotatingProxyURL(t *testing.T) {
 	parsed, err := url.Parse(proxyURL)
 	require.NoError(t, err)
 	require.Equal(t, "p.webshare.io:80", parsed.Host)
-	require.Equal(t, "proxyuser-us-rotate", parsed.User.Username())
+	require.Equal(t, "proxyuser", parsed.User.Username())
 	password, ok := parsed.User.Password()
 	require.True(t, ok)
 	require.Equal(t, "proxypass", password)
@@ -52,7 +53,7 @@ func TestFetchWebshareRotatingProxyURLRejectsFailedLookup(t *testing.T) {
 func TestFetchWebshareRotatingProxyURLUsesGlobalRandomPool(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"count":200000,"results":[{"username":"proxyuser","password":"proxypass","proxy_address":null,"port":10000}]}`))
+		_, _ = w.Write([]byte(`{"count":1,"results":[{"username":"proxyuser","password":"proxypass","proxy_address":null,"port":10000}]}`))
 	}))
 	defer server.Close()
 
@@ -64,5 +65,5 @@ func TestFetchWebshareRotatingProxyURLUsesGlobalRandomPool(t *testing.T) {
 	parsed, err := url.Parse(proxyURL)
 	require.NoError(t, err)
 	require.Equal(t, "p.webshare.io:80", parsed.Host)
-	require.Equal(t, "proxyuser-rotate", parsed.User.Username())
+	require.Equal(t, "proxyuser", parsed.User.Username())
 }
