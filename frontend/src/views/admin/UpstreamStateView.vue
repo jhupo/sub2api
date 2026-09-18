@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="space-y-5 pb-12">
-      <section class="glass-card overflow-visible p-0">
+      <section class="relative z-30 glass-card overflow-visible p-0" data-testid="state-toolbar">
         <header class="flex flex-wrap items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-dark-700 sm:px-6">
           <div class="min-w-0">
             <h1 class="page-title flex items-center gap-2 text-xl font-black text-gray-900 dark:text-white">
@@ -32,6 +32,7 @@
             />
             <StateMultiSelectFilter
               v-model="selectedModels"
+              align="right"
               :options="modelOptions"
               :placeholder="t(`${key}.filterModels`)"
               :selected-label="t(`${key}.selectedModels`)"

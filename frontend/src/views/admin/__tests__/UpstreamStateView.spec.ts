@@ -99,14 +99,20 @@ describe('UpstreamStateView', () => {
     expect(wrapper.get('[data-testid="state-cards"]').text()).toContain('Account A')
     expect(wrapper.get('[data-testid="state-cards"]').text()).toContain('Account B')
     const accountFilter = wrapper.get('[data-testid="state-account-filter"]')
+    await accountFilter.get('[data-testid="state-account-filter-trigger"]').trigger('click')
+    expect(accountFilter.get('[data-testid="state-account-filter-menu"]').classes()).toContain('left-0')
     const accountB = accountFilter.findAll('input[type="checkbox"]')[1]
     await accountB.setValue(true)
     expect(wrapper.get('[data-testid="state-cards"]').text()).not.toContain('Account A')
     expect(wrapper.get('[data-testid="state-cards"]').text()).toContain('Account B')
     const modelFilter = wrapper.get('[data-testid="state-model-filter"]')
+    await modelFilter.get('[data-testid="state-model-filter-trigger"]').trigger('click')
+    expect(accountFilter.find('[data-testid="state-account-filter-menu"]').exists()).toBe(false)
+    expect(modelFilter.get('[data-testid="state-model-filter-menu"]').classes()).toContain('right-0')
     const modelA = modelFilter.findAll('input[type="checkbox"]')[0]
     await modelA.setValue(true)
     expect(wrapper.find('[data-testid="state-cards"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="state-toolbar"]').classes()).toContain('z-30')
   })
 
   it('disables pair controls while the global feature is off', async () => {
