@@ -42,6 +42,10 @@
             />
           </div>
           <div class="flex min-w-0 flex-1 gap-2 lg:justify-end">
+            <label class="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+              <input v-model="onlyEnabled" data-testid="state-only-enabled" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-900" />
+              {{ t(`${key}.onlyEnabled`) }}
+            </label>
             <div class="relative min-w-0 flex-1 lg:max-w-80">
               <Icon name="search" size="sm" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input v-model="search" type="search" class="input h-10 pl-9" :placeholder="t(`${key}.search`)" :aria-label="t(`${key}.search`)" />
@@ -58,7 +62,7 @@
       <div v-if="loading && !loaded" class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         <div v-for="i in 8" :key="i" class="h-80 animate-pulse rounded-[24px] bg-white/60 dark:bg-dark-800" />
       </div>
-      <div v-else-if="!visibleRows.length" class="glass-card py-16 text-center text-sm text-gray-500 dark:text-gray-400">{{ t(`${key}.noAccounts`) }}</div>
+      <div v-else-if="!visibleRows.length" class="glass-card py-16 text-center text-sm text-gray-500 dark:text-gray-400">{{ t(`${key}.${onlyEnabled ? 'noEnabledPairs' : 'noAccounts'}`) }}</div>
       <div v-else class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" data-testid="state-cards">
         <article
           v-for="row in visibleRows"
@@ -82,7 +86,7 @@
           <div class="mt-5 grid grid-cols-3 gap-2">
             <div class="rounded-2xl border border-slate-200/80 bg-slate-50/85 p-3 dark:border-dark-700/50 dark:bg-dark-900/40">
               <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{{ t(`${key}.stateLength`) }}</div>
-              <div class="mt-1.5 font-mono text-lg font-bold tabular-nums" :class="row.observed_length === settings.expected_length ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-900 dark:text-gray-100'">{{ row.observed_length || 0 }}</div>
+              <div class="mt-1.5 font-mono text-lg font-bold tabular-nums" :class="row.cached && row.upstream_expires_at > now ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-900 dark:text-gray-100'">{{ row.cached ? row.state_length : row.observed_length }}</div>
             </div>
             <div class="rounded-2xl border border-slate-200/80 bg-slate-50/85 p-3 dark:border-dark-700/50 dark:bg-dark-900/40">
               <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{{ t(`${key}.remaining`) }}</div>
@@ -103,7 +107,10 @@
             <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
               <div class="h-full rounded-full transition-all" :class="progressClass(row)" :style="{ width: `${progress(row)}%` }"></div>
             </div>
-            <p v-if="row.last_error" class="mt-2 line-clamp-2 text-[11px] text-red-600 dark:text-red-400" :title="row.last_error">{{ row.last_error }}</p>
+            <div v-if="row.last_error" class="mt-2 text-[11px] text-red-600 dark:text-red-400">
+              <p>{{ t(`${key}.lastRefreshError`) }}<span v-if="row.last_refresh_at"> · {{ new Date(row.last_refresh_at).toLocaleString(locale) }}</span></p>
+              <p class="line-clamp-2" :title="row.last_error">{{ row.last_error }}</p>
+            </div>
           </div>
 
           <div class="mt-auto flex items-end justify-between gap-3 pt-4">
@@ -187,8 +194,21 @@ const settings = reactive<UpstreamStateSettings>({
 })
 const rows = ref<UpstreamStateMatrixRow[]>([])
 const search = ref('')
-const selectedAccounts = ref<string[]>([])
-const selectedModels = ref<string[]>([])
+const filterStorageKey = 'sub2api:upstream-state:filters'
+interface StateFilters { onlyEnabled: boolean; accounts: string[]; models: string[] }
+function readFilters(): StateFilters {
+  try {
+    const saved = JSON.parse(localStorage.getItem(filterStorageKey) || 'null')
+    if (saved && typeof saved.onlyEnabled === 'boolean' &&
+      Array.isArray(saved.accounts) && saved.accounts.every((v: unknown) => typeof v === 'string') &&
+      Array.isArray(saved.models) && saved.models.every((v: unknown) => typeof v === 'string')) return saved
+  } catch { /* Storage may be unavailable; enabled pairs are the default. */ }
+  return { onlyEnabled: true, accounts: [], models: [] }
+}
+const savedFilters = readFilters()
+const onlyEnabled = ref(savedFilters.onlyEnabled)
+const selectedAccounts = ref<string[]>(savedFilters.accounts)
+const selectedModels = ref<string[]>(savedFilters.models)
 const page = ref(1)
 const pageSize = 12
 const now = ref(Date.now())
@@ -201,19 +221,20 @@ const editingRow = ref<UpstreamStateMatrixRow | null>(null)
 const stateDraft = ref('')
 let timer: ReturnType<typeof setInterval> | undefined
 
+const selectableRows = computed(() => onlyEnabled.value ? rows.value.filter(row => row.enabled) : rows.value)
 const accountOptions = computed(() => {
   const accounts = new Map<number, string>()
-  for (const row of rows.value) accounts.set(row.account_id, row.account_name)
+  for (const row of selectableRows.value) accounts.set(row.account_id, row.account_name)
   return [...accounts.entries()]
     .sort(([a], [b]) => a - b)
     .map(([id, name]) => ({ value: String(id), label: name, description: `#${id}` }))
 })
-const modelOptions = computed(() => [...new Set(rows.value.map(row => row.model))]
+const modelOptions = computed(() => [...new Set(selectableRows.value.map(row => row.model))]
   .sort((a, b) => a.localeCompare(b))
   .map(model => ({ value: model, label: model })))
 const filteredRows = computed(() => {
   const term = search.value.trim().toLowerCase()
-  return rows.value.filter(row => {
+  return selectableRows.value.filter(row => {
     if (selectedAccounts.value.length && !selectedAccounts.value.includes(String(row.account_id))) return false
     if (selectedModels.value.length && !selectedModels.value.includes(row.model)) return false
     return !term || `${row.account_id} ${row.account_name} ${row.model}`.toLowerCase().includes(term)
@@ -222,7 +243,14 @@ const filteredRows = computed(() => {
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredRows.value.length / pageSize)))
 const visibleRows = computed(() => filteredRows.value.slice((page.value - 1) * pageSize, page.value * pageSize))
 
-watch([search, selectedAccounts, selectedModels], () => { page.value = 1 }, { deep: true })
+watch([search, onlyEnabled, selectedAccounts, selectedModels], () => { page.value = 1 }, { deep: true })
+watch([onlyEnabled, selectedAccounts, selectedModels], () => {
+  try {
+    localStorage.setItem(filterStorageKey, JSON.stringify({
+      onlyEnabled: onlyEnabled.value, accounts: selectedAccounts.value, models: selectedModels.value
+    }))
+  } catch { /* Keep filters usable when browser storage is unavailable. */ }
+}, { deep: true })
 watch(totalPages, value => { if (page.value > value) page.value = value })
 
 function pairKey(row: UpstreamStateMatrixRow) { return `${row.account_id}:${row.model}` }
@@ -241,7 +269,8 @@ function progress(row: UpstreamStateMatrixRow) {
 }
 function statusKey(row: UpstreamStateMatrixRow) {
   if (!row.enabled) return 'disabled'
-  if (row.validation === 'normal' && row.cached) return 'normal'
+  if (row.cached && row.upstream_expires_at > now.value) return 'normal'
+  if (row.upstream_expires_at && row.upstream_expires_at <= now.value) return 'expired'
   return row.validation || 'waiting'
 }
 function statusClass(row: UpstreamStateMatrixRow) {
@@ -260,6 +289,12 @@ async function loadMatrix(preserveError = false) {
   loading.value = true
   try {
     rows.value = await upstreamStateApi.matrix()
+    const accounts = new Set(rows.value.map(row => String(row.account_id)))
+    const models = new Set(rows.value.map(row => row.model))
+    const retainedAccounts = selectedAccounts.value.filter(id => accounts.has(id))
+    const retainedModels = selectedModels.value.filter(model => models.has(model))
+    if (retainedAccounts.length !== selectedAccounts.value.length) selectedAccounts.value = retainedAccounts
+    if (retainedModels.length !== selectedModels.value.length) selectedModels.value = retainedModels
     if (!preserveError) error.value = ''
     loaded.value = true
   } catch (err: unknown) {

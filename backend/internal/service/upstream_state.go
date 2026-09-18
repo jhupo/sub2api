@@ -287,6 +287,7 @@ type UpstreamStateRecord struct {
 	Validation        string `json:"validation"`
 	ExpirySource      string `json:"expiry_source,omitempty"`
 	LastError         string `json:"last_error,omitempty"`
+	LastRefreshAt     int64  `json:"last_refresh_at"`
 }
 
 type UpstreamStateTicket struct {
@@ -295,6 +296,7 @@ type UpstreamStateTicket struct {
 }
 
 type UpstreamStateStore interface {
+	Get(context.Context, string) (*UpstreamStateRecord, error)
 	Begin(context.Context, string) (*UpstreamStateRecord, UpstreamStateTicket, error)
 	Save(context.Context, UpstreamStateRecord, UpstreamStateTicket) error
 	Replace(context.Context, UpstreamStateRecord, UpstreamStateTicket) error
@@ -313,6 +315,7 @@ type UpstreamStateMatrixRow struct {
 	Model             string `json:"model"`
 	Enabled           bool   `json:"enabled"`
 	Cached            int    `json:"cached"`
+	StateLength       int    `json:"state_length"`
 	Digest            string `json:"digest,omitempty"`
 	CheckedAt         int64  `json:"checked_at"`
 	AcquiredAt        int64  `json:"acquired_at"`
@@ -323,6 +326,7 @@ type UpstreamStateMatrixRow struct {
 	Validation        string `json:"validation"`
 	ExpirySource      string `json:"expiry_source,omitempty"`
 	LastError         string `json:"last_error,omitempty"`
+	LastRefreshAt     int64  `json:"last_refresh_at"`
 }
 
 func upstreamStateAccountModels(a *Account) map[string]bool {
@@ -394,13 +398,18 @@ func (s *SettingService) UpstreamStateMatrix(ctx context.Context) ([]UpstreamSta
 			for _, r := range observations[pair] {
 				if r.CheckedAt > row.CheckedAt {
 					row.ID, row.CheckedAt, row.ObservedLength, row.Validation, row.ExpirySource, row.LastError = r.ID, r.CheckedAt, r.ObservedLength, r.Validation, r.ExpirySource, r.LastError
+					row.LastRefreshAt = r.LastRefreshAt
 				}
 				if r.State != "" && r.UpstreamExpiresAt > now {
 					row.Cached = 1
+					row.StateLength = len(r.State)
 					row.ID, row.Digest = r.ID, upstreamStateDigest(r.State)[:12]
 					row.AcquiredAt, row.IssuedAt = r.AcquiredAt, r.IssuedAt
 					row.UpstreamExpiresAt, row.RotationAt = r.UpstreamExpiresAt, r.RotationAt
 				}
+			}
+			if row.Cached > 0 {
+				row.Validation = upstreamStateValidationNormal
 			}
 			rows = append(rows, row)
 		}
@@ -510,6 +519,9 @@ func parseUpstreamStateToken(state string, expectedLength int, now time.Time) (v
 	if state == "" {
 		return "missing", 0, 0
 	}
+	if strings.IndexFunc(state, func(r rune) bool { return r < 0x21 || r > 0x7e }) >= 0 {
+		return "invalid", 0, 0
+	}
 	if len(state) == expectedLength+16 {
 		validation = upstreamStateValidationLong
 	} else if len(state) != expectedLength {
@@ -577,11 +589,6 @@ type upstreamStateScope struct {
 	record   UpstreamStateRecord
 }
 
-type upstreamStateAttempt struct {
-	scope  *upstreamStateScope
-	ticket UpstreamStateTicket
-}
-
 func (scope *upstreamStateScope) poolKey() string {
 	return scope.config.StateRevision + ":" + scope.config.pairRevision(scope.record.AccountID, scope.record.Model) + ":" + scope.record.ID
 }
@@ -625,43 +632,30 @@ func (s *OpenAIGatewayService) newUpstreamStateScopeWithConfig(c *gin.Context, a
 
 // This is the final send/dial boundary, after old bridge caches and header
 // overrides. Enabled management never trusts an unscoped client echo.
-func (scope *upstreamStateScope) begin(ctx context.Context, headers http.Header) *upstreamStateAttempt {
+func (scope *upstreamStateScope) inject(ctx context.Context, headers http.Header) bool {
 	if scope == nil {
-		return nil
+		return false
 	}
 	headers.Del(openAICodexTurnStateHeader)
 	current := scope.settings.upstreamStateSettings(ctx)
-	if current.StateRevision != scope.config.StateRevision || !current.manages(scope.record.AccountID, scope.record.Model) {
-		return nil
+	if current.StateRevision != scope.config.StateRevision || !current.manages(scope.record.AccountID, scope.record.Model) ||
+		current.pairRevision(scope.record.AccountID, scope.record.Model) != scope.record.PairRevision {
+		return false
 	}
 	if scope.record.ID == "" || scope.settings.upstreamStateStore == nil {
-		return nil
+		return false
 	}
 	cacheCtx, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
 	defer cancel()
-	record, ticket, err := scope.settings.upstreamStateStore.Begin(cacheCtx, scope.record.ID)
+	record, err := scope.settings.upstreamStateStore.Get(cacheCtx, scope.record.ID)
 	if err != nil {
-		return nil
+		return false
 	} // Optional cache never fails the business request.
 	if record != nil && record.UpstreamExpiresAt > time.Now().UnixMilli() && len(record.State) == scope.config.ExpectedLength {
 		headers.Set(openAICodexTurnStateHeader, record.State)
+		return true
 	}
-	return &upstreamStateAttempt{scope: scope, ticket: ticket}
-}
-
-func (a *upstreamStateAttempt) capture(ctx context.Context, status int, headers http.Header) {
-	if a == nil || ((status < 200 || status >= 300) && status != http.StatusSwitchingProtocols) {
-		return
-	}
-	current := a.scope.settings.upstreamStateSettings(ctx)
-	if current.StateRevision != a.scope.config.StateRevision || !current.manages(a.scope.record.AccountID, a.scope.record.Model) {
-		return
-	}
-	r := buildUpstreamStateObservation(a.scope.record, headers.Get(openAICodexTurnStateHeader), a.scope.config, time.Now())
-	r.Sequence = a.ticket.Sequence
-	cacheCtx, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
-	defer cancel()
-	_ = a.scope.settings.upstreamStateStore.Save(cacheCtx, r, a.ticket)
+	return false
 }
 
 type upstreamStateContextKey struct{}

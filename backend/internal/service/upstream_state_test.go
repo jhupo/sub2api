@@ -22,6 +22,11 @@ type managedStateTestStore struct {
 	fail    bool
 }
 
+func (s *managedStateTestStore) Get(ctx context.Context, id string) (*UpstreamStateRecord, error) {
+	record, _, err := s.Begin(ctx, id)
+	return record, err
+}
+
 func (s *managedStateTestStore) Begin(_ context.Context, id string) (*UpstreamStateRecord, UpstreamStateTicket, error) {
 	if s.fail {
 		return nil, UpstreamStateTicket{}, errors.New("unavailable")
@@ -91,6 +96,12 @@ func TestUpstreamStateTokenTimestampAndLengthValidation(t *testing.T) {
 	require.Equal(t, "normal", validation)
 	require.Zero(t, issuedAt)
 	require.Zero(t, expiresAt)
+	for _, invalid := range []string{"\r\n", "\x00", "中"} {
+		state := strings.Repeat("x", 100) + invalid + strings.Repeat("x", 192-len(invalid))
+		require.Len(t, state, 292)
+		validation, _, _ = parseUpstreamStateToken(state, 292, now)
+		require.Equal(t, "invalid", validation, "header-unsafe content must never enter the cache")
+	}
 }
 
 func TestUpstreamStateRotationUsesFernetExpiryThenConfiguredFallback(t *testing.T) {
@@ -201,41 +212,38 @@ func TestUpstreamStateScopeIsAccountAndModelOnly(t *testing.T) {
 	require.NotEqual(t, base.record.ID, managedStateScope(t, s, account, 7, "session-a", "model-a", h).record.ID)
 }
 
-func TestUpstreamStateCaptureValidationAndDisabledBehavior(t *testing.T) {
+func seedManagedState(t *testing.T, s *OpenAIGatewayService, scope *upstreamStateScope, state string) {
+	t.Helper()
+	_, ticket, err := s.settingService.upstreamStateStore.Begin(context.Background(), scope.record.ID)
+	require.NoError(t, err)
+	_, err = s.replaceManagedUpstreamState(context.Background(), scope, state, ticket)
+	require.NoError(t, err)
+}
+
+func TestUpstreamStateInjectionAndDisabledBehavior(t *testing.T) {
 	s, store, account := managedStateService(t)
 	ctx := context.Background()
 	scope := managedStateScope(t, s, account, 7, "session", "model", http.Header{})
 	h := http.Header{}
 	h.Set(openAICodexTurnStateHeader, "untrusted-client-echo")
-	a := scope.begin(ctx, h)
+	require.False(t, scope.inject(ctx, h))
 	require.Empty(t, h.Get(openAICodexTurnStateHeader))
-	for _, tc := range []struct {
-		status int
-		state  string
-	}{{503, testUpstreamStateAt(t, time.Now(), 292)}, {200, "short"}, {200, strings.Repeat("a", 291) + "\n"}} {
-		h.Set(openAICodexTurnStateHeader, tc.state)
-		a.capture(ctx, tc.status, h)
-		for _, r := range store.records {
-			require.Empty(t, r.State, "invalid states must never be reused")
-		}
-	}
 	state := testUpstreamStateAt(t, time.Now(), 292)
-	h.Set(openAICodexTurnStateHeader, state)
-	a.capture(ctx, 200, h)
+	seedManagedState(t, s, scope, state)
 	require.Len(t, store.records, 1)
-	scope.begin(ctx, h)
+	require.True(t, scope.inject(ctx, h))
 	require.Equal(t, state, h.Get(openAICodexTurnStateHeader))
 	store.fail = true
-	require.Nil(t, scope.begin(ctx, h))
+	require.False(t, scope.inject(ctx, h))
 	require.Empty(t, h.Get(openAICodexTurnStateHeader))
 	_, err := s.settingService.SetUpstreamStateSettings(ctx, UpstreamStateSettings{AutoReplaceEnabled: true, TTLMinutes: 40, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeRandom, Revision: scope.config.Revision})
 	require.NoError(t, err)
 	// A retained scope in the WS prewarm pool cannot act after disabling.
-	require.Nil(t, scope.begin(ctx, h))
+	require.False(t, scope.inject(ctx, h))
 	disabled := managedStateScope(t, s, account, 7, "session", "model", h)
 	require.Nil(t, disabled)
 	h.Set(openAICodexTurnStateHeader, "normal-client-echo")
-	disabled.begin(ctx, h)
+	disabled.inject(ctx, h)
 	require.Equal(t, "normal-client-echo", h.Get(openAICodexTurnStateHeader))
 }
 
@@ -267,12 +275,20 @@ func TestUpstreamStateHTTPTransportUsesFinalScopeAndKeepsStream(t *testing.T) {
 	received, readErr := io.ReadAll(resp.Body)
 	require.NoError(t, readErr)
 	require.Equal(t, "data: first-event\n\n", string(received), "collection must not consume SSE")
-	require.Len(t, store.records, 1)
+	require.Empty(t, store.records, "ordinary responses must not populate managed state")
+	scope, ok := req.Context().Value(upstreamStateContextKey{}).(*upstreamStateScope)
+	require.True(t, ok)
+	seedManagedState(t, s, scope, state)
+	saved := store.records[scope.record.ID]
 	// Simulate a legacy bridge writing a state after building the request.
 	req.Header.Set(openAICodexTurnStateHeader, "wrong-bridge-state")
-	_, err = s.doOpenAIUpstream(req, "", account)
-	require.NoError(t, err)
-	require.Equal(t, state, u.header.Get(openAICodexTurnStateHeader))
+	for _, responseState := range []string{"", "short", testUpstreamStateAt(t, time.Now().Add(time.Second), 292)} {
+		u.response.Header.Set(openAICodexTurnStateHeader, responseState)
+		_, err = s.doOpenAIUpstream(req, "", account)
+		require.NoError(t, err)
+		require.Equal(t, state, u.header.Get(openAICodexTurnStateHeader))
+		require.Equal(t, saved, store.records[scope.record.ID], "ordinary response must not alter state, expiry or status")
+	}
 	c.Request.URL.Path = "/v1/alpha/search"
 	other, _ := http.NewRequest(http.MethodPost, "https://example.test/v1/alpha/search", nil)
 	other = s.attachUpstreamStateScope(other, c, account, body)
@@ -287,8 +303,7 @@ func TestUpstreamStateAdminRedactsAndRevisions(t *testing.T) {
 	scope := managedStateScope(t, s, account, 7, "secret-session", "model", http.Header{})
 	h := http.Header{}
 	h.Set(openAICodexTurnStateHeader, testUpstreamStateAt(t, time.Now(), 292))
-	a := scope.begin(ctx, http.Header{})
-	a.capture(ctx, 200, h)
+	seedManagedState(t, s, scope, h.Get(openAICodexTurnStateHeader))
 	rows, err := s.settingService.UpstreamStateMatrix(ctx)
 	require.NoError(t, err)
 	var modelRow *UpstreamStateMatrixRow
@@ -300,11 +315,23 @@ func TestUpstreamStateAdminRedactsAndRevisions(t *testing.T) {
 	}
 	require.NotNil(t, modelRow)
 	require.Equal(t, 1, modelRow.Cached)
+	require.Equal(t, 292, modelRow.StateLength)
 	raw, err := json.Marshal(rows)
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), h.Get(openAICodexTurnStateHeader))
 	require.NotContains(t, string(raw), "secret-session")
 	require.NotContains(t, string(raw), "credential-a")
+	// A failed refresh has its own error. It cannot turn a reusable cached
+	// state's main status or displayed length into missing/zero.
+	record := store.records[scope.record.ID]
+	record.Validation, record.ObservedLength, record.LastError = "refresh_error", 0, "HTTP 200 without state"
+	store.records[record.ID] = record
+	rows, err = s.settingService.UpstreamStateMatrix(ctx)
+	require.NoError(t, err)
+	modelRow = modelRowForTest(t, rows, "model")
+	require.Equal(t, "normal", modelRow.Validation)
+	require.Equal(t, 292, modelRow.StateLength)
+	require.Equal(t, record.LastError, modelRow.LastError)
 	old := store.records[scope.record.ID]
 	cfg, err := s.settingService.GetUpstreamStateSettings(ctx)
 	require.NoError(t, err)
@@ -359,7 +386,7 @@ func TestUpstreamStateWSHandshakeIsolation(t *testing.T) {
 	second := first
 	second.upstreamState = managedStateScope(t, s, account, 7, "session", "model-b", headers)
 	require.NotEqual(t, first.handshakeCompatibility(headers), second.handshakeCompatibility(headers))
-	resolution.upstreamState.begin(context.Background(), headers)
+	resolution.upstreamState.inject(context.Background(), headers)
 	require.Empty(t, headers.Get(openAICodexTurnStateHeader))
 	// A completed handshake is captured once by dialConn, not when acquiring a
 	// lease of the same connection. TTL comes from that first observation.
@@ -378,7 +405,7 @@ func (d *managedStateDialer) Dial(_ context.Context, _ string, h http.Header, _ 
 	response.Set(openAICodexTurnStateHeader, d.responseState)
 	return &openAIWSFakeConn{}, http.StatusSwitchingProtocols, response, nil
 }
-func TestUpstreamStateWSReusedHandshakeDoesNotRecapture(t *testing.T) {
+func TestUpstreamStateWSHandshakeDoesNotCapture(t *testing.T) {
 	s, store, account := managedStateService(t)
 	scope := managedStateScope(t, s, account, 7, "session", "model", http.Header{})
 	cfg := &config.Config{}
@@ -396,9 +423,7 @@ func TestUpstreamStateWSReusedHandshakeDoesNotRecapture(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, first.Reused())
 	first.Release()
-	require.Len(t, store.records, 1)
-	// Clear the record; a reused connection must not put its old handshake back.
-	clear(store.records)
+	require.Empty(t, store.records, "new WS handshake must not populate managed state")
 	second, err := pool.Acquire(ctx, req)
 	require.NoError(t, err)
 	require.True(t, second.Reused())
@@ -425,7 +450,7 @@ func (r *managedStateAccountRepo) GetByID(_ context.Context, id int64) (*Account
 }
 
 func TestUpstreamStatePairsDefaultOffAndMatrixWithoutTraffic(t *testing.T) {
-	s, _, account := managedStateService(t)
+	s, store, account := managedStateService(t)
 	account.Credentials["model_mapping"] = map[string]any{"alias": "model"}
 	s.settingService.upstreamStateAccounts = &managedStateAccountRepo{accounts: []Account{*account, {ID: 43, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}}}
 	ctx := context.Background()
@@ -449,17 +474,17 @@ func TestUpstreamStatePairsDefaultOffAndMatrixWithoutTraffic(t *testing.T) {
 	require.NoError(t, err)
 	scope := managedStateScope(t, s, account, 7, "session", "model", http.Header{})
 	require.NotNil(t, scope)
-	h := http.Header{}
-	h.Set(openAICodexTurnStateHeader, "short")
-	scope.begin(ctx, http.Header{}).capture(ctx, 200, h)
+	_, ticket, err := store.Begin(ctx, scope.record.ID)
+	require.NoError(t, err)
+	_, err = s.replaceManagedUpstreamState(ctx, scope, "short", ticket)
+	require.Error(t, err)
 	rows, err = s.settingService.UpstreamStateMatrix(ctx)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	require.Equal(t, "invalid", rows[0].Validation)
-	require.Equal(t, 5, rows[0].ObservedLength)
+	require.Equal(t, "waiting", rows[0].Validation)
+	require.Zero(t, rows[0].ObservedLength)
 	require.Zero(t, rows[0].Cached)
-	h.Set(openAICodexTurnStateHeader, testUpstreamStateAt(t, time.Now(), 292))
-	scope.begin(ctx, http.Header{}).capture(ctx, 200, h)
+	seedManagedState(t, s, scope, testUpstreamStateAt(t, time.Now(), 292))
 	rows, err = s.settingService.UpstreamStateMatrix(ctx)
 	require.NoError(t, err)
 	require.Equal(t, "normal", rows[0].Validation)
@@ -467,7 +492,7 @@ func TestUpstreamStatePairsDefaultOffAndMatrixWithoutTraffic(t *testing.T) {
 	require.Greater(t, rows[0].RotationAt, time.Now().UnixMilli())
 	_, err = s.settingService.SetUpstreamStatePair(ctx, UpstreamStatePair{42, "model"}, false, cfg.Revision)
 	require.NoError(t, err)
-	require.Nil(t, scope.begin(ctx, http.Header{}))
+	require.False(t, scope.inject(ctx, http.Header{}))
 	_, err = s.settingService.SetUpstreamStateSettings(ctx, cfg)
 	require.ErrorIs(t, err, ErrUpstreamStateConflict, "a stale settings page must not re-enable a disabled pair")
 }
@@ -481,7 +506,7 @@ func TestUpstreamStateExpiredCacheNotInjected(t *testing.T) {
 	r.State, r.UpstreamExpiresAt, r.PurgeAt = testUpstreamStateAt(t, time.Now().Add(-2*time.Hour), 292), time.Now().Add(-time.Second).UnixMilli(), time.Now().Add(time.Minute).UnixMilli()
 	store.records[r.ID] = r
 	h := http.Header{}
-	scope.begin(context.Background(), h)
+	scope.inject(context.Background(), h)
 	require.Empty(t, h.Get(openAICodexTurnStateHeader))
 	rows, err := s.settingService.UpstreamStateMatrix(context.Background())
 	require.NoError(t, err)
@@ -503,9 +528,7 @@ func TestUpstreamStatePairTogglePreservesOtherPairCache(t *testing.T) {
 	stateA := testUpstreamStateAt(t, time.Now(), 292)
 	stateB := testUpstreamStateAt(t, time.Now().Add(time.Second), 292)
 	for scope, state := range map[*upstreamStateScope]string{scopeA: stateA, scopeB: stateB} {
-		headers := http.Header{}
-		headers.Set(openAICodexTurnStateHeader, state)
-		scope.begin(ctx, http.Header{}).capture(ctx, http.StatusOK, headers)
+		seedManagedState(t, s, scope, state)
 	}
 	require.Len(t, store.records, 2)
 	cfg, err := s.settingService.GetUpstreamStateSettings(ctx)
@@ -518,9 +541,9 @@ func TestUpstreamStatePairTogglePreservesOtherPairCache(t *testing.T) {
 	require.Len(t, store.records, 1)
 
 	headers := http.Header{}
-	require.NotNil(t, scopeB.begin(ctx, headers), "an existing scope for another pair remains valid")
+	require.True(t, scopeB.inject(ctx, headers), "an existing scope for another pair remains valid")
 	require.Equal(t, stateB, headers.Get(openAICodexTurnStateHeader))
-	require.Nil(t, scopeA.begin(ctx, http.Header{}))
+	require.False(t, scopeA.inject(ctx, http.Header{}))
 
 	cfg, err = s.settingService.SetUpstreamStatePair(ctx, UpstreamStatePair{AccountID: account.ID, Model: "model-a"}, true, cfg.Revision)
 	require.NoError(t, err)
@@ -531,10 +554,10 @@ func TestUpstreamStatePairTogglePreservesOtherPairCache(t *testing.T) {
 	reenabledScope := managedStateScope(t, s, account, 7, "session", "model-a", http.Header{})
 	require.NotEqual(t, scopeA.record.ID, reenabledScope.record.ID)
 	require.NotEqual(t, scopeA.poolKey(), reenabledScope.poolKey())
-	_, err = s.replaceManagedUpstreamState(ctx, scopeA, stateA)
+	_, err = s.replaceManagedUpstreamState(ctx, scopeA, stateA, UpstreamStateTicket{})
 	require.ErrorIs(t, err, ErrUpstreamStateReplaceRejected)
 	headers = http.Header{}
-	require.NotNil(t, reenabledScope.begin(ctx, headers))
+	require.False(t, reenabledScope.inject(ctx, headers))
 	require.Empty(t, headers.Get(openAICodexTurnStateHeader))
 	require.Len(t, store.records, 2, "the unrelated pair remains cached alongside an inaccessible late write")
 	rows, err := s.settingService.UpstreamStateMatrix(ctx)

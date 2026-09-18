@@ -22,6 +22,7 @@ export interface UpstreamStateMatrixRow {
   model: string
   enabled: boolean
   cached: number
+  state_length: number
   digest?: string
   checked_at: number
   acquired_at: number
@@ -32,6 +33,7 @@ export interface UpstreamStateMatrixRow {
   validation: 'waiting' | 'normal' | 'extended' | 'missing' | 'mismatch' | 'invalid' | 'expired' | 'refresh_error'
   expiry_source?: 'fernet' | 'fallback'
   last_error?: string
+  last_refresh_at: number
 }
 
 export interface UpstreamStateActionResult {

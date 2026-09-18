@@ -26,7 +26,7 @@ const settings = {
 }
 const normalRow = {
   id: 'a'.repeat(64), account_id: 42, account_name: 'Account A', model: 'model-a', enabled: true,
-  cached: 1, digest: 'redacted1234', checked_at: Date.now(), acquired_at: Date.now(),
+  cached: 1, state_length: 292, last_refresh_at: 0, digest: 'redacted1234', checked_at: Date.now(), acquired_at: Date.now(),
   issued_at: Date.now(), upstream_expires_at: Date.now() + 60_000, rotation_at: Date.now() + 30_000,
   observed_length: 292, validation: 'normal' as const
 }
@@ -53,6 +53,7 @@ function button(suffix: string) {
 describe('UpstreamStateView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
     mocks.settings.mockResolvedValue({ ...settings })
     mocks.matrix.mockResolvedValue([{ ...normalRow }])
     mocks.setPair.mockResolvedValue({ ...settings, revision: 'pair-revision', pairs: [{ account_id: 42, model: 'model-a' }] })
@@ -84,6 +85,8 @@ describe('UpstreamStateView', () => {
   it('enables a pair from the card switch', async () => {
     mocks.matrix.mockResolvedValue([{ ...normalRow, enabled: false, cached: 0, digest: undefined, validation: 'waiting' }])
     await start()
+    expect(wrapper.find('[data-testid="state-cards"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="state-only-enabled"]').setValue(false)
     await wrapper.get('[role="switch"]').trigger('click')
     await flushPromises()
     expect(mocks.setPair).toHaveBeenCalledWith(expect.objectContaining({ account_id: 42, model: 'model-a' }), true, 'revision')
@@ -146,6 +149,91 @@ describe('UpstreamStateView', () => {
     await start()
     expect(wrapper.text()).toContain('.status.extended')
     expect(wrapper.get('[data-testid="state-cards"]').text()).toContain('308')
+  })
+
+  it('keeps a valid cached state available while showing a refresh failure separately', async () => {
+    mocks.matrix.mockResolvedValue([{
+      ...normalRow, validation: 'missing', observed_length: 0,
+      last_refresh_at: Date.now() - 60_000, last_error: 'HTTP 200 without X-Codex-Turn-State'
+    }])
+    await start()
+    const card = wrapper.get('[data-testid="state-cards"]')
+    expect(card.text()).toContain('.lastRefreshError')
+    expect(card.text()).toContain('HTTP 200 without X-Codex-Turn-State')
+    expect(card.text()).toContain('redacted1234')
+    expect(card.text()).toContain('.status.normal')
+    expect(card.text()).not.toContain('.status.missing')
+    expect(card.text()).toContain('292')
+  })
+
+  it('defaults cards and both filter menus to enabled pairs without disabled cross combinations', async () => {
+    mocks.matrix.mockResolvedValue([
+      { ...normalRow },
+      { ...normalRow, model: 'model-b', enabled: false },
+      { ...normalRow, account_id: 77, account_name: 'Account B', model: 'model-a', enabled: false },
+      { ...normalRow, account_id: 77, account_name: 'Account B', model: 'model-b' },
+      { ...normalRow, account_id: 88, account_name: 'Disabled account', model: 'disabled-model', enabled: false }
+    ])
+    await start()
+    expect(wrapper.findAll('[data-testid="state-cards"] article')).toHaveLength(2)
+    await wrapper.get('[data-testid="state-account-filter-trigger"]').trigger('click')
+    expect(wrapper.get('[data-testid="state-account-filter-menu"]').text()).not.toContain('Disabled account')
+    await wrapper.get('[data-testid="state-model-filter-trigger"]').trigger('click')
+    expect(wrapper.get('[data-testid="state-model-filter-menu"]').text()).not.toContain('disabled-model')
+    await wrapper.get('[data-testid="state-only-enabled"]').setValue(false)
+    expect(wrapper.findAll('[data-testid="state-cards"] article')).toHaveLength(5)
+    expect(wrapper.get('[data-testid="state-model-filter-menu"]').text()).toContain('disabled-model')
+  })
+
+  it('restores selected account and model after list refresh and page remount', async () => {
+    mocks.matrix.mockResolvedValue([
+      { ...normalRow },
+      { ...normalRow, account_id: 77, account_name: 'Account B', model: 'model-b' }
+    ])
+    await start()
+    await wrapper.get('[data-testid="state-account-filter-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="state-account-filter-menu"]').findAll('input')[1].setValue(true)
+    await wrapper.get('[data-testid="state-model-filter-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="state-model-filter-menu"]').findAll('input')[1].setValue(true)
+    await wrapper.get('[data-testid="state-list-refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="state-cards"]').text()).not.toContain('Account A')
+    wrapper.unmount()
+    await start()
+    expect(wrapper.get('[data-testid="state-cards"]').text()).not.toContain('Account A')
+    expect(wrapper.get('[data-testid="state-cards"]').text()).toContain('Account B')
+    await wrapper.get('[data-testid="state-account-filter-trigger"]').trigger('click')
+    expect((wrapper.get('[data-testid="state-account-filter-menu"]').findAll('input')[1].element as HTMLInputElement).checked).toBe(true)
+    await wrapper.get('[data-testid="state-model-filter-trigger"]').trigger('click')
+    expect((wrapper.get('[data-testid="state-model-filter-menu"]').findAll('input')[1].element as HTMLInputElement).checked).toBe(true)
+    expect(mocks.refresh).not.toHaveBeenCalled()
+  })
+
+  it('falls back to enabled-only defaults when saved filters are corrupt', async () => {
+    localStorage.setItem('sub2api:upstream-state:filters', '{broken')
+    mocks.matrix.mockResolvedValue([{ ...normalRow, enabled: false }])
+    await start()
+    expect((wrapper.get('[data-testid="state-only-enabled"]').element as HTMLInputElement).checked).toBe(true)
+    expect(wrapper.find('[data-testid="state-cards"]').exists()).toBe(false)
+  })
+
+  it('keeps the current page when the list reloads with unchanged filters', async () => {
+    mocks.matrix.mockResolvedValue(Array.from({ length: 13 }, (_, i) => ({
+      ...normalRow, account_id: i + 1, account_name: `Account #${i + 1}`
+    })))
+    await start()
+    await button('.next').trigger('click')
+    expect(wrapper.get('[data-testid="state-cards"]').text()).toContain('Account #13')
+    await wrapper.get('[data-testid="state-list-refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="state-cards"] article')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="state-cards"]').text()).toContain('Account #13')
+  })
+
+  it('shows expiry immediately without waiting for the next list reload', async () => {
+    mocks.matrix.mockResolvedValue([{ ...normalRow, upstream_expires_at: Date.now() - 1000 }])
+    await start()
+    expect(wrapper.get('[data-testid="state-cards"]').text()).toContain('.status.expired')
   })
 
 })

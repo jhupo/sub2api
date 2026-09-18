@@ -15,24 +15,18 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 		}
 	}
 	scope, _ := request.Context().Value(upstreamStateContextKey{}).(*upstreamStateScope)
-	stateAttempt := scope.begin(request.Context(), request.Header)
+	scope.inject(request.Context(), request.Header)
 	var response *http.Response
 	var err error
 	if s.pluginManager != nil {
 		var handled bool
 		response, handled, err = s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)
 		if handled {
-			if err == nil && response != nil {
-				stateAttempt.capture(request.Context(), response.StatusCode, response.Header)
-			}
 			s.observeOpenAIResponseQuota(request, account, response)
 			return response, err
 		}
 	}
 	response, err = s.httpUpstream.Do(request, proxyURL, account.ID, account.Concurrency)
-	if err == nil && response != nil {
-		stateAttempt.capture(request.Context(), response.StatusCode, response.Header)
-	}
 	s.observeOpenAIResponseQuota(request, account, response)
 	return response, err
 }

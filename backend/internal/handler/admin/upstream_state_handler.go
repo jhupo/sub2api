@@ -63,6 +63,10 @@ func (h *SettingHandler) SetUpstreamState(c *gin.Context) {
 			response.Error(c, 409, err.Error())
 			return
 		}
+		if errors.Is(err, service.ErrUpstreamStateReplaceRejected) {
+			response.Error(c, 409, err.Error())
+			return
+		}
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -86,6 +90,14 @@ func (h *SettingHandler) RefreshUpstreamState(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, service.ErrUpstreamStateRefreshBusy) {
 			response.Error(c, 409, err.Error())
+			return
+		}
+		if errors.Is(err, service.ErrUpstreamStateReplaceRejected) {
+			response.Error(c, 409, err.Error())
+			return
+		}
+		if errors.Is(err, service.ErrUpstreamStateRefreshFailed) {
+			response.Error(c, 502, err.Error())
 			return
 		}
 		response.BadRequest(c, err.Error())

@@ -9,9 +9,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 	"github.com/gin-gonic/gin"
 )
 
@@ -26,6 +29,7 @@ const (
 )
 
 var ErrUpstreamStateRefreshBusy = errors.New("state refresh is already running for this account and model")
+var ErrUpstreamStateRefreshFailed = errors.New("state refresh failed")
 
 type UpstreamStateActionResult struct {
 	AccountID         int64  `json:"account_id"`
@@ -109,7 +113,7 @@ func upstreamStateActionResult(record UpstreamStateRecord) *UpstreamStateActionR
 	}
 }
 
-func (s *OpenAIGatewayService) replaceManagedUpstreamState(ctx context.Context, scope *upstreamStateScope, state string) (*UpstreamStateActionResult, error) {
+func (s *OpenAIGatewayService) replaceManagedUpstreamState(ctx context.Context, scope *upstreamStateScope, state string, ticket UpstreamStateTicket) (*UpstreamStateActionResult, error) {
 	store := s.settingService.upstreamStateStore
 	currentConfig, err := scope.settings.GetUpstreamStateSettings(ctx)
 	if err != nil {
@@ -120,17 +124,10 @@ func (s *OpenAIGatewayService) replaceManagedUpstreamState(ctx context.Context, 
 		currentConfig.pairRevision(scope.record.AccountID, scope.record.Model) != scope.record.PairRevision {
 		return nil, ErrUpstreamStateReplaceRejected
 	}
-	current, ticket, err := store.Begin(ctx, scope.record.ID)
-	if err != nil {
-		return nil, err
-	}
 	record := buildUpstreamStateObservation(scope.record, state, scope.config, time.Now())
 	record.Sequence = ticket.Sequence
+	record.LastRefreshAt = record.CheckedAt
 	if record.Validation != upstreamStateValidationNormal {
-		if current != nil && current.State != "" {
-			record.State = ""
-		}
-		_ = store.Save(ctx, record, ticket)
 		return nil, fmt.Errorf("upstream returned %s state (%d bytes, expected %d)", record.Validation, record.ObservedLength, scope.config.ExpectedLength)
 	}
 	if err = store.Replace(ctx, record, ticket); err != nil {
@@ -139,28 +136,39 @@ func (s *OpenAIGatewayService) replaceManagedUpstreamState(ctx context.Context, 
 	return upstreamStateActionResult(record), nil
 }
 
-func (s *OpenAIGatewayService) recordManagedUpstreamStateFailure(ctx context.Context, scope *upstreamStateScope, message string) {
+func (s *OpenAIGatewayService) recordManagedUpstreamStateFailure(ctx context.Context, scope *upstreamStateScope, ticket UpstreamStateTicket, message string, observedLength int) {
 	if scope == nil || scope.record.ID == "" || scope.settings.upstreamStateStore == nil {
 		return
-	}
-	message = strings.TrimSpace(message)
-	if len(message) > 300 {
-		message = message[:300]
 	}
 	record := scope.record
 	now := time.Now()
 	record.CheckedAt = now.UnixMilli()
+	record.LastRefreshAt = record.CheckedAt
 	record.Validation = "refresh_error"
+	record.ObservedLength = observedLength
 	record.LastError = message
 	record.PurgeAt = now.Add(upstreamStateObservationTTL).UnixMilli()
 	storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
-	_, ticket, err := scope.settings.upstreamStateStore.Begin(storeCtx, record.ID)
-	if err != nil {
-		return
-	}
 	record.Sequence = ticket.Sequence
-	_ = scope.settings.upstreamStateStore.Save(storeCtx, record, ticket)
+	if err := scope.settings.upstreamStateStore.Save(storeCtx, record, ticket); err != nil {
+		slog.WarnContext(ctx, "upstream state refresh result could not be saved", "account_id", record.AccountID, "model", record.Model)
+	}
+}
+
+func managedUpstreamStateErrorMessage(err error, secrets ...string) string {
+	message := err.Error()
+	for _, secret := range secrets {
+		if secret != "" {
+			message = strings.ReplaceAll(message, secret, "[redacted]")
+		}
+	}
+	message = logredact.RedactText(sanitizeErrorMessage(message), "authorization", "state", "x-codex-turn-state", "api_key")
+	runes := []rune(strings.Join(strings.Fields(message), " "))
+	if len(runes) > 300 {
+		runes = append(runes[:300], '…')
+	}
+	return string(runes)
 }
 
 // SetManagedUpstreamState validates and atomically replaces the state for one
@@ -179,13 +187,21 @@ func (s *OpenAIGatewayService) SetManagedUpstreamState(ctx context.Context, acco
 	if err != nil {
 		return nil, err
 	}
-	return s.replaceManagedUpstreamState(ctx, scope, state)
+	_, ticket, err := s.settingService.upstreamStateStore.Begin(ctx, scope.record.ID)
+	if err != nil {
+		return nil, err
+	}
+	return s.replaceManagedUpstreamState(ctx, scope, state, ticket)
 }
 
 // RefreshManagedUpstreamState sends one real SSE request without a prior state.
 // Response headers arrive before the SSE body, so the body is closed as soon as
 // x-codex-turn-state is captured.
 func (s *OpenAIGatewayService) RefreshManagedUpstreamState(ctx context.Context, accountID int64, model string) (*UpstreamStateActionResult, error) {
+	return s.refreshManagedUpstreamState(ctx, accountID, model, false)
+}
+
+func (s *OpenAIGatewayService) refreshManagedUpstreamState(ctx context.Context, accountID int64, model string, automatic bool) (result *UpstreamStateActionResult, err error) {
 	account, cfg, err := s.validateManagedUpstreamStatePair(ctx, accountID, model)
 	if err != nil {
 		return nil, err
@@ -196,8 +212,8 @@ func (s *OpenAIGatewayService) RefreshManagedUpstreamState(ctx context.Context, 
 	}
 	defer release()
 
-	refreshCtx, cancel := context.WithTimeout(ctx, upstreamStateRefreshTimeout)
-	defer cancel()
+	refreshCtx, finish := context.WithTimeout(ctx, upstreamStateRefreshTimeout)
+	defer finish()
 	payload, err := json.Marshal(createOpenAITestPayload(strings.TrimSpace(model), true))
 	if err != nil {
 		return nil, err
@@ -206,61 +222,100 @@ func (s *OpenAIGatewayService) RefreshManagedUpstreamState(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	if err = s.prepareCodexAttemptIdentity(refreshCtx, c, account, payload); err != nil {
+	// Take the cache epoch before sending: a clear while the request is in
+	// flight must reject both its replacement and its failure observation.
+	current, ticket, err := s.settingService.upstreamStateStore.Begin(refreshCtx, scope.record.ID)
+	if err != nil {
 		return nil, err
 	}
-	token, _, err := s.GetAccessToken(refreshCtx, account)
+	// Recheck under the pair lock: a manual operation may have replaced this
+	// state while an earlier account/model was being processed by the runner.
+	if automatic && (!cfg.AutoReplaceEnabled || (current != nil && !upstreamStateRecordDue(*current, true, time.Now()))) {
+		return nil, nil
+	}
+	stage, egress := "access_token", "direct"
+	status, observedLength := 0, 0
+	var token, proxyURL, upstreamRequestID string
+	secrets := []string{cfg.WebshareAPIKey}
+	defer func() {
+		if err == nil || errors.Is(err, ErrUpstreamStateReplaceRejected) {
+			return
+		}
+		message := managedUpstreamStateErrorMessage(err, append(secrets, token, proxyURL)...)
+		err = fmt.Errorf("%w (%s): %s", ErrUpstreamStateRefreshFailed, stage, message)
+		s.recordManagedUpstreamStateFailure(ctx, scope, ticket, err.Error(), observedLength)
+		slog.WarnContext(ctx, "upstream state refresh failed", "account_id", accountID, "model", model,
+			"stage", stage, "egress", egress, "upstream_status", status,
+			"observed_length", observedLength, "upstream_request_id", upstreamRequestID,
+			"request_id", ctx.Value(ctxkey.RequestID), "error", err.Error())
+	}()
+	// Cancelling only the network context leaves the cache-write context live.
+	networkCtx, cancel := context.WithCancel(refreshCtx)
+	defer cancel()
+	token, _, err = s.GetAccessToken(networkCtx, account)
 	if err != nil {
-		s.recordManagedUpstreamStateFailure(refreshCtx, scope, err.Error())
 		return nil, err
 	}
-	req, err := s.buildUpstreamRequest(refreshCtx, c, account, payload, token, true, "", true)
+	stage = "build_request"
+	req, err := s.buildUpstreamRequest(networkCtx, c, account, payload, token, true, "", true)
 	if err != nil {
-		s.recordManagedUpstreamStateFailure(refreshCtx, scope, err.Error())
 		return nil, err
 	}
 	// A refresh request must not echo the currently cached state.
 	req.Header.Del(openAICodexTurnStateHeader)
+	// Avoid reading a compression header just to inspect response headers.
+	req.Header.Set("Accept-Encoding", "identity")
 	req = req.WithContext(context.WithValue(req.Context(), upstreamStateContextKey{}, (*upstreamStateScope)(nil)))
-	proxyURL := ""
 	if cfg.WebshareEnabled {
-		proxyURL, err = fetchWebshareRotatingProxyURL(refreshCtx, cfg, upstreamStateWebshareAPIBaseURL, &http.Client{Timeout: 10 * time.Second})
+		stage, egress = "webshare_lookup", "webshare"
+		proxyURL, err = fetchWebshareRotatingProxyURL(networkCtx, cfg, upstreamStateWebshareAPIBaseURL, &http.Client{Timeout: 10 * time.Second})
 		if err != nil {
-			s.recordManagedUpstreamStateFailure(refreshCtx, scope, err.Error())
 			return nil, err
 		}
 	} else if account.ProxyID != nil && account.Proxy != nil {
+		egress = "account_proxy"
 		proxyURL = account.Proxy.URL()
 	}
+	if proxy, parseErr := url.Parse(proxyURL); parseErr == nil && proxy.User != nil {
+		password, _ := proxy.User.Password()
+		secrets = append(secrets, proxy.User.String(), password)
+	}
+	stage = "request"
 	resp, err := s.doOpenAIUpstream(req, proxyURL, account)
 	if err != nil {
-		s.recordManagedUpstreamStateFailure(refreshCtx, scope, err.Error())
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	status = resp.StatusCode
+	upstreamRequestID = resp.Header.Get("X-Request-Id")
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		stage = "response_status"
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, upstreamStateErrorBodyLimit))
+		cancel()
+		_ = resp.Body.Close()
 		message := strings.TrimSpace(ExtractUpstreamErrorMessage(body))
 		if message == "" {
 			message = http.StatusText(resp.StatusCode)
 		}
 		err = fmt.Errorf("upstream refresh returned HTTP %d: %s", resp.StatusCode, message)
-		s.recordManagedUpstreamStateFailure(refreshCtx, scope, err.Error())
 		return nil, err
 	}
-	result, err := s.replaceManagedUpstreamState(refreshCtx, scope, resp.Header.Get(openAICodexTurnStateHeader))
-	if err != nil {
-		s.recordManagedUpstreamStateFailure(refreshCtx, scope, err.Error())
-		return nil, err
+	state := resp.Header.Get(openAICodexTurnStateHeader)
+	observedLength = len(strings.TrimSpace(state))
+	cancel()
+	_ = resp.Body.Close()
+	stage = "state_header"
+	if observedLength == 0 {
+		return nil, fmt.Errorf("upstream returned HTTP %d without X-Codex-Turn-State; no replacement was saved", status)
 	}
-	return result, nil
+	stage = "validate_and_store"
+	return s.replaceManagedUpstreamState(refreshCtx, scope, state, ticket)
 }
 
 func upstreamStateRecordDue(record UpstreamStateRecord, exists bool, now time.Time) bool {
 	if !exists {
 		return true
 	}
-	if record.CheckedAt > now.Add(-upstreamStateRefreshRetryDelay).UnixMilli() && (record.State == "" || record.RotationAt <= now.UnixMilli()) {
+	if record.LastRefreshAt > now.Add(-upstreamStateRefreshRetryDelay).UnixMilli() {
 		return false
 	}
 	return record.State == "" || record.UpstreamExpiresAt <= now.UnixMilli() || record.RotationAt <= now.UnixMilli()
@@ -285,10 +340,15 @@ func dueManagedUpstreamStatePairs(cfg UpstreamStateSettings, records []UpstreamS
 		record, ok := latest[pair]
 		if upstreamStateRecordDue(record, ok, now) {
 			due = append(due, pair)
-			if len(due) == limit {
-				break
-			}
 		}
+	}
+	// Unattempted/oldest pairs go first, so repeated failures near the front
+	// of the configured list cannot starve accounts beyond this cycle's limit.
+	sort.SliceStable(due, func(i, j int) bool {
+		return latest[due[i]].LastRefreshAt < latest[due[j]].LastRefreshAt
+	})
+	if len(due) > limit {
+		due = due[:limit]
 	}
 	return due
 }
@@ -320,7 +380,11 @@ func (s *OpenAIGatewayService) runDueManagedUpstreamStates(ctx context.Context) 
 		if ctx.Err() != nil {
 			return
 		}
-		if _, refreshErr := s.RefreshManagedUpstreamState(ctx, pair.AccountID, pair.Model); refreshErr != nil && !errors.Is(refreshErr, ErrUpstreamStateRefreshBusy) {
+		current, settingsErr := s.settingService.GetUpstreamStateSettings(ctx)
+		if settingsErr != nil || !current.Enabled || !current.AutoReplaceEnabled {
+			return
+		}
+		if _, refreshErr := s.refreshManagedUpstreamState(ctx, pair.AccountID, pair.Model, true); refreshErr != nil && !errors.Is(refreshErr, ErrUpstreamStateRefreshBusy) && !errors.Is(refreshErr, ErrUpstreamStateRefreshFailed) {
 			slog.Warn("upstream state replacement failed", "account_id", pair.AccountID, "model", pair.Model, "error", refreshErr)
 		}
 	}

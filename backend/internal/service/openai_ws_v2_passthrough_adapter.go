@@ -894,14 +894,13 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			return fmt.Errorf("refresh ws authentication headers: %w", err)
 		}
 		dialCtx, cancelDial := context.WithTimeout(ctx, s.openAIWSDialTimeout())
-		stateAttempt := stateResolution.upstreamState.begin(dialCtx, headers)
+		stateResolution.upstreamState.inject(dialCtx, headers)
 		upstreamConn, statusCode, handshakeHeaders, err = dialer.Dial(dialCtx, wsURL, headers, proxyURL)
 		cancelDial()
 		if account.UsesOpenAICodexProtocol() && !account.IsShadow() {
 			s.UpdateCodexUsageSnapshotFromHeaders(ctx, account.ID, handshakeHeaders)
 		}
 		if err == nil {
-			stateAttempt.capture(ctx, http.StatusSwitchingProtocols, handshakeHeaders)
 			break
 		}
 		var handshakeErr *openAIWSHandshakeError

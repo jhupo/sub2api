@@ -190,3 +190,97 @@ func TestUpstreamStateCacheReplaceRotatesValidStateAtomically(t *testing.T) {
 	require.Equal(t, "rotated", record.State)
 	require.Equal(t, rotated.AcquiredAt, record.AcquiredAt)
 }
+
+func TestUpstreamStateCacheTrafficPreservesRefreshFailure(t *testing.T) {
+	for _, initialState := range []string{"valid", ""} {
+		t.Run("initial="+initialState, func(t *testing.T) {
+			c, _ := newUpstreamStateCacheTest(t)
+			ctx := context.Background()
+			_, ticket, err := c.Begin(ctx, "scope")
+			require.NoError(t, err)
+			initial := stateCacheRecord("scope", initialState, ticket.Sequence)
+			require.NoError(t, c.Save(ctx, initial, ticket))
+			_, refresh, err := c.Begin(ctx, "scope")
+			require.NoError(t, err)
+			_, traffic, err := c.Begin(ctx, "scope")
+			require.NoError(t, err)
+			observation := stateCacheRecord("scope", "", traffic.Sequence)
+			observation.Validation = "missing"
+			require.NoError(t, c.Save(ctx, observation, traffic))
+			// Refresh started earlier but fails later. Its result must survive
+			// both newer in-flight observations and future ordinary responses.
+			failure := stateCacheRecord("scope", "", refresh.Sequence)
+			failure.LastError, failure.Validation = "HTTP 200 without state", "refresh_error"
+			failure.LastRefreshAt = time.Now().UnixMilli()
+			require.NoError(t, c.Save(ctx, failure, refresh))
+			for _, observedState := range []string{"", "new-passive-value"} {
+				_, next, err := c.Begin(ctx, "scope")
+				require.NoError(t, err)
+				observation := stateCacheRecord("scope", observedState, next.Sequence)
+				observation.CheckedAt = failure.LastRefreshAt + 1000
+				require.NoError(t, c.Save(ctx, observation, next))
+				record, _, err := c.Begin(ctx, "scope")
+				require.NoError(t, err)
+				require.Equal(t, failure.LastError, record.LastError)
+				require.Equal(t, failure.LastRefreshAt, record.LastRefreshAt)
+				if initialState != "" {
+					require.Equal(t, initialState, record.State)
+					require.Equal(t, initial.UpstreamExpiresAt, record.UpstreamExpiresAt)
+				}
+			}
+			_, replacement, err := c.Begin(ctx, "scope")
+			require.NoError(t, err)
+			rotated := stateCacheRecord("scope", "new-manual-value", replacement.Sequence)
+			rotated.LastRefreshAt = failure.LastRefreshAt + 2000
+			require.NoError(t, c.Replace(ctx, rotated, replacement))
+			record, _, err := c.Begin(ctx, "scope")
+			require.NoError(t, err)
+			require.Empty(t, record.LastError)
+			require.Equal(t, rotated.LastRefreshAt, record.LastRefreshAt)
+		})
+	}
+}
+
+func TestUpstreamStateCacheReplaceEnforcesCapacity(t *testing.T) {
+	c, mr := newUpstreamStateCacheTest(t)
+	ctx := context.Background()
+	for i := 0; i < 4096; i++ {
+		id := fmt.Sprint(i)
+		mr.HSet(upstreamStateKeys[0], id, `{"id":"`+id+`"}`)
+		_, err := mr.ZAdd(upstreamStateKeys[1], float64(time.Now().Add(time.Minute).UnixMilli()), id)
+		require.NoError(t, err)
+	}
+	_, ticket, err := c.Begin(ctx, "replacement")
+	require.NoError(t, err)
+	require.NoError(t, c.Replace(ctx, stateCacheRecord("replacement", "value", ticket.Sequence), ticket))
+	rows, err := c.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, rows, 4096)
+	record, _, err := c.Begin(ctx, "replacement")
+	require.NoError(t, err)
+	require.Equal(t, "value", record.State)
+}
+
+func TestUpstreamStateCacheGetDoesNotModifyRefreshMetadata(t *testing.T) {
+	c, mr := newUpstreamStateCacheTest(t)
+	ctx := context.Background()
+	record, err := c.Get(ctx, "scope")
+	require.NoError(t, err)
+	require.Nil(t, record)
+	_, ticket, err := c.Begin(ctx, "scope")
+	require.NoError(t, err)
+	saved := stateCacheRecord("scope", "state", ticket.Sequence)
+	saved.LastRefreshAt, saved.Validation = saved.CheckedAt, "normal"
+	require.NoError(t, c.Replace(ctx, saved, ticket))
+	sequence, err := c.rdb.Get(ctx, upstreamStateKeys[3]).Result()
+	require.NoError(t, err)
+	for range 3 {
+		record, err = c.Get(ctx, "scope")
+		require.NoError(t, err)
+		require.Equal(t, saved, *record)
+	}
+	current, err := c.rdb.Get(ctx, upstreamStateKeys[3]).Result()
+	require.NoError(t, err)
+	require.Equal(t, sequence, current)
+	require.Equal(t, 3660*time.Second, mr.TTL(upstreamStateKeys[0]))
+}
