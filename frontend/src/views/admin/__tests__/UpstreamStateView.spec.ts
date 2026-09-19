@@ -25,6 +25,7 @@ const settings = {
   revision: 'revision', state_revision: 'state-revision', pairs: []
 }
 const normalRow = {
+  refresh_paused: false,
   id: 'a'.repeat(64), account_id: 42, account_name: 'Account A', model: 'model-a', enabled: true,
   cached: 1, state_length: 292, last_refresh_at: 0, digest: 'redacted1234', checked_at: Date.now(), acquired_at: Date.now(),
   issued_at: Date.now(), upstream_expires_at: Date.now() + 60_000, rotation_at: Date.now() + 30_000,
@@ -51,6 +52,13 @@ function button(suffix: string) {
 }
 
 describe('UpstreamStateView', () => {
+  it('shows paused automation without hiding the saved state or manual refresh', async () => {
+    mocks.matrix.mockResolvedValue([{ ...normalRow, refresh_paused: true }])
+    await start()
+    expect(wrapper.text()).toContain('refreshPausedHint')
+    expect(wrapper.text()).toContain('redacted1234')
+    expect(button('refreshNow').attributes('disabled')).toBeUndefined()
+  })
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()

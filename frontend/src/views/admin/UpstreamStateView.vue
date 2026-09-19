@@ -94,7 +94,7 @@
             </div>
             <div class="rounded-2xl border border-slate-200/80 bg-slate-50/85 p-3 dark:border-dark-700/50 dark:bg-dark-900/40">
               <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{{ t(`${key}.nextRotation`) }}</div>
-              <div class="mt-1.5 font-mono text-base font-bold tabular-nums text-gray-900 dark:text-gray-100">{{ row.rotation_at ? remaining(row.rotation_at) : '—' }}</div>
+              <div class="mt-1.5 font-mono text-base font-bold tabular-nums text-gray-900 dark:text-gray-100">{{ row.refresh_paused ? t(`${key}.refreshPaused`) : row.rotation_at ? remaining(row.rotation_at) : '—' }}</div>
             </div>
           </div>
 
@@ -107,6 +107,7 @@
             <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
               <div class="h-full rounded-full transition-all" :class="progressClass(row)" :style="{ width: `${progress(row)}%` }"></div>
             </div>
+            <p v-if="row.refresh_paused" class="mt-2 text-[11px] text-amber-600 dark:text-amber-400">{{ t(`${key}.refreshPausedHint`) }}</p>
             <div v-if="row.last_error" class="mt-2 text-[11px] text-red-600 dark:text-red-400">
               <p>{{ t(`${key}.lastRefreshError`) }}<span v-if="row.last_refresh_at"> · {{ new Date(row.last_refresh_at).toLocaleString(locale) }}</span></p>
               <p class="line-clamp-2" :title="row.last_error">{{ row.last_error }}</p>

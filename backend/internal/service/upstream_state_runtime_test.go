@@ -18,6 +18,57 @@ type managedStateRefreshHTTP struct {
 	do func(*http.Request, string) (*http.Response, error)
 }
 
+func TestManagedUpstreamStateQuotaPauseAndRecovery(t *testing.T) {
+	now := time.Now()
+	for _, window := range []string{"5h", "7d"} {
+		t.Run(window, func(t *testing.T) {
+			a := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{
+				"codex_" + window + "_used_percent": 100.0,
+				"codex_" + window + "_reset_at":     now.Add(time.Hour).Format(time.RFC3339),
+			}}
+			require.True(t, upstreamStateRefreshPaused(a, "model", now))
+			require.False(t, upstreamStateRefreshPaused(a, "model", now.Add(2*time.Hour)))
+			a.Extra["codex_"+window+"_used_percent"] = 20.0
+			require.False(t, upstreamStateRefreshPaused(a, "model", now))
+		})
+	}
+}
+
+func TestManagedUpstreamStatePausedPairsDoNotBlockQueue(t *testing.T) {
+	s, store, account := managedStateRefreshService(t)
+	ctx := context.Background()
+	repo := s.accountRepo.(*managedStateAccountRepo)
+	reset := time.Now().Add(time.Hour)
+	repo.accounts[0].RateLimitResetAt = &reset
+	other := *account
+	other.ID = 43
+	repo.accounts = append(repo.accounts, other)
+	cfg, err := s.settingService.GetUpstreamStateSettings(ctx)
+	require.NoError(t, err)
+	cfg.Pairs = []UpstreamStatePair{{account.ID, "a"}, {account.ID, "b"}, {account.ID, "c"}, {account.ID, "d"}, {43, "model"}}
+	_, err = s.settingService.SetUpstreamStateSettings(ctx, cfg)
+	require.NoError(t, err)
+	calls := 0
+	s.httpUpstream = &managedStateRefreshHTTP{do: func(_ *http.Request, _ string) (*http.Response, error) {
+		calls++
+		return nil, errors.New("test request failed")
+	}}
+	result, err := s.refreshManagedUpstreamState(ctx, account.ID, "a", true)
+	require.NoError(t, err)
+	require.Nil(t, result)
+	require.Empty(t, store.records)
+	require.Zero(t, calls)
+	s.runDueManagedUpstreamStates(ctx)
+	require.Equal(t, 1, calls, "paused pairs must not consume the queue budget")
+	require.Len(t, store.records, 1)
+	_, err = s.RefreshManagedUpstreamState(ctx, account.ID, "a")
+	require.ErrorIs(t, err, ErrUpstreamStateRefreshFailed)
+	require.Equal(t, 2, calls, "explicit manual refresh remains available")
+	repo.accounts[0].RateLimitResetAt = nil
+	s.runDueManagedUpstreamStates(ctx)
+	require.Greater(t, calls, 2, "recovered accounts automatically resume")
+}
+
 func (u *managedStateRefreshHTTP) Do(req *http.Request, proxy string, _ int64, _ int) (*http.Response, error) {
 	return u.do(req, proxy)
 }

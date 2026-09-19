@@ -81,6 +81,8 @@ export default {
   "check": "最近长度检查",
   "checked": "检查时间",
   "nextRotation": "最早轮换倒计时",
+  "refreshPaused": "已暂停",
+  "refreshPausedHint": "账号额度耗尽或仍在限流，自动刷新已暂停；额度重置或限流解除后自动恢复。手动刷新仍可尝试。",
   "search": "搜索账号、编号或模型",
   "noAccounts": "暂无匹配的 OpenAI OAuth 账号与模型。",
   "globalOn": "总开关已开启；请在下表选择需要管理的账号与模型。",

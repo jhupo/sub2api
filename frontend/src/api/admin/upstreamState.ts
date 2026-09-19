@@ -18,6 +18,7 @@ export interface UpstreamStateSettings {
 }
 
 export interface UpstreamStateMatrixRow {
+  refresh_paused: boolean
   id?: string
   account_id: number
   account_name: string

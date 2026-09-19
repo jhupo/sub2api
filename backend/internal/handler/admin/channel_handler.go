@@ -625,7 +625,7 @@ func (h *ChannelHandler) GetModelDefaultPricing(c *gin.Context) {
 	})
 }
 
-// SyncPricingModels returns the models exposed by sub2api for a platform.
+// SyncPricingModels returns a platform's billing model catalog.
 // GET /api/v1/admin/channels/pricing/sync-models?platform=anthropic
 func (h *ChannelHandler) SyncPricingModels(c *gin.Context) {
 	platform := strings.ToLower(strings.TrimSpace(c.Query("platform")))
@@ -635,7 +635,7 @@ func (h *ChannelHandler) SyncPricingModels(c *gin.Context) {
 		return
 	}
 
-	models := service.BuiltInModelIDsForPlatform(platform)
+	models := h.billingService.ChannelPricingModelIDs(platform)
 	if models == nil || platform == service.PlatformComposite {
 		response.ErrorFrom(c, infraerrors.BadRequest("UNSUPPORTED_PLATFORM",
 			fmt.Sprintf("unsupported platform: %s", platform)).

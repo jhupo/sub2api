@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -515,7 +516,7 @@ func TestPricingToResponse_TimePricingNil(t *testing.T) {
 func setupSyncPricingModelsRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	h := &ChannelHandler{}
+	h := &ChannelHandler{billingService: service.NewBillingService(nil, nil)}
 	router.GET("/channels/pricing/sync-models", h.SyncPricingModels)
 	return router
 }
@@ -558,7 +559,25 @@ func TestSyncPricingModels_ReturnsBuiltInPlatformCatalog(t *testing.T) {
 			} `json:"data"`
 		}
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-		require.Equal(t, service.BuiltInModelIDsForPlatform(platform), body.Data.Models, "platform=%s", platform)
+		switch platform {
+		case "deepseek":
+			require.Contains(t, body.Data.Models, "deepseek-v4.1-flash")
+			for _, model := range body.Data.Models {
+				require.True(t, strings.HasPrefix(model, "deepseek-"), model)
+			}
+		case "kimi":
+			require.Contains(t, body.Data.Models, "kimi-k3")
+			for _, model := range body.Data.Models {
+				require.False(t, strings.HasPrefix(model, "claude-"), model)
+			}
+		case "zhipu":
+			require.Contains(t, body.Data.Models, "glm-5.2")
+			for _, model := range body.Data.Models {
+				require.True(t, strings.HasPrefix(model, "glm-"), model)
+			}
+		default:
+			require.Equal(t, service.BuiltInModelIDsForPlatform(platform), body.Data.Models, "platform=%s", platform)
+		}
 	}
 }
 

@@ -81,6 +81,8 @@ export default {
   "check": "Latest length check",
   "checked": "Checked at",
   "nextRotation": "Earliest rotation",
+  "refreshPaused": "Paused",
+  "refreshPausedHint": "Automatic refresh is paused while quota is exhausted or rate limited, and resumes after reset or recovery. Manual refresh is still available.",
   "search": "Search account, ID or model",
   "noAccounts": "No matching OpenAI OAuth accounts and models.",
   "globalOn": "Globally enabled. Select the account/model pairs to manage below.",

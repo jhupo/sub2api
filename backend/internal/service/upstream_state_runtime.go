@@ -202,10 +202,43 @@ func (s *OpenAIGatewayService) RefreshManagedUpstreamState(ctx context.Context, 
 	return s.refreshManagedUpstreamState(ctx, accountID, model, false)
 }
 
+// Pausing automation must neither discard a valid state nor advance its retry clock.
+// Read the account's own quota snapshot (including independent shadow accounts).
+func upstreamStateRefreshPaused(account *Account, model string, now time.Time) bool {
+	if account == nil {
+		return true
+	}
+	if account.RateLimitResetAt != nil && now.Before(*account.RateLimitResetAt) {
+		return true
+	}
+	if account.isModelRateLimitedWithContext(context.Background(), model) {
+		return true
+	}
+	if !openAICodexSnapshotIdentityTrusted(account) {
+		return false
+	}
+	for _, window := range []string{"5h", "7d"} {
+		if readOpenAIQuotaUsedPercent(account.Extra, window) < 100 {
+			continue
+		}
+		if resetAt, known := openAICodexWindowResetAt(account.Extra, window); known {
+			if now.Before(resetAt) {
+				return true
+			}
+		} else if !openAICodexSnapshotStaleForPause(account.Extra, now) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *OpenAIGatewayService) refreshManagedUpstreamState(ctx context.Context, accountID int64, model string, automatic bool) (result *UpstreamStateActionResult, err error) {
 	account, cfg, err := s.validateManagedUpstreamStatePair(ctx, accountID, model)
 	if err != nil {
 		return nil, err
+	}
+	if automatic && (!cfg.AutoReplaceEnabled || upstreamStateRefreshPaused(account, model, time.Now())) {
+		return nil, nil
 	}
 	release, err := s.lockManagedUpstreamState(ctx, accountID, model)
 	if err != nil {
@@ -367,7 +400,7 @@ func dueManagedUpstreamStatePairs(cfg UpstreamStateSettings, records []UpstreamS
 }
 
 func (s *OpenAIGatewayService) runDueManagedUpstreamStates(ctx context.Context) {
-	if s == nil || s.settingService == nil || s.settingService.upstreamStateStore == nil {
+	if s == nil || s.accountRepo == nil || s.settingService == nil || s.settingService.upstreamStateStore == nil {
 		return
 	}
 	cfg, err := s.settingService.GetUpstreamStateSettings(ctx)
@@ -388,15 +421,23 @@ func (s *OpenAIGatewayService) runDueManagedUpstreamStates(ctx context.Context) 
 	if err != nil {
 		return
 	}
-	due := dueManagedUpstreamStatePairs(cfg, records, time.Now(), upstreamStateRunnerMaxPerCycle)
+	// Apply the per-cycle budget only to eligible pairs, otherwise exhausted
+	// accounts at the head of the queue would starve the remaining accounts.
+	due := dueManagedUpstreamStatePairs(cfg, records, time.Now(), len(cfg.Pairs))
+	attempts := 0
 	for _, pair := range due {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || attempts >= upstreamStateRunnerMaxPerCycle {
 			return
 		}
 		current, settingsErr := s.settingService.GetUpstreamStateSettings(ctx)
 		if settingsErr != nil || !current.Enabled || !current.AutoReplaceEnabled {
 			return
 		}
+		account, accountErr := s.accountRepo.GetByID(ctx, pair.AccountID)
+		if accountErr != nil || upstreamStateRefreshPaused(account, pair.Model, time.Now()) {
+			continue
+		}
+		attempts++
 		if _, refreshErr := s.refreshManagedUpstreamState(ctx, pair.AccountID, pair.Model, true); refreshErr != nil && !errors.Is(refreshErr, ErrUpstreamStateRefreshBusy) && !errors.Is(refreshErr, ErrUpstreamStateRefreshFailed) {
 			slog.Warn("upstream state replacement failed", "account_id", pair.AccountID, "model", pair.Model, "error", refreshErr)
 		}

@@ -323,6 +323,7 @@ type UpstreamStateMatrixRow struct {
 	AccountName       string `json:"account_name"`
 	Model             string `json:"model"`
 	Enabled           bool   `json:"enabled"`
+	RefreshPaused     bool   `json:"refresh_paused"`
 	Cached            int    `json:"cached"`
 	StateLength       int    `json:"state_length"`
 	Digest            string `json:"digest,omitempty"`
@@ -404,6 +405,7 @@ func (s *SettingService) UpstreamStateMatrix(ctx context.Context) ([]UpstreamSta
 		for model := range models {
 			pair := UpstreamStatePair{a.ID, model}
 			row := UpstreamStateMatrixRow{AccountID: a.ID, AccountName: a.Name, Model: model, Enabled: enabled[pair], Validation: "waiting"}
+			row.RefreshPaused = cfg.Enabled && cfg.AutoReplaceEnabled && row.Enabled && upstreamStateRefreshPaused(&a, model, time.UnixMilli(now))
 			for _, r := range observations[pair] {
 				if r.CheckedAt > row.CheckedAt {
 					row.ID, row.CheckedAt, row.ObservedLength, row.Validation, row.ExpirySource, row.LastError = r.ID, r.CheckedAt, r.ObservedLength, r.Validation, r.ExpirySource, r.LastError

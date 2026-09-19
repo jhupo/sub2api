@@ -193,7 +193,7 @@ export interface SyncPricingModelsResult {
 }
 
 /**
- * Fetch the model names exposed by sub2api for the given platform
+ * Fetch billing model names for the given platform from the server's current catalog
  */
 export async function syncPricingModels(platform: string): Promise<SyncPricingModelsResult> {
   const { data } = await apiClient.get<SyncPricingModelsResult>('/admin/channels/pricing/sync-models', {
