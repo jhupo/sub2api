@@ -37,7 +37,8 @@ func TestManagedUpstreamStateQuotaPauseAndRecovery(t *testing.T) {
 func TestManagedUpstreamStatePausedPairsDoNotBlockQueue(t *testing.T) {
 	s, store, account := managedStateRefreshService(t)
 	ctx := context.Background()
-	repo := s.accountRepo.(*managedStateAccountRepo)
+	repo, ok := s.accountRepo.(*managedStateAccountRepo)
+	require.True(t, ok)
 	reset := time.Now().Add(time.Hour)
 	repo.accounts[0].RateLimitResetAt = &reset
 	other := *account

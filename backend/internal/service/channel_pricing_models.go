@@ -20,9 +20,10 @@ func (s *BillingService) ChannelPricingModelIDs(platform string) []string {
 		if provider, id, qualified := strings.Cut(model, "/"); qualified {
 			// Only unwrap the original provider, never a reseller's catalog.
 			provider = strings.ToLower(provider)
-			if !((platform == PlatformDeepseek && provider == "deepseek") ||
+			matchesProvider := (platform == PlatformDeepseek && provider == "deepseek") ||
 				(platform == PlatformKimi && (provider == "moonshot" || provider == "moonshotai" || provider == "kimi")) ||
-				(platform == PlatformZhipu && (provider == "zai" || provider == "zai_glm" || provider == "zhipu"))) {
+				(platform == PlatformZhipu && (provider == "zai" || provider == "zai_glm" || provider == "zhipu"))
+			if !matchesProvider {
 				return
 			}
 			model = id
