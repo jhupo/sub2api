@@ -500,6 +500,16 @@ func (s *BillingService) initFallbackPricing() {
 		SupportsCacheBreakdown: false,
 	}
 
+	// DeepSeek V4.1 Flash uses the official deepseek-flash price card.
+	// Source: https://api-docs.deepseek.com/quick_start/pricing/ (2026-09-19).
+	// Base/peak USD rates; provider off-peak discounts are not implicit retail discounts.
+	s.fallbackPrices["deepseek-flash"] = &ModelPricing{
+		InputPricePerToken:     0.30e-6,
+		OutputPricePerToken:    1.20e-6,
+		CacheReadPricePerToken: 0.006e-6,
+		SupportsCacheBreakdown: false,
+	}
+
 	// ---- 智谱 GLM（Z.AI）----
 	// Source: https://docs.z.ai/guides/overview/pricing (USD per 1M tokens)
 	// 注意：CacheReadPricePerToken 即"缓存命中"价格，CacheCreationPricePerToken 留空（智谱未公开写入价，按 0 处理）。
@@ -823,6 +833,9 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 
 	// DeepSeek V4 系列：仅匹配已知 V4 Pro/Flash 与官方兼容别名
 	// （deepseek-chat / deepseek-reasoner → V4 Flash），未知 deepseek-* 型号不回退，避免误计价。
+	if canonical := deepSeekFlashPricingModel(modelLower); canonical != "" {
+		return s.fallbackPrices[canonical]
+	}
 	if strings.Contains(modelLower, "deepseek-v4-flash") {
 		return s.fallbackPrices["deepseek-v4-flash"]
 	}
@@ -1055,6 +1068,9 @@ func (s *BillingService) HasIdentifiedTokenPricing(model string) bool {
 		}
 	}
 	pricing, ok := s.fallbackPrices[model]
+	if !ok {
+		pricing, ok = s.fallbackPrices[deepSeekFlashPricingModel(model)]
+	}
 	if !ok {
 		pricing, ok = s.fallbackPrices[normalizeGeminiThinkingTierAlias(model)]
 	}

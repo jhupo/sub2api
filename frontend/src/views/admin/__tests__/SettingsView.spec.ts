@@ -106,11 +106,11 @@ const {
 }));
 
 const stateSettings = vi.hoisted(() => ({
-  settings: vi.fn().mockResolvedValue({
-    enabled: false, auto_replace_enabled: true, ttl_minutes: 40, expected_length: 292,
+  settings: vi.fn().mockImplementation(async () => ({
+    enabled: false, auto_replace_enabled: true, ttl_minutes: 40, rotation_lead_minutes: 10, retry_interval_minutes: 5, expected_length: 292,
     webshare_enabled: false, webshare_api_key_configured: false, webshare_country_mode: 'random', webshare_countries: [],
     revision: '', state_revision: '', pairs: []
-  }),
+  })),
   save: vi.fn().mockImplementation(async (payload) => payload),
 }));
 vi.mock("@/api/admin/upstreamState", () => ({ upstreamStateApi: stateSettings }));
@@ -889,7 +889,7 @@ describe("admin SettingsView payment visible method controls", () => {
 
   it("saves the upstream state global switch while preserving pair policies", async () => {
     const cfg = {
-      enabled: false, auto_replace_enabled: true, ttl_minutes: 30, expected_length: 292,
+      enabled: false, auto_replace_enabled: true, ttl_minutes: 30, rotation_lead_minutes: 10, retry_interval_minutes: 5, expected_length: 292,
       webshare_enabled: false, webshare_api_key_configured: false, webshare_country_mode: 'random' as const, webshare_countries: [],
       revision: 'current', state_revision: 'state-current', pairs: [{ account_id: 42, model: 'gpt-5.5' }]
     };
@@ -904,7 +904,7 @@ describe("admin SettingsView payment visible method controls", () => {
 
   it("saves Webshare rotating residential credentials with the state settings", async () => {
     const cfg = {
-      enabled: true, auto_replace_enabled: true, ttl_minutes: 40, expected_length: 292,
+      enabled: true, auto_replace_enabled: true, ttl_minutes: 40, rotation_lead_minutes: 10, retry_interval_minutes: 5, expected_length: 292,
       webshare_enabled: false, webshare_api_key_configured: false, webshare_country_mode: 'random' as const, webshare_countries: [],
       revision: 'current', state_revision: 'state-current', pairs: []
     };
@@ -926,6 +926,42 @@ describe("admin SettingsView payment visible method controls", () => {
       webshare_countries: ['US', 'JP'],
       webshare_api_key: 'api-secret'
     });
+  });
+
+  it.each([
+    ['rotation_lead_minutes', 0],
+    ['retry_interval_minutes', 17],
+  ])("saves a change to only the State timing field %s", async (field, value) => {
+    const cfg = {
+      enabled: true, auto_replace_enabled: true, ttl_minutes: 40,
+      rotation_lead_minutes: 10, retry_interval_minutes: 5, expected_length: 292,
+      webshare_enabled: false, webshare_api_key_configured: false, webshare_country_mode: 'random' as const, webshare_countries: [],
+      revision: 'current', state_revision: 'state-current', pairs: [{ account_id: 42, model: 'gpt-5.5' }]
+    };
+    stateSettings.settings.mockResolvedValueOnce(cfg);
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.get(`[data-testid="feature-upstream-state-${field}"]`).setValue(value);
+    await wrapper.find('form').trigger('submit.prevent');
+    await flushPromises();
+    expect(stateSettings.save).toHaveBeenCalledWith({ ...cfg, [field]: value, webshare_api_key: undefined });
+  });
+
+  it.each([
+    ['rotation_lead_minutes', -1],
+    ['rotation_lead_minutes', 31],
+    ['retry_interval_minutes', 0],
+    ['retry_interval_minutes', 61],
+    ['retry_interval_minutes', 1.5],
+  ])("rejects invalid State timing %s=%s", async (field, value) => {
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.get('[data-testid="feature-upstream-state"]').setValue(true);
+    await wrapper.get(`[data-testid="feature-upstream-state-${field}"]`).setValue(value);
+    await wrapper.find('form').trigger('submit.prevent');
+    await flushPromises();
+    expect(stateSettings.save).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalled();
   });
 
   it("keeps the settings page usable when access blocking cannot be loaded", async () => {

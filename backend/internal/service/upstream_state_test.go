@@ -106,16 +106,16 @@ func TestUpstreamStateTokenTimestampAndLengthValidation(t *testing.T) {
 
 func TestUpstreamStateRotationUsesFernetExpiryThenConfiguredFallback(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
-	cfg := UpstreamStateSettings{TTLMinutes: 40, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeRandom}
+	cfg := UpstreamStateSettings{TTLMinutes: 40, RotationLeadMinutes: 10, RetryIntervalMinutes: 5, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeRandom}
 	fernet := buildUpstreamStateObservation(UpstreamStateRecord{}, testUpstreamStateAt(t, now, 292), cfg, now)
 	require.Equal(t, "fernet", fernet.ExpirySource)
 	require.Equal(t, now.Add(time.Hour).UnixMilli(), fernet.UpstreamExpiresAt)
-	require.Equal(t, now.Add(50*time.Minute).UnixMilli(), fernet.RotationAt)
+	require.Equal(t, now.Add(40*time.Minute).UnixMilli(), fernet.RotationAt)
 
 	fallback := buildUpstreamStateObservation(UpstreamStateRecord{}, strings.Repeat("x", 292), cfg, now)
 	require.Equal(t, "fallback", fallback.ExpirySource)
 	require.Equal(t, now.Add(40*time.Minute).UnixMilli(), fallback.UpstreamExpiresAt)
-	require.Equal(t, now.Add(30*time.Minute).UnixMilli(), fallback.RotationAt)
+	require.Equal(t, now.Add(40*time.Minute).UnixMilli(), fallback.RotationAt)
 }
 
 func TestDueManagedUpstreamStatePairsRequiresAutomaticReplacementAndPairOptIn(t *testing.T) {
@@ -133,6 +133,7 @@ func TestDueManagedUpstreamStatePairsRequiresAutomaticReplacementAndPairOptIn(t 
 	otherDueRecord := dueRecord
 	otherDueRecord.Model = notEnabledPair.Model
 	cfg := UpstreamStateSettings{
+		RotationLeadMinutes: 10, RetryIntervalMinutes: 5,
 		Enabled:            true,
 		AutoReplaceEnabled: true,
 		Pairs:              []UpstreamStatePair{enabledPair},
@@ -173,7 +174,7 @@ func managedStateService(t *testing.T) (*OpenAIGatewayService, *managedStateTest
 	repo := &managedStateSettingsRepo{}
 	settings := NewSettingService(repo, &config.Config{})
 	settings.upstreamStateStore = store
-	_, err := settings.SetUpstreamStateSettings(context.Background(), UpstreamStateSettings{Enabled: true, AutoReplaceEnabled: true, TTLMinutes: 40, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeRandom, Pairs: []UpstreamStatePair{{42, "model"}, {42, "model-a"}, {42, "model-b"}, {42, "final-model"}, {43, "model-a"}}})
+	_, err := settings.SetUpstreamStateSettings(context.Background(), UpstreamStateSettings{Enabled: true, AutoReplaceEnabled: true, TTLMinutes: 40, RotationLeadMinutes: 10, RetryIntervalMinutes: 5, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeRandom, Pairs: []UpstreamStatePair{{42, "model"}, {42, "model-a"}, {42, "model-b"}, {42, "final-model"}, {43, "model-a"}}})
 	require.NoError(t, err)
 	account := &Account{ID: 42, Name: "test-account", Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"chatgpt_account_id": "credential-a"}}
 	return &OpenAIGatewayService{settingService: settings, cfg: &config.Config{}}, store, account
@@ -236,7 +237,7 @@ func TestUpstreamStateInjectionAndDisabledBehavior(t *testing.T) {
 	store.fail = true
 	require.False(t, scope.inject(ctx, h))
 	require.Empty(t, h.Get(openAICodexTurnStateHeader))
-	_, err := s.settingService.SetUpstreamStateSettings(ctx, UpstreamStateSettings{AutoReplaceEnabled: true, TTLMinutes: 40, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeRandom, Revision: scope.config.Revision})
+	_, err := s.settingService.SetUpstreamStateSettings(ctx, UpstreamStateSettings{AutoReplaceEnabled: true, TTLMinutes: 40, RotationLeadMinutes: 10, RetryIntervalMinutes: 5, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeRandom, Revision: scope.config.Revision})
 	require.NoError(t, err)
 	// A retained scope in the WS prewarm pool cannot act after disabling.
 	require.False(t, scope.inject(ctx, h))
@@ -339,7 +340,7 @@ func TestUpstreamStateAdminRedactsAndRevisions(t *testing.T) {
 	cfg.TTLMinutes = 20
 	cfg, err = s.settingService.SetUpstreamStateSettings(ctx, cfg)
 	require.NoError(t, err)
-	require.Equal(t, previousStateRevision, cfg.StateRevision, "fallback timing does not invalidate Fernet-backed state")
+	require.Equal(t, previousStateRevision, cfg.StateRevision, "rotation timing does not invalidate Fernet-backed state")
 	rows, err = s.settingService.UpstreamStateMatrix(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, modelRowForTest(t, rows, "model").Cached)
@@ -353,16 +354,16 @@ func TestUpstreamStateAdminRedactsAndRevisions(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, modelRowForTest(t, rows, "model").Cached)
 	for _, cfg := range []UpstreamStateSettings{
-		{TTLMinutes: 0, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeRandom},
-		{TTLMinutes: 61, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeRandom},
-		{TTLMinutes: 40, ExpectedLength: 0, WebshareCountryMode: webshareCountryModeRandom},
-		{TTLMinutes: 40, ExpectedLength: 8193, WebshareCountryMode: webshareCountryModeRandom},
-		{TTLMinutes: 40, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeSpecified},
-		{TTLMinutes: 40, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeSpecified, WebshareCountries: []string{"us"}},
+		{TTLMinutes: 0, RotationLeadMinutes: 10, RetryIntervalMinutes: 5, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeRandom},
+		{TTLMinutes: 61, RotationLeadMinutes: 10, RetryIntervalMinutes: 5, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeRandom},
+		{TTLMinutes: 40, RotationLeadMinutes: 10, RetryIntervalMinutes: 5, ExpectedLength: 0, WebshareCountryMode: webshareCountryModeRandom},
+		{TTLMinutes: 40, RotationLeadMinutes: 10, RetryIntervalMinutes: 5, ExpectedLength: 8193, WebshareCountryMode: webshareCountryModeRandom},
+		{TTLMinutes: 40, RotationLeadMinutes: 10, RetryIntervalMinutes: 5, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeSpecified},
+		{TTLMinutes: 40, RotationLeadMinutes: 10, RetryIntervalMinutes: 5, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeSpecified, WebshareCountries: []string{"us"}},
 	} {
 		require.Error(t, cfg.Validate())
 	}
-	require.NoError(t, (UpstreamStateSettings{TTLMinutes: 40, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeSpecified, WebshareCountries: []string{"US", "JP"}}).Validate())
+	require.NoError(t, (UpstreamStateSettings{TTLMinutes: 40, RotationLeadMinutes: 10, RetryIntervalMinutes: 5, ExpectedLength: 292, WebshareCountryMode: webshareCountryModeSpecified, WebshareCountries: []string{"US", "JP"}}).Validate())
 }
 
 func modelRowForTest(t *testing.T, rows []UpstreamStateMatrixRow, model string) *UpstreamStateMatrixRow {
@@ -566,4 +567,58 @@ func TestUpstreamStatePairTogglePreservesOtherPairCache(t *testing.T) {
 	records, err := store.List(ctx)
 	require.NoError(t, err)
 	require.Contains(t, dueManagedUpstreamStatePairs(cfg, records, time.Now(), 4), UpstreamStatePair{AccountID: account.ID, Model: "model-a"})
+}
+
+func TestUpstreamStateTimingValidationAndDefaults(t *testing.T) {
+	settings := &SettingService{settingRepo: &managedStateSettingsRepo{raw: `{"ttl_minutes":40,"expected_length":292,"webshare_country_mode":"random"}`}}
+	cfg, err := settings.GetUpstreamStateSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 10, cfg.RotationLeadMinutes)
+	require.Equal(t, 5, cfg.RetryIntervalMinutes)
+	for _, value := range []int{-1, 31} {
+		invalid := cfg
+		invalid.RotationLeadMinutes = value
+		require.ErrorContains(t, invalid.Validate(), "rotation_lead_minutes")
+	}
+	for _, value := range []int{0, 61} {
+		invalid := cfg
+		invalid.RetryIntervalMinutes = value
+		require.ErrorContains(t, invalid.Validate(), "retry_interval_minutes")
+	}
+	cfg.RotationLeadMinutes = 0
+	require.NoError(t, cfg.Validate())
+	now := time.Now()
+	cfg.TTLMinutes, cfg.RotationLeadMinutes = 1, 10
+	record := buildUpstreamStateObservation(UpstreamStateRecord{}, strings.Repeat("x", 292), cfg, now)
+	require.Equal(t, now.Add(time.Minute).UnixMilli(), record.RotationAt)
+	cfg.TTLMinutes = 60
+	require.Equal(t, record.RotationAt, upstreamStateRotationAt(record, cfg), "new fallback settings must not extend an acquired token")
+}
+
+func TestUpstreamStateTimingChangesPreserveCacheAndUpdateMatrix(t *testing.T) {
+	s, store, account := managedStateRefreshService(t)
+	s.settingService.upstreamStateAccounts = s.accountRepo
+	ctx := context.Background()
+	result, err := s.SetManagedUpstreamState(ctx, account.ID, "model", testUpstreamStateAt(t, time.Now(), 292))
+	require.NoError(t, err)
+	cfg, err := s.settingService.GetUpstreamStateSettings(ctx)
+	require.NoError(t, err)
+	revision := cfg.StateRevision
+	cfg.RotationLeadMinutes, cfg.RetryIntervalMinutes = 20, 12
+	saved, err := s.settingService.SetUpstreamStateSettings(ctx, cfg)
+	require.NoError(t, err)
+	require.Equal(t, revision, saved.StateRevision)
+	require.Len(t, store.records, 1)
+	rows, err := s.settingService.UpstreamStateMatrix(ctx)
+	require.NoError(t, err)
+	found := false
+	for _, row := range rows {
+		if row.AccountID == account.ID && row.Model == "model" {
+			found = true
+			require.Equal(t, 1, row.Cached)
+			require.Equal(t, result.UpstreamExpiresAt, row.UpstreamExpiresAt)
+			require.Equal(t, result.UpstreamExpiresAt-(20*time.Minute).Milliseconds(), row.RotationAt)
+		}
+	}
+	require.True(t, found)
 }

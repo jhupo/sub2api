@@ -23,8 +23,7 @@ const upstreamStateSettingKey = "upstream_state_management"
 
 const (
 	upstreamStateLifetime         = time.Hour
-	upstreamStateRotationLead     = 10 * time.Minute
-	upstreamStateObservationTTL   = 5 * time.Minute
+	upstreamStateRecordRetention  = 24 * time.Hour
 	upstreamStateFutureClockSkew  = 5 * time.Minute
 	upstreamStateValidationNormal = "normal"
 	upstreamStateValidationLong   = "extended"
@@ -39,18 +38,20 @@ var (
 
 // Settings are revisioned: a policy change never makes an older cache visible.
 type UpstreamStateSettings struct {
-	Enabled             bool                `json:"enabled"`
-	AutoReplaceEnabled  bool                `json:"auto_replace_enabled"`
-	TTLMinutes          int                 `json:"ttl_minutes"`
-	ExpectedLength      int                 `json:"expected_length"`
-	WebshareEnabled     bool                `json:"webshare_enabled"`
-	WebshareAPIKey      string              `json:"webshare_api_key,omitempty"`
-	WebshareCountryMode string              `json:"webshare_country_mode"`
-	WebshareCountries   []string            `json:"webshare_countries"`
-	Revision            string              `json:"revision"`
-	StateRevision       string              `json:"state_revision"`
-	Pairs               []UpstreamStatePair `json:"pairs"`
-	PairRevisions       map[string]string   `json:"pair_revisions,omitempty"`
+	Enabled              bool                `json:"enabled"`
+	AutoReplaceEnabled   bool                `json:"auto_replace_enabled"`
+	TTLMinutes           int                 `json:"ttl_minutes"`
+	RotationLeadMinutes  int                 `json:"rotation_lead_minutes"`
+	RetryIntervalMinutes int                 `json:"retry_interval_minutes"`
+	ExpectedLength       int                 `json:"expected_length"`
+	WebshareEnabled      bool                `json:"webshare_enabled"`
+	WebshareAPIKey       string              `json:"webshare_api_key,omitempty"`
+	WebshareCountryMode  string              `json:"webshare_country_mode"`
+	WebshareCountries    []string            `json:"webshare_countries"`
+	Revision             string              `json:"revision"`
+	StateRevision        string              `json:"state_revision"`
+	Pairs                []UpstreamStatePair `json:"pairs"`
+	PairRevisions        map[string]string   `json:"pair_revisions,omitempty"`
 }
 
 type UpstreamStatePair struct {
@@ -95,10 +96,12 @@ func (v *UpstreamStateSettings) normalizePairRevisions(previous UpstreamStateSet
 
 func defaultUpstreamStateSettings() UpstreamStateSettings {
 	return UpstreamStateSettings{
-		AutoReplaceEnabled:  true,
-		TTLMinutes:          40,
-		ExpectedLength:      292,
-		WebshareCountryMode: webshareCountryModeRandom,
+		AutoReplaceEnabled:   true,
+		TTLMinutes:           40,
+		RotationLeadMinutes:  10,
+		RetryIntervalMinutes: 5,
+		ExpectedLength:       292,
+		WebshareCountryMode:  webshareCountryModeRandom,
 	}
 }
 
@@ -118,6 +121,12 @@ func (v UpstreamStateSettings) Validate() error {
 	}
 	if v.ExpectedLength < 1 || v.ExpectedLength > 8192 {
 		return errors.New("expected_length must be between 1 and 8192")
+	}
+	if v.RotationLeadMinutes < 0 || v.RotationLeadMinutes > 30 {
+		return errors.New("rotation_lead_minutes must be between 0 and 30")
+	}
+	if v.RetryIntervalMinutes < 1 || v.RetryIntervalMinutes > 60 {
+		return errors.New("retry_interval_minutes must be between 1 and 60")
 	}
 	if len(v.WebshareAPIKey) > 512 || strings.TrimSpace(v.WebshareAPIKey) != v.WebshareAPIKey || strings.ContainsAny(v.WebshareAPIKey, "\r\n") {
 		return errors.New("invalid Webshare API key")
@@ -405,7 +414,9 @@ func (s *SettingService) UpstreamStateMatrix(ctx context.Context) ([]UpstreamSta
 					row.StateLength = len(r.State)
 					row.ID, row.Digest = r.ID, upstreamStateDigest(r.State)[:12]
 					row.AcquiredAt, row.IssuedAt = r.AcquiredAt, r.IssuedAt
-					row.UpstreamExpiresAt, row.RotationAt = r.UpstreamExpiresAt, r.RotationAt
+					row.UpstreamExpiresAt, row.RotationAt = r.UpstreamExpiresAt, upstreamStateRotationAt(r, cfg)
+				} else if r.State != "" && row.LastError == "" {
+					row.Validation = "expired"
 				}
 			}
 			if row.Cached > 0 {
@@ -553,6 +564,19 @@ func parseUpstreamStateToken(state string, expectedLength int, now time.Time) (v
 	return validation, issued.UnixMilli(), expires.UnixMilli()
 }
 
+// The configured cycle applies to every state, including timestamped tokens.
+// Recompute on read so timing changes also affect already acquired states.
+// Only a parsed upstream expiry has a lead; an opaque token rotates at its
+// configured cycle without subtracting the lead a second time.
+func upstreamStateRotationAt(record UpstreamStateRecord, cfg UpstreamStateSettings) int64 {
+	cycleAt := record.AcquiredAt + (time.Duration(cfg.TTLMinutes) * time.Minute).Milliseconds()
+	expiryAt := record.UpstreamExpiresAt
+	if record.ExpirySource == "fernet" {
+		expiryAt -= (time.Duration(cfg.RotationLeadMinutes) * time.Minute).Milliseconds()
+	}
+	return min(cycleAt, expiryAt)
+}
+
 func buildUpstreamStateObservation(base UpstreamStateRecord, state string, cfg UpstreamStateSettings, now time.Time) UpstreamStateRecord {
 	validation, issuedAt, expiresAt := parseUpstreamStateToken(state, cfg.ExpectedLength, now)
 	base.CheckedAt = now.UnixMilli()
@@ -560,25 +584,19 @@ func buildUpstreamStateObservation(base UpstreamStateRecord, state string, cfg U
 	base.Validation = validation
 	base.IssuedAt = issuedAt
 	base.UpstreamExpiresAt = expiresAt
-	base.PurgeAt = now.Add(upstreamStateObservationTTL).UnixMilli()
+	// Retain scheduling metadata beyond token expiry; injection independently
+	// checks UpstreamExpiresAt and never extends a token's usable lifetime.
+	base.PurgeAt = now.Add(upstreamStateRecordRetention).UnixMilli()
 	if validation == upstreamStateValidationNormal {
 		base.State = strings.TrimSpace(state)
 		base.AcquiredAt = base.CheckedAt
 		if expiresAt > 0 {
 			base.ExpirySource = "fernet"
-			base.RotationAt = expiresAt - int64(upstreamStateRotationLead/time.Millisecond)
-			base.PurgeAt = expiresAt
 		} else {
 			base.ExpirySource = "fallback"
 			base.UpstreamExpiresAt = now.Add(time.Duration(cfg.TTLMinutes) * time.Minute).UnixMilli()
-			lead := upstreamStateRotationLead
-			fallbackLifetime := time.Duration(cfg.TTLMinutes) * time.Minute
-			if fallbackLifetime <= lead {
-				lead = fallbackLifetime / 2
-			}
-			base.RotationAt = base.UpstreamExpiresAt - int64(lead/time.Millisecond)
-			base.PurgeAt = base.UpstreamExpiresAt
 		}
+		base.RotationAt = upstreamStateRotationAt(base, cfg)
 	}
 	return base
 }

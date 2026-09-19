@@ -19,13 +19,14 @@ import (
 )
 
 const (
-	upstreamStateRefreshTimeout    = 20 * time.Second
-	upstreamStateRefreshLockTTL    = 30 * time.Second
-	upstreamStateRunnerInterval    = time.Minute
-	upstreamStateRunnerLockTTL     = 2 * time.Minute
-	upstreamStateRefreshRetryDelay = 5 * time.Minute
-	upstreamStateRunnerMaxPerCycle = 4
-	upstreamStateErrorBodyLimit    = 64 << 10
+	upstreamStateRefreshTimeout     = 50 * time.Second
+	upstreamStatePreparationTimeout = 25 * time.Second
+	upstreamStateRequestTimeout     = 20 * time.Second
+	upstreamStateRefreshLockTTL     = time.Minute
+	upstreamStateRunnerInterval     = time.Minute
+	upstreamStateRunnerLockTTL      = 5 * time.Minute
+	upstreamStateRunnerMaxPerCycle  = 4
+	upstreamStateErrorBodyLimit     = 64 << 10
 )
 
 var ErrUpstreamStateRefreshBusy = errors.New("state refresh is already running for this account and model")
@@ -124,7 +125,7 @@ func (s *OpenAIGatewayService) replaceManagedUpstreamState(ctx context.Context, 
 		currentConfig.pairRevision(scope.record.AccountID, scope.record.Model) != scope.record.PairRevision {
 		return nil, ErrUpstreamStateReplaceRejected
 	}
-	record := buildUpstreamStateObservation(scope.record, state, scope.config, time.Now())
+	record := buildUpstreamStateObservation(scope.record, state, currentConfig, time.Now())
 	record.Sequence = ticket.Sequence
 	record.LastRefreshAt = record.CheckedAt
 	if record.Validation != upstreamStateValidationNormal {
@@ -147,7 +148,7 @@ func (s *OpenAIGatewayService) recordManagedUpstreamStateFailure(ctx context.Con
 	record.Validation = "refresh_error"
 	record.ObservedLength = observedLength
 	record.LastError = message
-	record.PurgeAt = now.Add(upstreamStateObservationTTL).UnixMilli()
+	record.PurgeAt = now.Add(upstreamStateRecordRetention).UnixMilli()
 	storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
 	record.Sequence = ticket.Sequence
@@ -230,7 +231,7 @@ func (s *OpenAIGatewayService) refreshManagedUpstreamState(ctx context.Context, 
 	}
 	// Recheck under the pair lock: a manual operation may have replaced this
 	// state while an earlier account/model was being processed by the runner.
-	if automatic && (!cfg.AutoReplaceEnabled || (current != nil && !upstreamStateRecordDue(*current, true, time.Now()))) {
+	if automatic && (!cfg.AutoReplaceEnabled || (current != nil && !upstreamStateRecordDue(*current, true, cfg, time.Now()))) {
 		return nil, nil
 	}
 	stage, egress := "access_token", "direct"
@@ -249,26 +250,16 @@ func (s *OpenAIGatewayService) refreshManagedUpstreamState(ctx context.Context, 
 			"observed_length", observedLength, "upstream_request_id", upstreamRequestID,
 			"request_id", ctx.Value(ctxkey.RequestID), "error", err.Error())
 	}()
-	// Cancelling only the network context leaves the cache-write context live.
-	networkCtx, cancel := context.WithCancel(refreshCtx)
-	defer cancel()
-	token, _, err = s.GetAccessToken(networkCtx, account)
+	// Credential and proxy lookup have their own budget, separate from SSE.
+	preparationCtx, finishPreparation := context.WithTimeout(refreshCtx, upstreamStatePreparationTimeout)
+	defer finishPreparation()
+	token, _, err = s.GetAccessToken(preparationCtx, account)
 	if err != nil {
 		return nil, err
 	}
-	stage = "build_request"
-	req, err := s.buildUpstreamRequest(networkCtx, c, account, payload, token, true, "", true)
-	if err != nil {
-		return nil, err
-	}
-	// A refresh request must not echo the currently cached state.
-	req.Header.Del(openAICodexTurnStateHeader)
-	// Avoid reading a compression header just to inspect response headers.
-	req.Header.Set("Accept-Encoding", "identity")
-	req = req.WithContext(context.WithValue(req.Context(), upstreamStateContextKey{}, (*upstreamStateScope)(nil)))
 	if cfg.WebshareEnabled {
 		stage, egress = "webshare_lookup", "webshare"
-		proxyURL, err = fetchWebshareRotatingProxyURL(networkCtx, cfg, upstreamStateWebshareAPIBaseURL, &http.Client{Timeout: 10 * time.Second})
+		proxyURL, err = fetchWebshareRotatingProxyURL(preparationCtx, cfg, upstreamStateWebshareAPIBaseURL, &http.Client{Timeout: 10 * time.Second})
 		if err != nil {
 			return nil, err
 		}
@@ -280,6 +271,23 @@ func (s *OpenAIGatewayService) refreshManagedUpstreamState(ctx context.Context, 
 		password, _ := proxy.User.Password()
 		secrets = append(secrets, proxy.User.String(), password)
 	}
+	if err = preparationCtx.Err(); err != nil {
+		return nil, err
+	}
+	finishPreparation()
+	// Cancel the SSE as soon as headers arrive without cancelling persistence.
+	networkCtx, cancel := context.WithTimeout(refreshCtx, upstreamStateRequestTimeout)
+	defer cancel()
+	stage = "build_request"
+	req, err := s.buildUpstreamRequest(networkCtx, c, account, payload, token, true, "", true)
+	if err != nil {
+		return nil, err
+	}
+	// A refresh request must not echo the currently cached state.
+	req.Header.Del(openAICodexTurnStateHeader)
+	// Avoid reading a compression header just to inspect response headers.
+	req.Header.Set("Accept-Encoding", "identity")
+	req = req.WithContext(context.WithValue(req.Context(), upstreamStateContextKey{}, (*upstreamStateScope)(nil)))
 	stage = "request"
 	resp, err := s.doOpenAIUpstream(req, proxyURL, account)
 	if err != nil {
@@ -311,14 +319,19 @@ func (s *OpenAIGatewayService) refreshManagedUpstreamState(ctx context.Context, 
 	return s.replaceManagedUpstreamState(refreshCtx, scope, state, ticket)
 }
 
-func upstreamStateRecordDue(record UpstreamStateRecord, exists bool, now time.Time) bool {
+func upstreamStateRecordDue(record UpstreamStateRecord, exists bool, cfg UpstreamStateSettings, now time.Time) bool {
 	if !exists {
 		return true
 	}
-	if record.LastRefreshAt > now.Add(-upstreamStateRefreshRetryDelay).UnixMilli() {
+	rotationAt := upstreamStateRotationAt(record, cfg)
+	// Back off failed attempts and successful acquisitions already inside the
+	// rotation window. Do not let a long retry setting postpone a healthy
+	// token's scheduled rotation or expiry.
+	needsBackoff := record.LastError != "" || record.State == "" || record.AcquiredAt >= rotationAt
+	if needsBackoff && record.LastRefreshAt > now.Add(-time.Duration(cfg.RetryIntervalMinutes)*time.Minute).UnixMilli() {
 		return false
 	}
-	return record.State == "" || record.UpstreamExpiresAt <= now.UnixMilli() || record.RotationAt <= now.UnixMilli()
+	return record.State == "" || record.UpstreamExpiresAt <= now.UnixMilli() || rotationAt <= now.UnixMilli()
 }
 
 func dueManagedUpstreamStatePairs(cfg UpstreamStateSettings, records []UpstreamStateRecord, now time.Time, limit int) []UpstreamStatePair {
@@ -338,7 +351,7 @@ func dueManagedUpstreamStatePairs(cfg UpstreamStateSettings, records []UpstreamS
 	due := make([]UpstreamStatePair, 0, min(len(cfg.Pairs), limit))
 	for _, pair := range cfg.Pairs {
 		record, ok := latest[pair]
-		if upstreamStateRecordDue(record, ok, now) {
+		if upstreamStateRecordDue(record, ok, cfg, now) {
 			due = append(due, pair)
 		}
 	}

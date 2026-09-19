@@ -20,7 +20,7 @@ vi.mock('vue-i18n', async () => ({
 
 let wrapper: VueWrapper
 const settings = {
-  enabled: true, ttl_minutes: 40, expected_length: 292,
+  enabled: true, ttl_minutes: 40, rotation_lead_minutes: 10, retry_interval_minutes: 5, expected_length: 292,
   auto_replace_enabled: true, webshare_enabled: false, webshare_api_key_configured: false, webshare_country_mode: 'random', webshare_countries: [],
   revision: 'revision', state_revision: 'state-revision', pairs: []
 }

@@ -83,8 +83,8 @@ if overflow > 0 then
   for _, id in ipairs(victims) do redis.call('HDEL', KEYS[1], id); redis.call('ZREM', KEYS[2], id) end
 end
 -- Physical expiry also cleans idle installations without future traffic.
-redis.call('EXPIRE', KEYS[1], 3660)
-redis.call('EXPIRE', KEYS[2], 3660)
+redis.call('EXPIRE', KEYS[1], 86460)
+redis.call('EXPIRE', KEYS[2], 86460)
 return redis.call('HEXISTS', KEYS[1], incoming.id)
 `
 
@@ -95,8 +95,8 @@ if incoming.purge_at <= now then return 0 end
 local old = redis.call('HGET', KEYS[1], incoming.id)
 if old then
   local previous = cjson.decode(old)
-  -- Refresh outcome is independent of ordinary HTTP/WS observations. Traffic
-  -- must neither erase a refresh error nor move the refresh retry deadline.
+  -- Preserve the latest refresh outcome and its retry metadata separately
+  -- from the fixed lifetime of the last usable state.
   if (previous.last_refresh_at or 0) > (incoming.last_refresh_at or 0) then
     incoming.last_refresh_at = previous.last_refresh_at
     incoming.last_error = previous.last_error
@@ -114,6 +114,7 @@ if old then
     previous.validation = incoming.validation
     previous.last_refresh_at = incoming.last_refresh_at
     previous.last_error = incoming.last_error
+    previous.purge_at = math.max(previous.purge_at, incoming.purge_at)
     incoming = previous
   end
   -- Without a cached state, accept the first usable value even if a newer

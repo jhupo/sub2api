@@ -6865,12 +6865,22 @@
                   <input v-model.number="upstreamStateSettings.expected_length" data-testid="feature-upstream-state-length" type="number" min="1" max="8192" step="1" class="input" required />
                   <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.lengthHint') }}</span>
                 </label>
+                <label class="block">
+                  <span class="input-label">{{ t('admin.settings.upstreamState.rotationLead') }}</span>
+                  <input v-model.number="upstreamStateSettings.rotation_lead_minutes" data-testid="feature-upstream-state-rotation_lead_minutes" type="number" min="0" max="30" step="1" class="input" required />
+                  <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.rotationLeadHint') }}</span>
+                </label>
+                <label class="block">
+                  <span class="input-label">{{ t('admin.settings.upstreamState.retryInterval') }}</span>
+                  <input v-model.number="upstreamStateSettings.retry_interval_minutes" data-testid="feature-upstream-state-retry_interval_minutes" type="number" min="1" max="60" step="1" class="input" required />
+                  <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.retryIntervalHint') }}</span>
+                </label>
               </div>
 
               <div class="flex items-start justify-between gap-4 rounded-2xl border border-gray-200 bg-gray-50/70 p-4 dark:border-dark-700 dark:bg-dark-900/30">
                 <div>
                   <label for="feature-upstream-state-auto-replace" class="text-sm font-medium text-gray-900 dark:text-white">{{ t('admin.settings.upstreamState.autoReplace') }}</label>
-                  <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.autoReplaceHint') }}</p>
+                  <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamState.autoReplaceHint', { lead: upstreamStateSettings.rotation_lead_minutes, retry: upstreamStateSettings.retry_interval_minutes }) }}</p>
                 </div>
                 <Toggle id="feature-upstream-state-auto-replace" data-testid="feature-upstream-state-auto-replace" v-model="upstreamStateSettings.auto_replace_enabled" />
               </div>
@@ -10727,6 +10737,8 @@ function upstreamStateSignature(settings: UpstreamStateSettings | null, enabled 
     enabled,
     auto_replace_enabled: settings.auto_replace_enabled,
     ttl_minutes: settings.ttl_minutes,
+    rotation_lead_minutes: settings.rotation_lead_minutes,
+    retry_interval_minutes: settings.retry_interval_minutes,
     expected_length: settings.expected_length,
     webshare_enabled: settings.webshare_enabled,
     webshare_country_mode: settings.webshare_country_mode,
@@ -10745,6 +10757,14 @@ function normalizeUpstreamStateCountries(value: string): string[] {
 function upstreamStateConfigurationValid(): boolean {
   const settings = upstreamStateSettings.value;
   if (!settings) return true;
+  if (!Number.isInteger(settings.rotation_lead_minutes) || settings.rotation_lead_minutes < 0 || settings.rotation_lead_minutes > 30) {
+    appStore.showError(t("admin.settings.upstreamState.rotationLeadInvalid"));
+    return false;
+  }
+  if (!Number.isInteger(settings.retry_interval_minutes) || settings.retry_interval_minutes < 1 || settings.retry_interval_minutes > 60) {
+    appStore.showError(t("admin.settings.upstreamState.retryIntervalInvalid"));
+    return false;
+  }
   if (!Number.isInteger(settings.ttl_minutes) || settings.ttl_minutes < 1 || settings.ttl_minutes > 60) {
     appStore.showError(t("admin.settings.upstreamState.ttlInvalid"));
     return false;

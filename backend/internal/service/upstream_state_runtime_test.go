@@ -189,13 +189,14 @@ func TestManagedUpstreamStateRunnerStopsAfterAutoReplaceDisabled(t *testing.T) {
 func TestManagedUpstreamStateRefreshBackoffIsIndependentOfTraffic(t *testing.T) {
 	now := time.Now()
 	r := UpstreamStateRecord{State: "valid", UpstreamExpiresAt: now.Add(time.Minute).UnixMilli(), RotationAt: now.Add(-time.Minute).UnixMilli(), CheckedAt: now.UnixMilli()}
-	require.True(t, upstreamStateRecordDue(r, true, now), "ordinary traffic must not defer rotation")
+	require.True(t, upstreamStateRecordDue(r, true, defaultUpstreamStateSettings(), now), "ordinary traffic must not defer rotation")
+	r.LastError = "refresh failed"
 	r.LastRefreshAt = now.Add(-4 * time.Minute).UnixMilli()
-	require.False(t, upstreamStateRecordDue(r, true, now))
+	require.False(t, upstreamStateRecordDue(r, true, defaultUpstreamStateSettings(), now))
 	r.LastRefreshAt = now.Add(-5 * time.Minute).UnixMilli()
-	require.True(t, upstreamStateRecordDue(r, true, now))
+	require.True(t, upstreamStateRecordDue(r, true, defaultUpstreamStateSettings(), now))
 	r.State = ""
-	require.True(t, upstreamStateRecordDue(r, true, now), "missing observations must not starve refresh")
+	require.True(t, upstreamStateRecordDue(r, true, defaultUpstreamStateSettings(), now), "missing observations must not starve refresh")
 }
 
 func TestManagedUpstreamStateErrorMessageRedactsCredentials(t *testing.T) {
@@ -231,4 +232,76 @@ func TestManagedUpstreamStateRunnerRechecksPairAfterManualSet(t *testing.T) {
 	}}
 	s.runDueManagedUpstreamStates(ctx)
 	require.Equal(t, 1, calls, "manual replacement while waiting must suppress the queued refresh")
+}
+
+func TestManagedUpstreamStateConfiguredScheduling(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	cfg := defaultUpstreamStateSettings()
+	cfg.TTLMinutes = 60
+	record := buildUpstreamStateObservation(UpstreamStateRecord{}, testUpstreamStateAt(t, now.Add(-45*time.Minute), 292), cfg, now.Add(-45*time.Minute))
+	record.LastRefreshAt = record.AcquiredAt
+	require.False(t, upstreamStateRecordDue(record, true, cfg, now))
+	cfg.RotationLeadMinutes = 20
+	require.True(t, upstreamStateRecordDue(record, true, cfg, now), "a timing change must affect saved states")
+	cfg.RotationLeadMinutes = 0
+	require.False(t, upstreamStateRecordDue(record, true, cfg, now))
+	require.True(t, upstreamStateRecordDue(record, true, cfg, time.UnixMilli(record.UpstreamExpiresAt)))
+
+	cfg.RetryIntervalMinutes = 60
+	record.LastError = "proxy timeout"
+	record.LastRefreshAt = now.UnixMilli()
+	require.False(t, upstreamStateRecordDue(record, true, cfg, now.Add(59*time.Minute)), "expiry must not bypass failed retry delay")
+	require.True(t, upstreamStateRecordDue(record, true, cfg, now.Add(time.Hour)))
+	cfg.RetryIntervalMinutes = 1
+	require.True(t, upstreamStateRecordDue(record, true, cfg, now.Add(16*time.Minute)), "a saved interval change applies without reacquiring state")
+
+	cfg.RetryIntervalMinutes = 60
+	record.LastError = ""
+	record.LastRefreshAt = record.AcquiredAt
+	require.True(t, upstreamStateRecordDue(record, true, cfg, time.UnixMilli(record.UpstreamExpiresAt)), "retry delay must not defer healthy expiry")
+	cfg.RotationLeadMinutes = 20
+	record.AcquiredAt = now.UnixMilli()
+	record.LastRefreshAt = now.UnixMilli()
+	require.False(t, upstreamStateRecordDue(record, true, cfg, now), "an already-due successful acquisition must not loop")
+}
+
+func TestManagedUpstreamStateRefreshUsesBoundedSSEBudget(t *testing.T) {
+	s, _, account := managedStateRefreshService(t)
+	s.httpUpstream = &managedStateRefreshHTTP{do: func(req *http.Request, _ string) (*http.Response, error) {
+		require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(req.Context()))
+		deadline, ok := req.Context().Deadline()
+		require.True(t, ok)
+		remaining := time.Until(deadline)
+		require.Greater(t, remaining, 19*time.Second)
+		require.LessOrEqual(t, remaining, upstreamStateRequestTimeout)
+		return nil, errors.New("test request failed")
+	}}
+	_, err := s.RefreshManagedUpstreamState(context.Background(), account.ID, "model")
+	require.ErrorIs(t, err, ErrUpstreamStateRefreshFailed)
+}
+
+func TestManagedUpstreamStateRotationCycleAppliesToAllTokens(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	cfg := defaultUpstreamStateSettings()
+	for _, token := range []string{testUpstreamStateAt(t, now, 292), strings.Repeat("x", 292)} {
+		record := buildUpstreamStateObservation(UpstreamStateRecord{}, token, cfg, now)
+		record.LastRefreshAt = now.UnixMilli()
+		require.Equal(t, now.Add(40*time.Minute).UnixMilli(), upstreamStateRotationAt(record, cfg))
+		require.False(t, upstreamStateRecordDue(record, true, cfg, now.Add(39*time.Minute)))
+		require.True(t, upstreamStateRecordDue(record, true, cfg, now.Add(40*time.Minute)))
+		changed := cfg
+		changed.TTLMinutes = 20
+		require.Equal(t, now.Add(20*time.Minute).UnixMilli(), upstreamStateRotationAt(record, changed))
+		require.True(t, upstreamStateRecordDue(record, true, changed, now.Add(20*time.Minute)))
+		record.LastError = "proxy failed"
+		record.LastRefreshAt = now.Add(40 * time.Minute).UnixMilli()
+		require.False(t, upstreamStateRecordDue(record, true, cfg, now.Add(44*time.Minute)))
+		require.True(t, upstreamStateRecordDue(record, true, cfg, now.Add(45*time.Minute)))
+	}
+	// A token acquired late must still rotate before its estimated upstream expiry.
+	old := buildUpstreamStateObservation(UpstreamStateRecord{}, testUpstreamStateAt(t, now.Add(-30*time.Minute), 292), cfg, now)
+	require.Equal(t, now.Add(20*time.Minute).UnixMilli(), upstreamStateRotationAt(old, cfg))
+	// A successful replacement starts a new cycle from acquisition.
+	next := buildUpstreamStateObservation(UpstreamStateRecord{}, testUpstreamStateAt(t, now.Add(40*time.Minute), 292), cfg, now.Add(40*time.Minute))
+	require.Equal(t, now.Add(80*time.Minute).UnixMilli(), next.RotationAt)
 }

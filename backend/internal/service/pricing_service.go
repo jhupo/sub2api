@@ -1093,6 +1093,11 @@ func (s *PricingService) buildModelLookupCandidates(modelLower string) []string 
 	// Reasoning effort changes usage, not the public model's token rates.
 	// Explicit group/channel prices are resolved separately before this catalog.
 	candidates := append([]string{normalized}, rawCandidates...)
+	// Preserve explicit version-specific prices, then try the official Flash
+	// catalog key for the V4.1 names returned by compatible upstreams.
+	if canonical := deepSeekFlashPricingModel(modelLower); canonical != "" {
+		candidates = append(candidates, canonical)
+	}
 	if normalizeGeminiThinkingTierAlias(lastSegment(modelLower)) != lastSegment(modelLower) {
 		candidates = []string{normalized}
 	}
@@ -1114,6 +1119,17 @@ func (s *PricingService) buildModelLookupCandidates(modelLower string) []string 
 		return []string{modelLower}
 	}
 	return out
+}
+
+// Only known V4.1 Flash names share this price card; unknown DeepSeek
+// models must not silently inherit a different model's price.
+func deepSeekFlashPricingModel(model string) string {
+	switch strings.ToLower(lastSegment(strings.TrimSpace(model))) {
+	case "deepseek-flash", "deepseek-v4.1-flash", "deepseek-v4.1-flash-0910":
+		return "deepseek-flash"
+	default:
+		return ""
+	}
 }
 
 func normalizeModelNameForPricing(model string) string {

@@ -183,6 +183,8 @@ const settings = reactive<UpstreamStateSettings>({
   enabled: true,
   auto_replace_enabled: true,
   ttl_minutes: 40,
+  rotation_lead_minutes: 10,
+  retry_interval_minutes: 5,
   expected_length: 292,
   webshare_enabled: false,
   webshare_api_key_configured: false,

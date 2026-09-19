@@ -47,7 +47,7 @@ func TestUpstreamStateCacheFixedExpiryAndOrdering(t *testing.T) {
 	r, _, err = c.Begin(ctx, "scope")
 	require.NoError(t, err)
 	require.Equal(t, first.UpstreamExpiresAt, r.UpstreamExpiresAt, "repeated observations must not renew expiry")
-	mr.SetTime(time.UnixMilli(first.PurgeAt + 1))
+	mr.SetTime(time.UnixMilli(r.PurgeAt + 1))
 	r, _, err = c.Begin(ctx, "scope")
 	require.NoError(t, err)
 	require.Nil(t, r)
@@ -143,12 +143,15 @@ func TestUpstreamStateCacheObservationKeepsStateUntilRotation(t *testing.T) {
 		require.Equal(t, "mismatch", r.Validation)
 		require.Equal(t, 5, r.ObservedLength)
 	}
-	mr.SetTime(time.UnixMilli(first.PurgeAt + 1))
+	retained, err := c.Get(ctx, "scope")
+	require.NoError(t, err)
+	purgedAt := retained.PurgeAt + 1
+	mr.SetTime(time.UnixMilli(purgedAt))
 	r, ticket, err := c.Begin(ctx, "scope")
 	require.NoError(t, err)
 	require.Nil(t, r)
 	rotated := stateCacheRecord("scope", "rotated", ticket.Sequence)
-	rotated.AcquiredAt, rotated.UpstreamExpiresAt, rotated.PurgeAt = first.PurgeAt+2, first.PurgeAt+60000, first.PurgeAt+60000
+	rotated.AcquiredAt, rotated.UpstreamExpiresAt, rotated.PurgeAt = purgedAt+1, purgedAt+60000, purgedAt+60000
 	require.NoError(t, c.Save(ctx, rotated, ticket))
 	r, _, err = c.Begin(ctx, "scope")
 	require.NoError(t, err)
@@ -282,5 +285,39 @@ func TestUpstreamStateCacheGetDoesNotModifyRefreshMetadata(t *testing.T) {
 	current, err := c.rdb.Get(ctx, upstreamStateKeys[3]).Result()
 	require.NoError(t, err)
 	require.Equal(t, sequence, current)
-	require.Equal(t, 3660*time.Second, mr.TTL(upstreamStateKeys[0]))
+	require.Equal(t, 86460*time.Second, mr.TTL(upstreamStateKeys[0]))
+}
+
+func TestUpstreamStateCacheFailureSurvivesTokenExpiry(t *testing.T) {
+	for _, initialState := range []string{"valid", ""} {
+		t.Run("initial="+initialState, func(t *testing.T) {
+			c, mr := newUpstreamStateCacheTest(t)
+			ctx := context.Background()
+			_, ticket, err := c.Begin(ctx, "scope")
+			require.NoError(t, err)
+			initial := stateCacheRecord("scope", initialState, ticket.Sequence)
+			initial.UpstreamExpiresAt = time.Now().Add(time.Minute).UnixMilli()
+			initial.PurgeAt = initial.UpstreamExpiresAt
+			require.NoError(t, c.Replace(ctx, initial, ticket))
+			_, ticket, err = c.Begin(ctx, "scope")
+			require.NoError(t, err)
+			failure := stateCacheRecord("scope", "", ticket.Sequence)
+			failure.LastError, failure.Validation = "proxy timeout", "refresh_error"
+			failure.LastRefreshAt = time.Now().UnixMilli()
+			failure.PurgeAt = time.Now().Add(24 * time.Hour).UnixMilli()
+			require.NoError(t, c.Save(ctx, failure, ticket))
+			// More than both token expiry and the maximum configurable retry delay.
+			mr.SetTime(time.UnixMilli(failure.LastRefreshAt).Add(61 * time.Minute))
+			mr.FastForward(61 * time.Minute)
+			rows, err := c.List(ctx)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			require.Equal(t, failure.LastRefreshAt, rows[0].LastRefreshAt)
+			require.Equal(t, failure.LastError, rows[0].LastError)
+			require.Equal(t, failure.PurgeAt, rows[0].PurgeAt)
+			if initialState != "" {
+				require.Equal(t, initial.UpstreamExpiresAt, rows[0].UpstreamExpiresAt, "metadata retention must not renew token validity")
+			}
+		})
+	}
 }

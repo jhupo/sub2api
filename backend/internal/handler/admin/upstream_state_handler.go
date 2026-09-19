@@ -10,6 +10,8 @@ import (
 )
 
 type upstreamStateSettingsResponse struct {
+	RotationLeadMinutes      int                         `json:"rotation_lead_minutes"`
+	RetryIntervalMinutes     int                         `json:"retry_interval_minutes"`
 	Enabled                  bool                        `json:"enabled"`
 	AutoReplaceEnabled       bool                        `json:"auto_replace_enabled"`
 	TTLMinutes               int                         `json:"ttl_minutes"`
@@ -27,6 +29,7 @@ func publicUpstreamStateSettings(v service.UpstreamStateSettings) upstreamStateS
 	webshareCountries := append([]string{}, v.WebshareCountries...)
 	pairs := append([]service.UpstreamStatePair{}, v.Pairs...)
 	return upstreamStateSettingsResponse{
+		RotationLeadMinutes: v.RotationLeadMinutes, RetryIntervalMinutes: v.RetryIntervalMinutes,
 		Enabled: v.Enabled, AutoReplaceEnabled: v.AutoReplaceEnabled, TTLMinutes: v.TTLMinutes, ExpectedLength: v.ExpectedLength,
 		WebshareEnabled: v.WebshareEnabled, WebshareAPIKeyConfigured: v.WebshareAPIKey != "",
 		WebshareCountryMode: v.WebshareCountryMode, WebshareCountries: webshareCountries,
@@ -160,7 +163,7 @@ func (h *SettingHandler) SetUpstreamStatePair(c *gin.Context) {
 		response.BadRequest(c, "Invalid pair")
 		return
 	}
-	check := service.UpstreamStateSettings{TTLMinutes: 40, ExpectedLength: 292, WebshareCountryMode: "random", Pairs: []service.UpstreamStatePair{v.UpstreamStatePair}}
+	check := service.UpstreamStateSettings{RotationLeadMinutes: 10, RetryIntervalMinutes: 5, TTLMinutes: 40, ExpectedLength: 292, WebshareCountryMode: "random", Pairs: []service.UpstreamStatePair{v.UpstreamStatePair}}
 	if err := check.Validate(); err != nil {
 		response.BadRequest(c, err.Error())
 		return

@@ -10,10 +10,12 @@ import (
 
 func TestPublicUpstreamStateSettingsNeverReturnsWebshareAPIKey(t *testing.T) {
 	public := publicUpstreamStateSettings(service.UpstreamStateSettings{
-		Enabled: true, AutoReplaceEnabled: true, TTLMinutes: 40, ExpectedLength: 292,
+		Enabled: true, AutoReplaceEnabled: true, TTLMinutes: 40, RotationLeadMinutes: 10, RetryIntervalMinutes: 5, ExpectedLength: 292,
 		WebshareEnabled: true, WebshareAPIKey: "secret-api-key", WebshareCountryMode: "random",
 	})
 	require.True(t, public.WebshareAPIKeyConfigured)
+	require.Equal(t, 10, public.RotationLeadMinutes)
+	require.Equal(t, 5, public.RetryIntervalMinutes)
 	raw, err := json.Marshal(public)
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), "secret-api-key")

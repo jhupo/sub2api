@@ -3,6 +3,8 @@ import { apiClient } from '../client'
 export interface UpstreamStateSettings {
   enabled: boolean
   auto_replace_enabled: boolean
+  rotation_lead_minutes: number
+  retry_interval_minutes: number
   ttl_minutes: number
   expected_length: number
   webshare_enabled: boolean
@@ -67,6 +69,6 @@ export const upstreamStateApi = {
     return (await apiClient.put<UpstreamStateActionResult>(`${base}/state`, { account_id: accountId, model, state })).data
   },
   async refresh(accountId: number, model: string): Promise<UpstreamStateActionResult> {
-    return (await apiClient.post<UpstreamStateActionResult>(`${base}/refresh`, { account_id: accountId, model }, { timeout: 30000 })).data
+    return (await apiClient.post<UpstreamStateActionResult>(`${base}/refresh`, { account_id: accountId, model }, { timeout: 60000 })).data
   }
 }
