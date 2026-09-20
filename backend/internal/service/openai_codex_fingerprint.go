@@ -367,7 +367,8 @@ func rewriteCodexTurnMetadataFields(h http.Header, fields map[string]any) {
 		metadata[k] = v
 	}
 	alignCodexMetadataAliases(metadata, fields)
-	rebuilt, err := json.Marshal(metadata)
+	rebuilt, err := marshalCodexTurnMetadata(metadata)
+	rebuilt, err := marshalCodexTurnMetadata(metadata)
 	if err != nil {
 		return
 	}
@@ -569,7 +570,8 @@ func rewriteClientMetadataEmbeddedTurnMetadata(clientMetadata map[string]any, fi
 		metadata[k] = v
 	}
 	alignCodexMetadataAliases(metadata, fields)
-	if rebuilt, err := json.Marshal(metadata); err == nil {
+	if rebuilt, err := marshalCodexTurnMetadata(metadata); err == nil {
+	if rebuilt, err := marshalCodexTurnMetadata(metadata); err == nil {
 		clientMetadata["x-codex-turn-metadata"] = string(rebuilt)
 	}
 }
