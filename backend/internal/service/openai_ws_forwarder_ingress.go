@@ -1587,20 +1587,6 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 		}
 		skipBeforeTurn = false
-		// 剥离本会话已知失效的加密项，阻断同一失效密文随历史反复触发上游拒绝。
-		// 历史序列须同步剥离，否则与已剥离的当前 input 项错位，prefix 复用失配。
-		if invalidDigests := s.sessionInvalidEncryptedContentDigests(groupID, sessionHash); len(invalidDigests) > 0 {
-			strippedPayload, strippedCount := s.stripSessionInvalidEncryptedContentLogged(
-				currentPayload, invalidDigests, "ingress_ws_invalid_encrypted_lineage_strip", account.ID, turn,
-			)
-			if strippedCount > 0 {
-				currentPayload = strippedPayload
-				currentPayloadBytes = len(strippedPayload)
-			}
-			if lastTurnReplayInputExists {
-				lastTurnReplayInput, _ = stripOpenAIInvalidEncryptedContentFromReplayItems(lastTurnReplayInput, invalidDigests)
-			}
-		}
 		boundaryPayload, contextWindowBoundary, boundaryErr := normalizeOpenAIWSContextWindowBoundary(
 			currentPayload,
 			lastTurnWindowID,
