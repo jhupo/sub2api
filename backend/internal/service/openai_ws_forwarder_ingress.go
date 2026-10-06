@@ -1991,16 +1991,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		responseID := strings.TrimSpace(result.RequestID)
 		lastTurnResponseID = responseID
-<<<<<<< HEAD
-		lastTurnPayload = cloneOpenAIWSPayloadBytes(currentPayload)
-		lastTurnReplayInput = cloneOpenAIWSRawMessages(currentTurnReplayInput)
-=======
 		if contextWindowBoundary.WindowID != "" {
 			lastTurnWindowID = contextWindowBoundary.WindowID
 		}
-		// 正文共享：currentPayload/currentTurnReplayInput 均不可变，历史直接引用；
-		// collector 增量经 combine 合并（新头数组）。
-		lastTurnReplayInput = currentTurnReplayInput
+		lastTurnPayload = cloneOpenAIWSPayloadBytes(currentPayload)
+		lastTurnReplayInput = cloneOpenAIWSRawMessages(currentTurnReplayInput)
 		lastTurnReplayInputExists = currentTurnReplayInputExists
 		if result.wsReplayInputExists {
 			lastTurnReplayInput = append(lastTurnReplayInput, cloneOpenAIWSRawMessages(result.wsReplayInput)...)
