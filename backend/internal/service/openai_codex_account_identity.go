@@ -224,8 +224,6 @@ func (s codexAccountIdentityScope) applyHeaders(headers http.Header) {
 		metadata := map[string]any{}
 		if err := json.Unmarshal([]byte(raw), &metadata); err == nil && metadata != nil && s.applyFields(metadata) {
 			if rebuilt, err := marshalCodexTurnMetadata(metadata); err == nil {
-		if err := json.Unmarshal([]byte(raw), &metadata); err == nil && metadata != nil && applyCodexAccountIdentityFields(metadata, account, apiKeyID) {
-			if rebuilt, err := marshalCodexTurnMetadata(metadata); err == nil {
 				headers.Set(openAIWSTurnMetadataHeader, string(rebuilt))
 			}
 		}
