@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/auditbridge"
 )
 
 type ScannerDefinition struct {
@@ -221,7 +223,10 @@ func (s *OpenAICompatibleScanner) Scan(ctx context.Context, endpoint ActiveEndpo
 	if endpoint.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+endpoint.Token)
 	}
-	resp, err := client.Do(req)
+	if err := auditbridge.Apply(ctx, req, body); err != nil {
+		return nil, &GuardError{Code: ErrorCodeInvalidResponse, Cause: err}
+	}
+	resp, err := auditbridge.Do(client, req)
 	if err != nil {
 		timeout := errors.Is(err, context.DeadlineExceeded)
 		var netErr net.Error

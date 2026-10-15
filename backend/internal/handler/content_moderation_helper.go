@@ -101,6 +101,7 @@ func buildContentModerationInput(c *gin.Context, apiKey *service.APIKey, subject
 		input.APIKeyName = apiKey.Name
 		if apiKey.User != nil {
 			input.UserEmail = apiKey.User.Email
+			input.Username = apiKey.User.Username
 		}
 		if apiKey.GroupID != nil {
 			groupID := *apiKey.GroupID

@@ -18,6 +18,7 @@ import (
 	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/auditbridge"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -178,6 +179,11 @@ func runMainServer() {
 		BuildType: BuildType,
 	}
 
+	stopBridge, err := auditbridge.StartFromEnv()
+	if err != nil {
+		log.Fatalf("Guard bridge configuration: %v", err)
+	}
+	defer stopBridge()
 	app, err := initializeApplication(buildInfo)
 	if err != nil {
 		log.Fatalf("Failed to initialize application: %v", err)

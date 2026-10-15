@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/auditbridge"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -307,6 +308,7 @@ type ContentModerationModelFilter struct {
 }
 
 type ContentModerationCheckInput struct {
+	Username   string
 	RequestID  string
 	UserID     int64
 	UserEmail  string
@@ -1029,6 +1031,9 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			"protocol", input.Protocol)
 		return allow, nil
 	}
+	if auditbridge.Enabled() {
+		auditbridge.Capture(moderationBridgeMetadata(input), input.Body, "/v1/moderations")
+	}
 	if cfg.Mode == ContentModerationModeObserve {
 		slog.Info("content_moderation.enqueue_observe",
 			"user_id", input.UserID,
@@ -1052,6 +1057,9 @@ func (s *ContentModerationService) checkSync(ctx context.Context, input ContentM
 		defer s.preBlockActive.Add(-1)
 	}
 	start := time.Now()
+	if auditbridge.Enabled() {
+		ctx = auditbridge.WithContext(ctx, moderationBridgeMetadata(input))
+	}
 	result, err := s.callModeration(ctx, cfg, content.ModerationInput(), trackPreBlock)
 	latency := int(time.Since(start).Milliseconds())
 	if err != nil {
@@ -1757,12 +1765,15 @@ func (s *ContentModerationService) callModerationOnceWithInput(ctx context.Conte
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	if err := auditbridge.Apply(ctx, req, raw); err != nil {
+		return nil, err
+	}
 
 	client, err := s.moderationHTTPClient(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.Do(req)
+	resp, err := auditbridge.Do(client, req)
 	if err != nil {
 		return nil, err
 	}

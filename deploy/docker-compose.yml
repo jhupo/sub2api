@@ -64,6 +64,12 @@ services:
       - SERVER_H2C_MAX_CONCURRENT_STREAMS=${SERVER_H2C_MAX_CONCURRENT_STREAMS:-512}
       - SERVER_H2C_IDLE_TIMEOUT=${SERVER_H2C_IDLE_TIMEOUT:-3600}
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
+      # Optional complete request audit upload. Set the URL and the same
+      # secret as BRIDGE_TOKEN on sub2api-guard-bridge to enable it.
+      - GUARD_BRIDGE_URL=${GUARD_BRIDGE_URL:-}
+      - GUARD_BRIDGE_TOKEN=${GUARD_BRIDGE_TOKEN:-}
+      - GUARD_BRIDGE_OUTBOX_DIR=${GUARD_BRIDGE_OUTBOX_DIR:-/app/data/guard-bridge-outbox}
+      - GUARD_BRIDGE_OUTBOX_MAX_BYTES=${GUARD_BRIDGE_OUTBOX_MAX_BYTES:-536870912}
       - RUN_MODE=${RUN_MODE:-standard}
       - GOGC=${SUB2API_GOGC:-100}
       - GOMEMLIMIT=${SUB2API_GOMEMLIMIT:-off}

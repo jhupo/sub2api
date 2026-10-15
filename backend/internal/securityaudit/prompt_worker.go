@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/auditbridge"
 )
 
 type WorkerRuntime struct {
@@ -134,6 +136,7 @@ func (r *Runner) processSafely(ctx context.Context, workerID int, cfg ActiveConf
 }
 
 func (r *Runner) processJob(ctx context.Context, workerID int, cfg ActiveConfig, job *Job) error {
+	ctx = auditbridge.WithContext(ctx, bridgeMetadata(job.Snapshot))
 	baseFields := jobLogFields(job)
 	LogInfo(EventAuditStarted, mergeLogFields(baseFields, map[string]any{"worker_id": workerID, "attempts": job.Attempts, "status": "processing"}))
 	scanText, err := r.payload.Get(ctx, job.ID)

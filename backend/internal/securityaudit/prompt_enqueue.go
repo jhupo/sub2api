@@ -3,6 +3,8 @@ package securityaudit
 import (
 	"context"
 	"errors"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/auditbridge"
 )
 
 type Enqueuer struct {
@@ -50,6 +52,7 @@ func (e *Enqueuer) Enqueue(ctx context.Context, req Request) error {
 		LogWarn(EventEnqueueDropped, mergeLogFields(baseFields, map[string]any{"status": "dropped", "error_code": "snapshot_invalid"}))
 		return nil
 	}
+	auditbridge.Capture(bridgeMetadata(snapshot), req.Body, "/v1/chat/completions")
 	job, err := e.repo.CreateStagingWithCapacity(ctx, snapshot.Redacted(), cfg.ConfigVersion, 3, cfg.QueueCapacity)
 	if err != nil {
 		code := "database_unavailable"

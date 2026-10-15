@@ -57,6 +57,34 @@ volumes:
 | `REDIS_URL` | Redis connection string | Yes | - |
 | `PORT` | Server port | No | `8080` |
 | `GIN_MODE` | Gin framework mode (`debug`/`release`) | No | `release` |
+| `GUARD_BRIDGE_URL` | Complete-request audit bridge URL; leave empty to disable | No | empty |
+| `GUARD_BRIDGE_TOKEN` | Shared secret matching the bridge `BRIDGE_TOKEN` | When URL is set | empty |
+| `GUARD_BRIDGE_OUTBOX_DIR` | Durable local upload outbox | No | `/app/data/guard-bridge-outbox` |
+| `GUARD_BRIDGE_OUTBOX_MAX_BYTES` | Maximum outbox size in bytes | No | `536870912` |
+
+When enabled, Sub2API writes requests selected by its existing prompt/content
+audit configuration to the local outbox before attempting delivery. Each upload includes the authenticated user
+ID/name, customer API key ID/name, request ID, and a stable audit ID; the
+customer authentication key secret is not collected. Bridge downtime therefore only delays
+the audit record and does not block the customer request. Configure the bridge
+with the same `BRIDGE_TOKEN` and see its README for asynchronous request
+summary modes.
+
+For containers on the same Docker network, set `GUARD_BRIDGE_URL` to
+`http://sub2api-guard-bridge:8000` and use the same base URL in the prompt/content
+audit node settings. Only matching destinations receive the authenticated audit
+metadata; bridge redirects are rejected. Keep the NVIDIA audit key in the node
+settings and use a separate shared token of at least 16 characters for the
+bridge upload. The feature remains disabled when `GUARD_BRIDGE_URL` is empty.
+
+The outbox must be on a persistent writable volume (the shipped Compose files
+use `/app/data`). A complete upload envelope is limited to 16 MiB; a full outbox,
+oversized request or local write failure produces `guard_bridge.capture_failed`
+without changing the moderation decision. Unacknowledged uploads remain on disk
+and retry after 30 seconds. Synchronous audit paths add a local disk flush, while
+network upload and bridge summaries run in the background. Existing asynchronous
+audit paths retain their asynchronous queue behavior. Requests skipped by audit
+group, sampling or keyword/hash rules do not automatically become bridge records.
 
 ## Supported Architectures
 

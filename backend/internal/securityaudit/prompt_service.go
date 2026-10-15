@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/auditbridge"
 )
 
 type PromptService struct {
@@ -162,6 +164,11 @@ func (s *PromptService) Evaluate(ctx context.Context, req Request) (*PromptDecis
 	}
 	if err != nil {
 		return nil, &GuardError{Code: ErrorCodeInvalidResponse, Cause: err}
+	}
+	if auditbridge.Enabled() {
+		meta := bridgeMetadata(snapshot)
+		auditbridge.Capture(meta, req.Body, "/v1/chat/completions")
+		ctx = auditbridge.WithContext(ctx, meta)
 	}
 	return s.evaluator.Evaluate(ctx, cfg, snapshot)
 }
