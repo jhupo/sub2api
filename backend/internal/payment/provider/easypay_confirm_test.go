@@ -97,6 +97,18 @@ func TestEasyPayConfirmNotification(t *testing.T) {
 			wantErr:     "amount mismatch",
 		},
 		{
+			name:        "NaN upstream amount",
+			body:        `{"code":1,"trade_no":"2026101600001","money":"NaN","status":1}`,
+			notifyTrade: "2026101600001",
+			wantErr:     "amount mismatch",
+		},
+		{
+			name:        "infinite upstream amount",
+			body:        `{"code":1,"trade_no":"2026101600001","money":"+Inf","status":1}`,
+			notifyTrade: "2026101600001",
+			wantErr:     "amount mismatch",
+		},
+		{
 			name:        "trade_no conflict",
 			body:        `{"code":1,"trade_no":"2026101699999","money":"10.00","status":1}`,
 			notifyTrade: "2026101600001",

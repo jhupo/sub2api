@@ -383,7 +383,9 @@ func (e *EasyPay) ConfirmNotification(ctx context.Context, n *payment.PaymentNot
 		return fmt.Errorf("easypay confirm: upstream reports order %s as not paid", n.OrderID)
 	}
 	queriedAmount, err := strconv.ParseFloat(result.money, 64)
-	if err != nil || math.Abs(queriedAmount-n.Amount) > easypayAmountTolerance {
+	validAmounts := queriedAmount > 0 && !math.IsInf(queriedAmount, 0) &&
+		n.Amount > 0 && !math.IsInf(n.Amount, 0)
+	if err != nil || !validAmounts || math.Abs(queriedAmount-n.Amount) > easypayAmountTolerance {
 		return fmt.Errorf("easypay confirm: amount mismatch: notified %v, upstream %q", n.Amount, result.money)
 	}
 	if result.tradeNo != "" {
