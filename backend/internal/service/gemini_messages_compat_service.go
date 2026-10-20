@@ -1550,6 +1550,8 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	// 结果一起在函数末尾返回给 handler（result 非 nil + err 非 nil），避免既走结算又
 	// 被误判为成功。
 	var streamTopUpAbortErr error
+	clientDisconnect := false
+	streamFinished := false
 	if req.Stream {
 		streamRes, err := s.handleStreamingResponse(c, resp, startTime, originalModel, includeImages)
 		if err != nil {
@@ -1571,6 +1573,10 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		} else {
 			usage = streamRes.usage
 			firstTokenMs = streamRes.firstTokenMs
+		}
+		if streamRes != nil {
+			clientDisconnect = streamRes.clientDisconnect
+			streamFinished = streamRes.finished
 		}
 	} else {
 		if useUpstreamStream {
@@ -1599,6 +1605,10 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
 	imageCount := resolveGeminiImageCount(c, originalModel, mappedModel)
+	// 客户端在结束分片前断开时，按兼容流已输出的图片计费。
+	if clientDisconnect && !streamFinished {
+		imageCount = observedGeminiImageOutputs(c)
+	}
 
 	return &ForwardResult{
 		RequestID:                     requestID,
@@ -1611,6 +1621,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		Stream:                        req.Stream,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
+		ClientDisconnect:              clientDisconnect,
 		ImageCount:                    imageCount,
 		ImageSize:                     imageSize,
 		ImageInputSize:                imageInputSize,
@@ -2090,6 +2101,8 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 
 	var usage *ClaudeUsage
 	var firstTokenMs *int
+	clientDisconnect := false
+	streamFinished := false
 
 	if stream {
 		streamRes, err := s.handleNativeStreamingResponse(c, resp, startTime, isOAuth)
@@ -2098,6 +2111,8 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		}
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
+		clientDisconnect = streamRes.clientDisconnect
+		streamFinished = streamRes.finished
 	} else {
 		if useUpstreamStream {
 			collected, usageObj, err := collectGeminiSSE(resp.Body, isOAuth)
@@ -2126,6 +2141,10 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
 	imageCount := resolveGeminiImageCount(c, originalModel, mappedModel)
+	// 客户端在收到结束分片前断开时只计已送达的图片。
+	if clientDisconnect && !streamFinished {
+		imageCount = observedGeminiImageOutputs(c)
+	}
 
 	return &ForwardResult{
 		RequestID:                     requestID,
@@ -2138,6 +2157,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		Stream:                        stream,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
+		ClientDisconnect:              clientDisconnect,
 		ImageCount:                    imageCount,
 		ImageSize:                     imageSize,
 		ImageInputSize:                imageInputSize,
@@ -2564,8 +2584,10 @@ func mapGeminiStatusToClaudeErrorType(status string) string {
 }
 
 type geminiStreamResult struct {
-	usage        *ClaudeUsage
-	firstTokenMs *int
+	usage            *ClaudeUsage
+	firstTokenMs     *int
+	clientDisconnect bool // 客户端在流式传输中途断开，结果为断开前已收集的部分
+	finished         bool // 断开前已收到上游 finishReason
 }
 
 func (s *GeminiMessagesCompatService) handleNonStreamingResponse(c *gin.Context, resp *http.Response, originalModel string, includeImages bool) (*ClaudeUsage, error) {
@@ -2654,6 +2676,15 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
+			if geminiStreamAbortedWithBillableOutput(c, err, &usage) {
+				logger.LegacyPrintf("service.gemini_messages_compat", "[GeminiAPI] Client disconnected during messages stream, billing collected usage: %v", err)
+				return &geminiStreamResult{
+					usage:            &usage,
+					firstTokenMs:     firstTokenMs,
+					clientDisconnect: true,
+					finished:         finishReason != "",
+				}, nil
+			}
 			return nil, fmt.Errorf("stream read error: %w", err)
 		}
 
@@ -3124,8 +3155,10 @@ func mergeCollectedTextParts(response map[string]any, textParts []string) map[st
 }
 
 type geminiNativeStreamResult struct {
-	usage        *ClaudeUsage
-	firstTokenMs *int
+	usage            *ClaudeUsage
+	firstTokenMs     *int
+	clientDisconnect bool // 客户端在流式传输中途断开，结果为断开前已收集的部分
+	finished         bool // 断开前已收到上游 finishReason
 }
 
 func isGeminiInsufficientScope(headers http.Header, body []byte) bool {
@@ -3275,10 +3308,13 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 		observer = beginUpstreamResponseModelObservation(c)
 	}
 	var firstTokenMs *int
+	clientDisconnect := false
+	finished := false
 
 	for {
 		line, err := reader.ReadString('\n')
-		if len(line) > 0 {
+		// 读错误时 line 是未以换行结尾的残行，不透传也不参与用量统计；EOF 时的末行完整有效。
+		if len(line) > 0 && (err == nil || errors.Is(err, io.EOF)) {
 			trimmed := strings.TrimRight(line, "\r\n")
 			if strings.HasPrefix(trimmed, "data:") {
 				payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
@@ -3307,6 +3343,10 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 					observer.ObserveGemini(rawBytes)
 					observeGeminiImageOutputs(c, rawBytes)
 
+					if gjson.GetBytes(rawBytes, "candidates.0.finishReason").String() != "" {
+						finished = true
+					}
+
 					if firstTokenMs == nil {
 						ms := int(time.Since(startTime).Milliseconds())
 						firstTokenMs = &ms
@@ -3331,11 +3371,16 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 			break
 		}
 		if err != nil {
-			return nil, err
+			if !geminiStreamAbortedWithBillableOutput(c, err, usage) {
+				return nil, err
+			}
+			clientDisconnect = true
+			logger.LegacyPrintf("service.gemini_messages_compat", "[GeminiAPI] Client disconnected during native stream, billing collected usage: %v", err)
+			break
 		}
 	}
 
-	return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs}, nil
+	return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnect, finished: finished}, nil
 }
 
 // ForwardAIStudioGET forwards a GET request to AI Studio (generativelanguage.googleapis.com) for
@@ -3540,7 +3585,8 @@ func extractGeminiUsage(data []byte) *ClaudeUsage {
 	}
 
 	// 注意：Gemini 的 promptTokenCount 包含 cachedContentTokenCount，
-	// 但 Claude 的 input_tokens 不包含 cache_read_input_tokens，需要减去
+	// 但 Claude 的 input_tokens 不包含 cache_read_input_tokens，需要减去。
+	// prompt 被拦截时上游可能只报 cachedContentTokenCount，差值下限为 0。
 	return &ClaudeUsage{
 		InputTokens:          max(0, prompt-cached),
 		OutputTokens:         cand + thoughts,

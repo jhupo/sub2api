@@ -33,6 +33,9 @@ func RegisterGatewayRoutes(
 	compositeResolver *service.CompositeRouteResolver,
 	cfg *config.Config,
 ) {
+	if h.OpenAIGateway != nil {
+		h.OpenAIGateway.SetCompositeRouteResolver(compositeResolver)
+	}
 	bodyLimit := middleware.RequestBodyLimit(cfg.Gateway.MaxBodySize)
 	textBodyLimit := middleware.RequestBodyLimit(cfg.Gateway.TextMaxBodySize)
 	clientRequestID := middleware.ClientRequestID()
@@ -564,6 +567,14 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
 				c.Abort()
+				return
+			}
+			// 含 OAuth 账号的跨平台歧义是分组配置错误：拒绝而不是放行。否则未解析的
+			// 请求落到默认 Anthropic handler，handler 再按模型名前缀另猜平台，
+			// OAuth 凭据被送进不匹配的协议管线（如 ChatGPT token 发往 Anthropic）。
+			if decision.OAuthAmbiguous() {
+				service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": decision.AmbiguousMessage()}})
 				return
 			}
 			if decision.Matched {

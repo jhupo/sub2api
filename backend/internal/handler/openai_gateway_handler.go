@@ -33,6 +33,7 @@ import (
 
 // OpenAIGatewayHandler handles OpenAI API gateway requests
 type OpenAIGatewayHandler struct {
+	compositeResolver          *service.CompositeRouteResolver
 	gatewayService             *service.OpenAIGatewayService
 	billingCacheService        *service.BillingCacheService
 	apiKeyService              *service.APIKeyService
@@ -333,6 +334,10 @@ func isResponsesWebSocketCompositePlatform(platform string) bool {
 	default:
 		return false
 	}
+}
+
+func (h *OpenAIGatewayHandler) SetCompositeRouteResolver(resolver *service.CompositeRouteResolver) {
+	h.compositeResolver = resolver
 }
 
 // NewOpenAIGatewayHandler creates a new OpenAIGatewayHandler
@@ -2458,6 +2463,22 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	if reqModel == "" {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
+	}
+	if apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
+		decision, resolveErr := h.compositeResolver.Resolve(c.Request.Context(), apiKey.Group.ID, reqModel, service.CompositeRouteEndpointResponses)
+		if resolveErr != nil {
+			reqLog.Error("openai.websocket_composite_route_failed", zap.Error(resolveErr))
+			closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "Failed to resolve composite model route")
+			return
+		}
+		if decision.OAuthAmbiguous() {
+			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
+			closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, decision.AmbiguousMessage())
+			return
+		}
+		if decision.Matched {
+			c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
+		}
 	}
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	ctx = h.gatewayService.PrepareSchedulerRequestContext(c.Request.Context())

@@ -179,7 +179,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
-		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
+		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body, startTime)
 	}
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
 		sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(body)
@@ -475,11 +475,21 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		codexResult := codexTransformResult{}
 		if compatMessagesBridge {
-			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{IsCodexCLI: isCodexCLI, IsCompact: isCompactRequest, SkipDefaultInstructions: true, PreserveToolCallIDs: true})
+			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{
+				IsCodexCLI:              isCodexCLI,
+				IsCompact:               isCompactRequest,
+				SkipDefaultInstructions: true,
+				PreserveToolCallIDs:     true,
+				ResponsesLite:           responsesLite,
+			})
 			ensureCodexOAuthInstructionsField(decoded)
 			markDecodedModified()
 		} else {
-			codexResult = applyCodexOAuthTransform(decoded, isCodexCLI, isCompactRequest)
+			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{
+				IsCodexCLI:    isCodexCLI,
+				IsCompact:     isCompactRequest,
+				ResponsesLite: responsesLite,
+			})
 		}
 		if codexResult.Error != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": codexResult.Error.Error()}})
@@ -1029,7 +1039,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			respBody = s.redactAgentIdentitySensitiveBody(ctx, account, respBody)
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
-			if !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && upstreamCode == "invalid_encrypted_content" {
+			invalidEncryptedContentError := upstreamCode == "invalid_encrypted_content" ||
+				(upstreamCode == "thinking_signature_invalid" &&
+					strings.Contains(upstreamMsg, "The encrypted content") &&
+					strings.Contains(upstreamMsg, "could not be verified") &&
+					strings.Contains(upstreamMsg, "could not be decrypted or parsed"))
+			if !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && invalidEncryptedContentError {
 				decoded, decodeErr := ensureReqBody()
 				if decodeErr != nil {
 					return nil, decodeErr
