@@ -2110,4 +2110,3 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		turn++
 	}
 }
-
