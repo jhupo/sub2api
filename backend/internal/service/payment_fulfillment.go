@@ -253,8 +253,7 @@ func (s *PaymentService) executeFulfillment(ctx context.Context, oid int64) erro
 		return s.ExecuteBalanceFulfillment(ctx, oid)
 	default:
 		// 不支持的订单类型不履约：标记 FAILED 后正常返回，避免支付回调持续 500 重试。
-		s.rejectUnsupportedOrderType(ctx, o)
-		return nil
+		return s.rejectUnsupportedOrderType(ctx, o)
 	}
 }
 
@@ -262,7 +261,7 @@ func isSupportedPaymentOrderType(orderType string) bool {
 	return orderType == payment.OrderTypeBalance || orderType == payment.OrderTypeSubscription
 }
 
-func (s *PaymentService) rejectUnsupportedOrderType(ctx context.Context, o *dbent.PaymentOrder) {
+func (s *PaymentService) rejectUnsupportedOrderType(ctx context.Context, o *dbent.PaymentOrder) error {
 	reason := "unsupported order type: " + o.OrderType
 	c, err := s.entClient.PaymentOrder.Update().
 		Where(
@@ -271,13 +270,13 @@ func (s *PaymentService) rejectUnsupportedOrderType(ctx context.Context, o *dben
 		).
 		SetStatus(OrderStatusFailed).SetFailedAt(time.Now()).SetFailedReason(reason).Save(ctx)
 	if err != nil {
-		slog.Error("mark unsupported order type FAILED", "orderID", o.ID, "error", err)
-		return
+		return fmt.Errorf("mark unsupported order type failed: %w", err)
 	}
 	if c > 0 {
 		slog.Warn("payment order with unsupported order type not fulfilled", "orderID", o.ID, "orderType", o.OrderType)
 		s.writeAuditLog(ctx, o.ID, "FULFILLMENT_FAILED", "system", map[string]any{"reason": reason})
 	}
+	return nil
 }
 
 func (s *PaymentService) ExecuteBalanceFulfillment(ctx context.Context, oid int64) error {

@@ -4,10 +4,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -75,4 +77,34 @@ func TestFulfillmentRejectsUnknownOrderType(t *testing.T) {
 
 	err = svc.RetryFulfillment(ctx, order.ID)
 	require.Equal(t, "INVALID_ORDER_TYPE", infraerrors.Reason(err))
+}
+
+func TestFulfillmentUnknownOrderTypeRetriesFailedStatusWrite(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createPaymentFulfillmentSubscriptionOrder(t, ctx, client, OrderStatusPaid, time.Now())
+	order, err := client.PaymentOrder.UpdateOneID(order.ID).SetOrderType("x").Save(ctx)
+	require.NoError(t, err)
+
+	writeErr := errors.New("status write unavailable")
+	failWrite := true
+	client.PaymentOrder.Use(func(next dbent.Mutator) dbent.Mutator {
+		return dbent.MutateFunc(func(ctx context.Context, m dbent.Mutation) (dbent.Value, error) {
+			if failWrite && m.Op().Is(dbent.OpUpdate) {
+				return nil, writeErr
+			}
+			return next.Mutate(ctx, m)
+		})
+	})
+	svc := &PaymentService{entClient: client}
+	require.ErrorIs(t, svc.executeFulfillment(ctx, order.ID), writeErr)
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusPaid, reloaded.Status)
+
+	failWrite = false
+	require.NoError(t, svc.executeFulfillment(ctx, order.ID))
+	reloaded, err = client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusFailed, reloaded.Status)
 }
