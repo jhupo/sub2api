@@ -178,16 +178,15 @@ type httpUpstreamService struct {
 // 返回:
 //   - service.HTTPUpstream 接口实现
 func NewHTTPUpstream(cfg *config.Config) service.HTTPUpstream {
-	return &httpUpstreamService{
-		cfg:     cfg,
-		clients: make(map[string]*upstreamClientEntry),
-	}
+	return NewConfiguredHTTPUpstream(cfg, nil)
 }
 
 func NewConfiguredHTTPUpstream(cfg *config.Config, settings *service.SettingService) service.HTTPUpstream {
-	s := NewHTTPUpstream(cfg).(*httpUpstreamService)
-	s.settings = settings
-	return s
+	return &httpUpstreamService{
+		cfg:      cfg,
+		clients:  make(map[string]*upstreamClientEntry),
+		settings: settings,
+	}
 }
 
 func (s *httpUpstreamService) adjustCacheReadUsage(req *http.Request, resp *http.Response, accountID int64) {

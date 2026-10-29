@@ -88,7 +88,7 @@ func (b *bodyReader) readEvent() {
 		event = append(event, line...)
 		if int64(len(event)) > b.limit || b.oversize {
 			b.pending = event
-			b.oversize = !(err != bufio.ErrBufferFull && len(bytes.TrimSpace(line)) == 0)
+			b.oversize = err == bufio.ErrBufferFull || len(bytes.TrimSpace(line)) != 0
 			if err != nil && err != bufio.ErrBufferFull {
 				b.err = err
 			}
@@ -130,17 +130,17 @@ func rewriteEvent(event []byte, rewriter *Rewriter) []byte {
 	var out bytes.Buffer
 	for i, line := range lines {
 		if !bytes.HasPrefix(line, []byte("data:")) {
-			out.Write(line)
+			_, _ = out.Write(line)
 			continue
 		}
 		if i == first {
-			out.WriteString("data: ")
+			_, _ = out.WriteString("data: ")
 			// A multi-line JSON event must remain valid SSE after rewriting.
-			out.Write(bytes.ReplaceAll(adjusted, []byte("\n"), []byte("\ndata: ")))
+			_, _ = out.Write(bytes.ReplaceAll(adjusted, []byte("\n"), []byte("\ndata: ")))
 			if bytes.HasSuffix(line, []byte("\r\n")) {
-				out.WriteString("\r\n")
+				_, _ = out.WriteString("\r\n")
 			} else if bytes.HasSuffix(line, []byte("\n")) {
-				out.WriteByte('\n')
+				_ = out.WriteByte('\n')
 			}
 		}
 	}
