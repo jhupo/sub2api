@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usageadjustment"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -486,6 +487,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	}
 
 	readTimeout := s.openAIWSReadTimeout()
+	usageRewriter := usageadjustment.Rewriter{Percent: s.settingService.CacheReadAdjustmentPercent(ctx, account.ID), InputIncludesCache: true}
 	keepaliveInterval := time.Duration(0)
 	if reqStream && s.cfg != nil {
 		keepaliveInterval = time.Duration(s.cfg.Gateway.StreamKeepaliveInterval) * time.Second
@@ -562,6 +564,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				}
 			}
 		}
+		message = usageRewriter.Rewrite(message)
 		if errors.Is(readErr, errOpenAIWSInvalidEventJSON) || (readErr == nil && !json.Valid(message)) {
 			eventType, _, _ := parseOpenAIWSEventEnvelope(message)
 			if eventType == "" {

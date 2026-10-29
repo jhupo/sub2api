@@ -142,8 +142,10 @@ type SettingService struct {
 
 	// panelRateLimitCache 面板 API 限流配置进程内缓存（*cachedPanelRateLimitSettings）。
 	// 面板每个认证请求都会读取，禁止在热路径上直接访问 DB。
-	panelRateLimitCache atomic.Value
-	panelRateLimitSF    singleflight.Group
+	panelRateLimitCache      atomic.Value
+	panelRateLimitSF         singleflight.Group
+	cacheReadAdjustmentCache atomic.Value // *cachedCacheReadAdjustment
+	cacheReadAdjustmentMu    sync.Mutex
 
 	// accessBlockSettingsCache keeps the independently managed access-block
 	// policy off the panel rate-limit settings and request hot path.

@@ -1553,7 +1553,25 @@ export async function resetWebSearchUsage(payload: {
   );
 }
 
+export interface CacheReadAdjustmentSettings {
+  enabled: boolean;
+  percent: number;
+  account_ids: number[];
+}
+
+export async function getCacheReadAdjustmentSettings(): Promise<CacheReadAdjustmentSettings> {
+  const { data } = await apiClient.get<CacheReadAdjustmentSettings>("/admin/settings/cache-read-adjustment");
+  return data;
+}
+
+export async function updateCacheReadAdjustmentSettings(settings: CacheReadAdjustmentSettings): Promise<CacheReadAdjustmentSettings> {
+  const { data } = await apiClient.put<CacheReadAdjustmentSettings>("/admin/settings/cache-read-adjustment", settings);
+  return data;
+}
+
 export const settingsAPI = {
+  getCacheReadAdjustmentSettings,
+  updateCacheReadAdjustmentSettings,
   getSettings,
   updateSettings,
   testSmtpConnection,

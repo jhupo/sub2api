@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usageadjustment"
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
 )
@@ -12,15 +14,20 @@ import (
 // Dedicated passthrough sockets do not use the pool, but still carry multiple
 // turns. Validate ownership below the relay's usage and account-health hooks.
 type openAIWSResponseFrameConn struct {
-	inner    openaiwsv2.FrameConn
-	boundary openAIWSResponseBoundary
-	pending  [][]byte
+	inner             openaiwsv2.FrameConn
+	boundary          openAIWSResponseBoundary
+	pending           [][]byte
+	usagePercent      func(context.Context) int
+	usagePercentValue atomic.Int64
 }
 
 func (c *openAIWSResponseFrameConn) WriteFrame(ctx context.Context, kind coderws.MessageType, payload []byte) error {
 	if (kind == coderws.MessageText || kind == coderws.MessageBinary) && isOpenAIWSResponseCreate(payload) {
 		if err := c.boundary.begin(); err != nil {
 			return err
+		}
+		if c.usagePercent != nil {
+			c.usagePercentValue.Store(int64(c.usagePercent(ctx)))
 		}
 	}
 	return c.inner.WriteFrame(ctx, kind, payload)
@@ -82,7 +89,8 @@ func (c *openAIWSResponseFrameConn) readFrame(ctx context.Context) (coderws.Mess
 		c.boundary.retire()
 		c.pending = nil
 	}
-	return kind, payload, nil
+	rewriter := usageadjustment.Rewriter{Percent: int(c.usagePercentValue.Load()), InputIncludesCache: true}
+	return kind, rewriter.Rewrite(payload), nil
 }
 
 func (c *openAIWSResponseFrameConn) Close() error { return c.inner.Close() }

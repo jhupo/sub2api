@@ -17,6 +17,7 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usageadjustment"
 )
 
 // handleBedrockStreamingResponse 处理 Bedrock InvokeModelWithResponseStream 的 EventStream 响应
@@ -45,6 +46,7 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 	}
 
 	usage := &ClaudeUsage{}
+	usageRewriter := usageadjustment.Rewriter{Percent: s.settingService.CacheReadAdjustmentPercent(ctx, account.ID)}
 	var firstTokenMs *int
 	clientDisconnected := false
 
@@ -137,6 +139,7 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 			// 转换 Bedrock 特有的 amazon-bedrock-invocationMetrics 为标准 Anthropic usage 格式
 			// 同时移除该字段避免透传给客户端
 			sseData = transformBedrockInvocationMetrics(sseData)
+			sseData = usageRewriter.Rewrite(sseData)
 
 			// 解析 SSE 事件数据提取 usage
 			parseSSEUsagePassthrough(string(sseData), usage)

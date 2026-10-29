@@ -19,7 +19,7 @@ on:
 # 环境变量：合并 workflow_dispatch 输入和 repository variable
 # tag push 触发时读取 vars.SIMPLE_RELEASE，workflow_dispatch 时使用输入参数
 env:
-  SIMPLE_RELEASE: ${{ github.event.inputs.simple_release == 'true' || vars.SIMPLE_RELEASE == 'true' }}
+  SIMPLE_RELEASE: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') && (github.event.inputs.simple_release == 'true' || vars.SIMPLE_RELEASE == 'true') }}
   RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 permissions:
@@ -191,7 +191,7 @@ jobs:
 
       # Update DockerHub description
       - name: Update DockerHub description
-        if: ${{ env.SIMPLE_RELEASE != 'true' && env.DOCKERHUB_USERNAME != '' }}
+        if: ${{ !contains(env.RELEASE_TAG, '-') && env.SIMPLE_RELEASE != 'true' && env.DOCKERHUB_USERNAME != '' }}
         uses: peter-evans/dockerhub-description@v5
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -204,7 +204,7 @@ jobs:
 
       # Send Telegram notification
       - name: Send Telegram Notification
-        if: ${{ env.SIMPLE_RELEASE != 'true' }}
+        if: ${{ !contains(env.RELEASE_TAG, '-') && env.SIMPLE_RELEASE != 'true' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -274,7 +274,7 @@ jobs:
 
   sync-version-file:
     needs: [release]
-    if: ${{ needs.release.result == 'success' }}
+    if: ${{ needs.release.result == 'success' && !contains(github.event.inputs.tag || github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout default branch

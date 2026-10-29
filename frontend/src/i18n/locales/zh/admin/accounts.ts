@@ -1,5 +1,16 @@
 export default {
     accounts: {
+      cacheReadAdjustment: {
+        title: '缓存用量调整',
+        enabled: '启用缓存用量调整',
+        percent: '缓存读取转为普通输入的比例',
+        accounts: '生效账号（已选 {count}）',
+        addSelected: '加入列表已选账号',
+        clear: '清空选择',
+        loadFailed: '加载缓存用量调整失败',
+        saveFailed: '保存缓存用量调整失败',
+        saved: '缓存用量调整已保存',
+      },
       title: '账号管理',
       description: '管理 AI 平台账号和 Cookie',
       createAccount: '添加账号',

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usageadjustment"
+
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
@@ -1067,6 +1069,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			return nil
 		}
+		usageRewriter := usageadjustment.Rewriter{Percent: s.settingService.CacheReadAdjustmentPercent(ctx, account.ID), InputIncludesCache: true}
 		for {
 			readTimeout := s.openAIWSReadTimeout()
 			upstreamMessage, readErr := lease.ReadMessageWithContextTimeout(ctx, readTimeout)
@@ -1078,6 +1081,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					wroteDownstream,
 				)
 			}
+			upstreamMessage = usageRewriter.Rewrite(upstreamMessage)
 			if normalized, changed := normalizeCompletedImageGenerationStatus(upstreamMessage); changed {
 				upstreamMessage = normalized
 			}

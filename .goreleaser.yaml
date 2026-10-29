@@ -134,19 +134,19 @@ docker_manifests:
       - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-arm64"
 
   - name_template: "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:latest"
-    skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
+    skip_push: '{{ if or .Prerelease (eq .Env.DOCKERHUB_USERNAME "skip") }}true{{ else }}false{{ end }}'
     image_templates:
       - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-amd64"
       - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-arm64"
 
   - name_template: "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Major }}.{{ .Minor }}"
-    skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
+    skip_push: '{{ if or .Prerelease (eq .Env.DOCKERHUB_USERNAME "skip") }}true{{ else }}false{{ end }}'
     image_templates:
       - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-amd64"
       - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-arm64"
 
   - name_template: "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Major }}"
-    skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
+    skip_push: '{{ if or .Prerelease (eq .Env.DOCKERHUB_USERNAME "skip") }}true{{ else }}false{{ end }}'
     image_templates:
       - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-amd64"
       - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-arm64"
@@ -158,16 +158,19 @@ docker_manifests:
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-arm64"
 
   - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:latest"
+    skip_push: '{{ if .Prerelease }}true{{ else }}false{{ end }}'
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-arm64"
 
   - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Major }}.{{ .Minor }}"
+    skip_push: '{{ if .Prerelease }}true{{ else }}false{{ end }}'
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-arm64"
 
   - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Major }}"
+    skip_push: '{{ if .Prerelease }}true{{ else }}false{{ end }}'
     image_templates:
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
       - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-arm64"
@@ -204,7 +207,7 @@ release:
 
     **One-line install (Linux):**
     ```bash
-    curl -sSL https://raw.githubusercontent.com/{{ .Env.GITHUB_REPO_OWNER }}/{{ .Env.GITHUB_REPO_NAME }}/main/deploy/install.sh | sudo bash
+    curl -sSL https://raw.githubusercontent.com/{{ .Env.GITHUB_REPO_OWNER }}/{{ .Env.GITHUB_REPO_NAME }}/{{ .Tag }}/deploy/install.sh | sudo bash -s -- --version {{ .Tag }}
     ```
 
     **Manual download:**

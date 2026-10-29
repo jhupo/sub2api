@@ -1,5 +1,16 @@
 export default {
     accounts: {
+      cacheReadAdjustment: {
+        title: 'Cache usage adjustment',
+        enabled: 'Enable cache usage adjustment',
+        percent: 'Cache reads converted to ordinary input',
+        accounts: 'Accounts ({count} selected)',
+        addSelected: 'Add selected accounts',
+        clear: 'Clear selection',
+        loadFailed: 'Failed to load cache usage adjustment',
+        saveFailed: 'Failed to save cache usage adjustment',
+        saved: 'Cache usage adjustment saved',
+      },
       title: 'Account Management',
       description: 'Manage AI platform accounts and credentials',
       createAccount: 'Create Account',

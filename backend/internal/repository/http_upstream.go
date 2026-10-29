@@ -32,6 +32,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyutil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usageadjustment"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
@@ -160,9 +161,10 @@ type openAIHTTP2FallbackState struct {
 // 7. 代理变更时清空旧连接池，避免复用错误代理
 // 8. 账号并发数与连接池上限对应（账号隔离策略下）
 type httpUpstreamService struct {
-	cfg     *config.Config                  // 全局配置
-	mu      sync.RWMutex                    // 保护 clients map 的读写锁
-	clients map[string]*upstreamClientEntry // 客户端缓存池，key 由隔离策略决定
+	settings *service.SettingService
+	cfg      *config.Config                  // 全局配置
+	mu       sync.RWMutex                    // 保护 clients map 的读写锁
+	clients  map[string]*upstreamClientEntry // 客户端缓存池，key 由隔离策略决定
 	// OpenAI 走 HTTP/HTTPS 代理时的 H2->H1 回退状态（key=标准化 proxyKey）
 	openAIHTTP2Fallbacks sync.Map
 }
@@ -180,6 +182,28 @@ func NewHTTPUpstream(cfg *config.Config) service.HTTPUpstream {
 		cfg:     cfg,
 		clients: make(map[string]*upstreamClientEntry),
 	}
+}
+
+func NewConfiguredHTTPUpstream(cfg *config.Config, settings *service.SettingService) service.HTTPUpstream {
+	s := NewHTTPUpstream(cfg).(*httpUpstreamService)
+	s.settings = settings
+	return s
+}
+
+func (s *httpUpstreamService) adjustCacheReadUsage(req *http.Request, resp *http.Response, accountID int64) {
+	if req == nil || req.Method != http.MethodPost || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return
+	}
+	percent := s.settings.CacheReadAdjustmentPercent(req.Context(), accountID)
+	limit := int64(config.DefaultUpstreamResponseReadMaxBytes)
+	if s.cfg != nil && s.cfg.Gateway.UpstreamResponseReadMaxBytes > 0 {
+		limit = s.cfg.Gateway.UpstreamResponseReadMaxBytes
+	}
+	// Compatible providers sometimes omit object/type markers from Responses
+	// usage. The upstream endpoint still defines whether input includes cache.
+	path := strings.TrimRight(req.URL.Path, "/")
+	inclusive := strings.HasSuffix(path, "/responses") || strings.HasSuffix(path, "/completions") || strings.HasSuffix(path, "/responses/compact")
+	usageadjustment.WrapResponse(resp, percent, limit, inclusive)
 }
 
 // Do 执行 HTTP 请求
@@ -229,6 +253,7 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 
 	// 如果上游返回了压缩内容，解压后再交给业务层
 	decompressResponseBody(resp)
+	s.adjustCacheReadUsage(req, resp, accountID)
 
 	// 包装响应体，在关闭时自动减少计数并更新时间戳
 	// 这确保了流式响应（如 SSE）在完全读取前不会被淘汰
@@ -290,6 +315,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	}
 
 	decompressResponseBody(resp)
+	s.adjustCacheReadUsage(req, resp, accountID)
 
 	resp.Body = wrapTrackedBody(resp.Body, func() {
 		atomic.AddInt64(&entry.inFlight, -1)

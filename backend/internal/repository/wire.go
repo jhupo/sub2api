@@ -162,7 +162,7 @@ var ProviderSet = wire.NewSet(
 	NewProxyExitInfoProber,
 	NewClaudeUsageFetcher,
 	NewClaudeOAuthClient,
-	NewHTTPUpstream,
+	NewConfiguredHTTPUpstream,
 	NewOpenAIOAuthClient,
 	NewGrokOAuthClient,
 	NewGeminiOAuthClient,
