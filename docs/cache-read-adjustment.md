@@ -47,12 +47,14 @@ OpenAI 的 `input_tokens` / `prompt_tokens` 和 Gemini 的 `promptTokenCount` �
 
 ## 发布
 
-功能版本：`v0.2.38-cache.1`，基于 `v0.2.38`。
+功能版本：`v0.2.39`，基于 `v0.2.38`，使用正式版本号以兼容现有更新检查与升级脚本。
 
-推送带注释的 tag 会触发现有 Release 工作流，生成 Linux amd64/arm64 安装包和多架构 Docker 镜像。预发布 tag 强制使用完整发布流程，只推送对应版本的镜像标签，不覆盖 `latest`、主版本或次版本标签，也不向默认分支同步 VERSION。
+推送带注释的 tag 会触发现有 Release 工作流，生成 Linux amd64/arm64 安装包和多架构 Docker 镜像。本次发布使用完整发布流程；从 `0.2.38` 可通过管理后台检测并升级到 `0.2.39`。功能默认关闭，升级后在账号管理中手动开启。
 
 ```bash
-docker pull ghcr.io/jhupo/sub2api:0.2.38-cache.1
+docker pull ghcr.io/jhupo/sub2api:0.2.39
 ```
 
-Docker Compose 部署时将 `.env` 中的 `SUB2API_VERSION` 设置为 `0.2.38-cache.1` 后重新拉取并启动。二进制部署使用 Release 中匹配服务器架构的 `sub2api_0.2.38-cache.1_linux_amd64.tar.gz` 或 `sub2api_0.2.38-cache.1_linux_arm64.tar.gz`，并用 `checksums.txt` 校验。
+Docker Compose 部署时将 `.env` 中的 `SUB2API_VERSION` 设置为 `0.2.39` 后重新拉取并启动。二进制部署使用 Release 中匹配服务器架构的 `sub2api_0.2.39_linux_amd64.tar.gz` 或 `sub2api_0.2.39_linux_arm64.tar.gz`，并用 `checksums.txt` 校验。
+
+预发布 tag 强制使用完整发布流程，只推送对应版本的镜像标签，不覆盖 `latest`、主版本或次版本标签，也不向默认分支同步 VERSION。现有自动升级仅支持正式版本，故 `v0.2.38-cache.1` 不作为本次升级版本使用。
