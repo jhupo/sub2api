@@ -9,6 +9,7 @@ import type {
   CustomMenuItem,
   LoginAgreementDocument,
   NotifyEmailEntry,
+  PaginatedResponse,
 } from "@/types";
 
 export interface DefaultSubscriptionSetting {
@@ -1559,6 +1560,40 @@ export interface CacheReadAdjustmentSettings {
   account_ids: number[];
 }
 
+export interface CacheReadAdjustmentAccount {
+  id: number;
+  name: string;
+  platform: string;
+  missing: boolean;
+}
+
+export async function patchCacheReadAdjustmentSettings(patch: {
+  enabled?: boolean;
+  percent?: number;
+  add_account_ids?: number[];
+  remove_account_ids?: number[];
+}): Promise<CacheReadAdjustmentSettings> {
+  const { data } = await apiClient.patch<CacheReadAdjustmentSettings>("/admin/settings/cache-read-adjustment", patch);
+  return data;
+}
+
+export async function getCacheReadAdjustmentAccounts(page = 1, signal?: AbortSignal): Promise<PaginatedResponse<CacheReadAdjustmentAccount>> {
+  const { data } = await apiClient.get<PaginatedResponse<CacheReadAdjustmentAccount>>("/admin/settings/cache-read-adjustment/accounts", {
+    params: { page, page_size: 25 }, signal,
+  });
+  return data;
+}
+
+export async function addCacheReadAdjustmentAccounts(account_ids: number[]): Promise<CacheReadAdjustmentSettings> {
+  const { data } = await apiClient.post<CacheReadAdjustmentSettings>("/admin/settings/cache-read-adjustment/accounts", { account_ids });
+  return data;
+}
+
+export async function removeCacheReadAdjustmentAccounts(account_ids: number[]): Promise<CacheReadAdjustmentSettings> {
+  const { data } = await apiClient.delete<CacheReadAdjustmentSettings>("/admin/settings/cache-read-adjustment/accounts", { data: { account_ids } });
+  return data;
+}
+
 export async function getCacheReadAdjustmentSettings(): Promise<CacheReadAdjustmentSettings> {
   const { data } = await apiClient.get<CacheReadAdjustmentSettings>("/admin/settings/cache-read-adjustment");
   return data;
@@ -1570,6 +1605,10 @@ export async function updateCacheReadAdjustmentSettings(settings: CacheReadAdjus
 }
 
 export const settingsAPI = {
+  patchCacheReadAdjustmentSettings,
+  getCacheReadAdjustmentAccounts,
+  addCacheReadAdjustmentAccounts,
+  removeCacheReadAdjustmentAccounts,
   getCacheReadAdjustmentSettings,
   updateCacheReadAdjustmentSettings,
   getSettings,

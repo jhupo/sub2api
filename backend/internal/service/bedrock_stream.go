@@ -46,7 +46,7 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 	}
 
 	usage := &ClaudeUsage{}
-	usageRewriter := usageadjustment.Rewriter{Percent: s.settingService.CacheReadAdjustmentPercent(ctx, account.ID)}
+	usageRewriter := usageadjustment.Rewriter{Percent: s.settingService.CacheReadAdjustmentPercent(ctx, account.ID), Observe: usageadjustment.Observer(ctx, account.ID, resp.Header.Get("x-amzn-requestid"))}
 	var firstTokenMs *int
 	clientDisconnected := false
 

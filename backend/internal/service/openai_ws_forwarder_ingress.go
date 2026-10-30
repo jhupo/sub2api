@@ -1069,7 +1069,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			return nil
 		}
-		usageRewriter := usageadjustment.Rewriter{Percent: s.settingService.CacheReadAdjustmentPercent(ctx, account.ID), InputIncludesCache: true}
+		usageRewriter := usageadjustment.Rewriter{Percent: s.settingService.CacheReadAdjustmentPercent(ctx, account.ID), InputIncludesCache: true, Observe: usageadjustment.Observer(ctx, account.ID, "")}
 		for {
 			readTimeout := s.openAIWSReadTimeout()
 			upstreamMessage, readErr := lease.ReadMessageWithContextTimeout(ctx, readTimeout)

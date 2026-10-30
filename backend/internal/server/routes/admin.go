@@ -586,6 +586,10 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		adminSettings.PUT("/panel-rate-limit", h.Admin.Setting.UpdatePanelRateLimitSettings)
 		adminSettings.GET("/cache-read-adjustment", h.Admin.Setting.GetCacheReadAdjustmentSettings)
 		adminSettings.PUT("/cache-read-adjustment", h.Admin.Setting.UpdateCacheReadAdjustmentSettings)
+		adminSettings.PATCH("/cache-read-adjustment", h.Admin.Setting.PatchCacheReadAdjustmentSettings)
+		adminSettings.GET("/cache-read-adjustment/accounts", h.Admin.Setting.ListCacheReadAdjustmentAccounts)
+		adminSettings.POST("/cache-read-adjustment/accounts", h.Admin.Setting.AddCacheReadAdjustmentAccounts)
+		adminSettings.DELETE("/cache-read-adjustment/accounts", h.Admin.Setting.RemoveCacheReadAdjustmentAccounts)
 		// 流超时处理配置
 		adminSettings.GET("/stream-timeout", h.Admin.Setting.GetStreamTimeoutSettings)
 		adminSettings.PUT("/stream-timeout", h.Admin.Setting.UpdateStreamTimeoutSettings)
@@ -707,6 +711,7 @@ func registerUsageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		usage.GET("", h.Admin.Usage.List)
 		usage.GET("/stats", h.Admin.Usage.Stats)
+		usage.GET("/cache-read-adjustment/daily", h.Admin.Usage.CacheReadAdjustmentDaily)
 		usage.GET("/search-users", h.Admin.Usage.SearchUsers)
 		usage.GET("/search-api-keys", h.Admin.Usage.SearchAPIKeys)
 		usage.GET("/cleanup-tasks", h.Admin.Usage.ListCleanupTasks)

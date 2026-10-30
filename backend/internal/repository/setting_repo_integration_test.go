@@ -4,11 +4,58 @@ package repository
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
+
+func TestSettingRepoAtomicUpdateValue(t *testing.T) {
+	ctx := context.Background()
+	repo := NewSettingRepository(integrationEntClient).(*settingRepository)
+	other := NewSettingRepository(integrationEntClient).(*settingRepository)
+	key := fmt.Sprintf("test_atomic_setting_%d", time.Now().UnixNano())
+	t.Cleanup(func() { _ = repo.Delete(ctx, key) })
+	require.NoError(t, repo.UpdateValue(ctx, key, func(raw string) (string, error) {
+		require.Empty(t, raw)
+		return "0", nil
+	}))
+	var wg sync.WaitGroup
+	errorsCh := make(chan error, 20)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			writer := repo
+			if i%2 == 0 {
+				writer = other
+			}
+			errorsCh <- writer.UpdateValue(ctx, key, func(raw string) (string, error) {
+				n, err := strconv.Atoi(raw)
+				return strconv.Itoa(n + 1), err
+			})
+		}()
+	}
+	wg.Wait()
+	close(errorsCh)
+	for err := range errorsCh {
+		require.NoError(t, err)
+	}
+	value, err := repo.GetValue(ctx, key)
+	require.NoError(t, err)
+	require.Equal(t, "20", value)
+	failure := errors.New("reject change")
+	require.ErrorIs(t, repo.UpdateValue(ctx, key, func(string) (string, error) { return "", failure }), failure)
+	value, err = repo.GetValue(ctx, key)
+	require.NoError(t, err)
+	require.Equal(t, "20", value)
+}
 
 type SettingRepoSuite struct {
 	suite.Suite

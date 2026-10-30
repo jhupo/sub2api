@@ -207,7 +207,26 @@ export async function cancelCleanupTask(taskId: number): Promise<{ id: number; s
   return data
 }
 
+export interface CacheReadAdjustmentDay {
+  date: string
+  account_id: number
+  requests: number
+  priced_requests: number
+  shifted_tokens: number
+  additional_cost: number
+  balance_additional_cost: number
+  subscription_additional_cost: number
+}
+
+export async function getCacheReadAdjustmentDaily(params: {
+  start_date: string; end_date: string; timezone: string; account_id?: number
+}): Promise<CacheReadAdjustmentDay[]> {
+  const { data } = await apiClient.get<CacheReadAdjustmentDay[]>('/admin/usage/cache-read-adjustment/daily', { params })
+  return data
+}
+
 export const adminUsageAPI = {
+  getCacheReadAdjustmentDaily,
   list,
   getStats,
   searchUsers,

@@ -7,11 +7,40 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/tidwall/gjson"
 )
 
 type chunkBody struct {
 	io.Reader
 	closed bool
+}
+
+func TestWrapResponseCacheReadOnlyWithIdentityEncoding(t *testing.T) {
+	const payload = `{"type":"response.completed","response":{"id":"resp_probe","usage":{"input_tokens":10227,"input_tokens_details":{"cached_tokens":3968,"cache_write_tokens":320},"output_tokens":5,"total_tokens":10232}}}`
+	for _, percent := range []int{0, 10, 100} {
+		for _, encoding := range []string{"", "identity", " Identity "} {
+			resp := &http.Response{StatusCode: 200, Header: http.Header{
+				"Content-Type": {"text/event-stream; charset=utf-8"}, "Content-Encoding": {encoding},
+			}, Body: io.NopCloser(strings.NewReader("event: response.completed\ndata: " + payload + "\n\n"))}
+			WrapResponse(resp, percent, 1<<20, true)
+			data, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			event := strings.TrimSpace(strings.SplitN(string(data), "data: ", 2)[1])
+			if got := gjson.Get(event, "response.usage.input_tokens_details.cached_tokens").Int(); got != 3968-int64(3968*percent/100) {
+				t.Fatalf("encoding=%q percent=%d cache=%d", encoding, percent, got)
+			}
+			for path, want := range map[string]int64{
+				"input_tokens": 10227, "input_tokens_details.cache_write_tokens": 320, "output_tokens": 5, "total_tokens": 10232,
+			} {
+				if got := gjson.Get(event, "response.usage."+path).Int(); got != want {
+					t.Fatalf("%s changed to %d", path, got)
+				}
+			}
+		}
+	}
 }
 
 func (b *chunkBody) Read(p []byte) (int, error) {
@@ -80,3 +109,41 @@ func TestWrapResponseLimitsAndErrors(t *testing.T) {
 type errorReader struct{ err error }
 
 func (r errorReader) Read([]byte) (int, error) { return 0, r.err }
+
+func TestWrapResponseWithoutContentType(t *testing.T) {
+	const original = `{"usage":{"input_tokens":1000,"cache_read_input_tokens":8000}}`
+	const adjusted = `{"usage":{"input_tokens":1800,"cache_read_input_tokens":7200}}`
+	for _, tt := range []struct{ name, input, want string }{
+		{"json", original, adjusted},
+		{"json whitespace", " \n\t" + original, " \n\t" + adjusted},
+		{"data event", "data: " + original + "\n\n", "data: " + adjusted + "\n\n"},
+		{"named event", "event: message\ndata: " + original + "\n\n", "event: message\ndata: " + adjusted + "\n\n"},
+		{"heartbeat", ": ping\n\ndata: " + original + "\n\n", ": ping\n\ndata: " + adjusted + "\n\n"},
+		{"binary", "\x89PNG\r\n\x1a\n", "\x89PNG\r\n\x1a\n"},
+		{"short prefix", "dat", "dat"},
+		{"plain text", "example text", "example text"},
+		{"whitespace limit", strings.Repeat(" ", 513) + original, strings.Repeat(" ", 513) + original},
+		{"empty", "", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			source := &chunkBody{Reader: strings.NewReader(tt.input)}
+			resp := &http.Response{StatusCode: 200, Header: http.Header{}, Body: source}
+			WrapResponse(resp, 10, 1<<20, false)
+			got, err := io.ReadAll(resp.Body)
+			if err != nil || string(got) != tt.want {
+				t.Fatalf("got=%q err=%v want=%q", got, err, tt.want)
+			}
+			_ = resp.Body.Close()
+			if !source.closed {
+				t.Fatal("source not closed")
+			}
+		})
+	}
+	failure := errors.New("upstream read failed")
+	resp := &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(errorReader{failure})}
+	WrapResponse(resp, 10, 1<<20, false)
+	_, err := io.ReadAll(resp.Body)
+	if !errors.Is(err, failure) {
+		t.Fatalf("lost sniffing error: %v", err)
+	}
+}

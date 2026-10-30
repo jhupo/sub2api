@@ -84,6 +84,7 @@ func (UsageLog) Fields() []ent.Field {
 			Default(0),
 		field.Int("cache_read_tokens").
 			Default(0),
+		field.JSON("cache_read_adjustment", map[string]any{}).Optional(),
 		field.Int("cache_creation_5m_tokens").
 			Default(0),
 		field.Int("cache_creation_1h_tokens").

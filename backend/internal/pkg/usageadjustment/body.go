@@ -10,19 +10,34 @@ import (
 
 // WrapResponse rewrites before usage extraction, so billing and the client see
 // the same counters. It leaves errors and unsupported binary formats untouched.
-func WrapResponse(resp *http.Response, percent int, maxBytes int64, inputIncludesCache bool) {
-	if resp == nil || resp.Body == nil || percent <= 0 || percent > 100 || resp.StatusCode < 200 || resp.StatusCode >= 300 || resp.Header.Get("Content-Encoding") != "" {
+func WrapResponse(resp *http.Response, percent int, maxBytes int64, inputIncludesCache bool, observers ...func(string, Snapshot)) {
+	if resp == nil || resp.Body == nil || percent <= 0 || percent > 100 || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return
+	}
+	encoding := strings.TrimSpace(resp.Header.Get("Content-Encoding"))
+	if encoding != "" && !strings.EqualFold(encoding, "identity") {
 		return
 	}
 	typ := strings.ToLower(resp.Header.Get("Content-Type"))
 	stream := strings.Contains(typ, "text/event-stream")
-	if !stream && !strings.Contains(typ, "json") {
+	if strings.TrimSpace(typ) == "" {
+		buffered := bufio.NewReaderSize(resp.Body, 32<<10)
+		resp.Body = &bufferedBody{Reader: buffered, Closer: resp.Body}
+		var supported bool
+		stream, supported = detectUsageBody(buffered)
+		if !supported {
+			return
+		}
+	} else if !stream && !strings.Contains(typ, "json") {
 		return
 	}
 	if maxBytes <= 0 {
 		maxBytes = 64 << 20
 	}
 	b := &bodyReader{source: resp.Body, rewriter: Rewriter{Percent: percent, InputIncludesCache: inputIncludesCache}, limit: maxBytes}
+	if len(observers) > 0 {
+		b.rewriter.Observe = observers[0]
+	}
 	if stream {
 		b.stream = bufio.NewReaderSize(resp.Body, 32<<10)
 	}
@@ -31,6 +46,40 @@ func WrapResponse(resp *http.Response, percent int, maxBytes int64, inputInclude
 	resp.Header.Del("Content-Length")
 	resp.Header.Del("ETag")
 	resp.Header.Del("Content-MD5")
+}
+
+type bufferedBody struct {
+	io.Reader
+	io.Closer
+}
+
+// Some Codex responses omit Content-Type. Peek only far enough to identify
+// JSON or SSE, retaining every byte and the original body's close behavior.
+func detectUsageBody(reader *bufio.Reader) (stream, supported bool) {
+	for offset := 0; offset < 512; offset++ {
+		prefix, err := reader.Peek(offset + 1)
+		if err != nil {
+			return false, false
+		}
+		switch prefix[offset] {
+		case ' ', '\t', '\r', '\n':
+			continue
+		case '{', '[':
+			return false, true
+		case ':':
+			return true, true
+		case 'd', 'e':
+			marker := "data:"
+			if prefix[offset] == 'e' {
+				marker = "event:"
+			}
+			prefix, err = reader.Peek(offset + len(marker))
+			return true, err == nil && string(prefix[offset:]) == marker
+		default:
+			return false, false
+		}
+	}
+	return false, false
 }
 
 type bodyReader struct {

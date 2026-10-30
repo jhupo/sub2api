@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usageadjustment"
 	"net/http"
 	"net/url"
 	"strings"
@@ -947,7 +948,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		limitAttempts: true,
 		inner: &openAIWSResponseFrameConn{inner: upstreamFrameConn, usagePercent: func(turnCtx context.Context) int {
 			return s.settingService.CacheReadAdjustmentPercent(turnCtx, account.ID)
-		}},
+		}, usageObserver: usageadjustment.Observer(ctx, account.ID, "")},
 		activeReadTimeout: s.openAIWSPassthroughIdleTimeout(),
 		deadlineChanged:   make(chan struct{}, 1),
 	}

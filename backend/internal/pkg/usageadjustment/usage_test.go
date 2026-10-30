@@ -87,3 +87,24 @@ func TestAnthropicCumulativeUsageDoesNotCompound(t *testing.T) {
 		}
 	}
 }
+
+func TestRewriteResponsesCacheAttributionConservesTotals(t *testing.T) {
+	const body = `{"type":"response.completed","response":{"usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":19,"cache_write_tokens":80},"attribution":{"items":{"msg.1":{"input_tokens":60,"cached_tokens":9,"cache_write_tokens":50,"content":[{"cached_tokens":4,"cache_write_tokens":20},{"cached_tokens":5,"cache_write_tokens":30}]}},"request_fields":{"instructions":{"input_tokens":40,"cached_tokens":10,"cache_write_tokens":30}}}}}}`
+	for _, percent := range []int{10, 25, 100} {
+		r := Rewriter{Percent: percent}
+		got := r.Rewrite([]byte(body))
+		u := gjson.GetBytes(got, "response.usage")
+		item := u.Get(`attribution.items.msg\.1`)
+		instructions := u.Get("attribution.request_fields.instructions")
+		cached := u.Get("input_tokens_details.cached_tokens").Int()
+		if cached != 19-int64(19*percent/100) || cached != item.Get("cached_tokens").Int()+instructions.Get("cached_tokens").Int() {
+			t.Fatalf("percent=%d inconsistent attribution: %s", percent, got)
+		}
+		if item.Get("cached_tokens").Int() != item.Get("content.0.cached_tokens").Int()+item.Get("content.1.cached_tokens").Int() {
+			t.Fatalf("inconsistent content attribution: %s", got)
+		}
+		if item.Get("cache_write_tokens").Int() != 50 || item.Get("content.0.cache_write_tokens").Int() != 20 || instructions.Get("cache_write_tokens").Int() != 30 || u.Get("input_tokens_details.cache_write_tokens").Int() != 80 || u.Get("input_tokens").Int() != 100 {
+			t.Fatalf("creation or total input changed: %s", got)
+		}
+	}
+}

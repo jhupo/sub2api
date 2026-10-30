@@ -14,6 +14,7 @@ import (
 type Rewriter struct {
 	Percent            int
 	InputIncludesCache bool
+	Observe            func(string, Snapshot)
 	input              int64
 	hasInput           bool
 	cached             int64
@@ -89,6 +90,9 @@ func (r *Rewriter) rewriteObject(body []byte, root gjson.Result, prefix string) 
 				if strings.HasSuffix(key, ".cached_tokens") {
 					detailsPath := strings.TrimSuffix(key, "cached_tokens") + "cached_tokens_details"
 					body = r.rewriteBreakdown(body, base+detailsPath, u.Get(detailsPath), cached)
+					if key == "input_tokens_details.cached_tokens" {
+						body = r.rewriteAttribution(body, base+"attribution", u.Get("attribution"), cached)
+					}
 				}
 				if key == "prompt_cache_hit_tokens" {
 					if miss, ok := tokenCount(u.Get("prompt_cache_miss_tokens")); ok && miss <= math.MaxInt64-shift {
@@ -97,35 +101,68 @@ func (r *Rewriter) rewriteObject(body []byte, root gjson.Result, prefix string) 
 				}
 			}
 		}
+		if r.Observe != nil {
+			cached := r.cached
+			if inclusive {
+				cached = 0
+				for _, key := range []string{"input_tokens_details.cached_tokens", "prompt_tokens_details.cached_tokens", "cache_read_input_tokens", "cache_read_tokens", "cached_tokens", "prompt_cache_hit_tokens"} {
+					if n, ok := tokenCount(u.Get(key)); ok && n > 0 {
+						cached = n
+						break
+					}
+				}
+			}
+			r.observe(root, cached)
+		}
 	}
 	for _, path := range []string{"usageMetadata", "response.usageMetadata"} {
 		if cached, ok := tokenCount(root.Get(path + ".cachedContentTokenCount")); ok && cached > 0 {
 			body = set(body, prefix+path+".cachedContentTokenCount", cached-r.shift(cached))
 			body = r.rewriteBreakdown(body, prefix+path+".cacheTokensDetails", root.Get(path+".cacheTokensDetails"), cached)
+			r.observe(root, cached)
 		}
 	}
 	return body
 }
 
-func (r *Rewriter) rewriteBreakdown(body []byte, path string, details gjson.Result, total int64) []byte {
-	type counter struct {
-		path           string
-		value, removed int64
+func (r *Rewriter) observe(root gjson.Result, cached int64) {
+	if r.Observe == nil || cached <= 0 || r.shift(cached) == 0 {
+		return
 	}
-	var counters []counter
+	id := root.Get("response.id").String()
+	if id == "" {
+		id = root.Get("message.id").String()
+	}
+	if id == "" {
+		id = root.Get("id").String()
+	}
+	r.Observe(id, Snapshot{Percent: r.Percent, OriginalCacheTokens: cached, ShiftedTokens: r.shift(cached)})
+}
+
+func (r *Rewriter) rewriteBreakdown(body []byte, path string, details gjson.Result, total int64) []byte {
+	var counters []cacheCounter
 	if details.IsArray() {
 		for i, entry := range details.Array() {
 			if n, ok := tokenCount(entry.Get("tokenCount")); ok {
-				counters = append(counters, counter{path: path + "." + strconv.Itoa(i) + ".tokenCount", value: n, removed: r.shift(n)})
+				counters = append(counters, cacheCounter{path: path + "." + strconv.Itoa(i) + ".tokenCount", value: n, removed: r.shift(n)})
 			}
 		}
 	} else if details.IsObject() {
 		for _, key := range []string{"text_tokens", "audio_tokens", "image_tokens"} {
 			if n, ok := tokenCount(details.Get(key)); ok {
-				counters = append(counters, counter{path: path + "." + key, value: n, removed: r.shift(n)})
+				counters = append(counters, cacheCounter{path: path + "." + key, value: n, removed: r.shift(n)})
 			}
 		}
 	}
+	return rewriteCacheCounters(body, counters, total, r.shift(total))
+}
+
+type cacheCounter struct {
+	path           string
+	value, removed int64
+}
+
+func rewriteCacheCounters(body []byte, counters []cacheCounter, total, targetRemoved int64) []byte {
 	var sum, removed int64
 	for _, c := range counters {
 		if sum > math.MaxInt64-c.value {
@@ -138,14 +175,44 @@ func (r *Rewriter) rewriteBreakdown(body []byte, path string, details gjson.Resu
 	// add up to the adjusted aggregate cache count.
 	remainder := int64(0)
 	if sum == total {
-		remainder = r.shift(total) - removed
+		remainder = targetRemoved - removed
 	}
-	for _, c := range counters {
+	for i := range counters {
+		c := &counters[i]
 		if remainder > 0 && c.value > c.removed {
 			c.removed++
 			remainder--
 		}
 		body = set(body, c.path, c.value-c.removed)
+	}
+	return body
+}
+
+func (r *Rewriter) rewriteAttribution(body []byte, path string, attribution gjson.Result, total int64) []byte {
+	var counters []cacheCounter
+	var entries []gjson.Result
+	for _, section := range []string{"items", "request_fields"} {
+		attribution.Get(section).ForEach(func(key, entry gjson.Result) bool {
+			if cached, ok := tokenCount(entry.Get("cached_tokens")); ok {
+				escapedKey := strings.NewReplacer(`\`, `\\`, `.`, `\.`, `*`, `\*`, `?`, `\?`).Replace(key.String())
+				counters = append(counters, cacheCounter{path: path + "." + section + "." + escapedKey + ".cached_tokens", value: cached, removed: r.shift(cached)})
+				entries = append(entries, entry)
+			}
+			return true
+		})
+	}
+	body = rewriteCacheCounters(body, counters, total, r.shift(total))
+	for i, entry := range entries {
+		var contentCounters []cacheCounter
+		for j, content := range entry.Get("content").Array() {
+			if cached, ok := tokenCount(content.Get("cached_tokens")); ok {
+				contentCounters = append(contentCounters, cacheCounter{
+					path:  strings.TrimSuffix(counters[i].path, "cached_tokens") + "content." + strconv.Itoa(j) + ".cached_tokens",
+					value: cached, removed: r.shift(cached),
+				})
+			}
+		}
+		body = rewriteCacheCounters(body, contentCounters, counters[i].value, counters[i].removed)
 	}
 	return body
 }

@@ -448,6 +448,26 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.RateMultiplier = multiplier
 	}
 	usageLog.AccountRateMultiplier = &accountRateMultiplier
+	recordCacheReadAdjustment(ctx, usageLog, firstNonEmpty(result.RequestID, result.ResponseID), func(shift int) (*CostBreakdown, error) {
+		if result.NonBillableUpstreamError {
+			return &CostBreakdown{}, nil
+		}
+		if result.Usage.ImageInputTokens > 0 || result.AudioUsage != nil {
+			return nil, errCacheAdjustmentMediaPricing
+		}
+		original := *result
+		original.Usage.CacheReadInputTokens += shift
+		originalTokens := tokens
+		originalTokens.InputTokens -= shift
+		originalTokens.CacheReadTokens += shift
+		originalTier := serviceTier
+		if groupBillsOpenAIFastAtStandard(apiKey, billingAccount, serviceTier) {
+			originalTier = ""
+		}
+		return s.calculateOpenAIRecordUsageCost(ctx, &original, apiKey, billingModels,
+			multiplier, imageMultiplier, videoMultiplier, baseMultiplier, originalTokens,
+			originalTier, longContextBillingGate, pricingAt)
+	})
 	usageLog.BillingType = billingType
 	usageLog.Stream = result.Stream
 	if input.CyberBlocked {

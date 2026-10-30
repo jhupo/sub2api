@@ -393,6 +393,18 @@ func (_u *UsageLogUpdate) AddCacheReadTokens(v int) *UsageLogUpdate {
 	return _u
 }
 
+// SetCacheReadAdjustment sets the "cache_read_adjustment" field.
+func (_u *UsageLogUpdate) SetCacheReadAdjustment(v map[string]interface{}) *UsageLogUpdate {
+	_u.mutation.SetCacheReadAdjustment(v)
+	return _u
+}
+
+// ClearCacheReadAdjustment clears the value of the "cache_read_adjustment" field.
+func (_u *UsageLogUpdate) ClearCacheReadAdjustment() *UsageLogUpdate {
+	_u.mutation.ClearCacheReadAdjustment()
+	return _u
+}
+
 // SetCacheCreation5mTokens sets the "cache_creation_5m_tokens" field.
 func (_u *UsageLogUpdate) SetCacheCreation5mTokens(v int) *UsageLogUpdate {
 	_u.mutation.ResetCacheCreation5mTokens()
@@ -1216,6 +1228,12 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedCacheReadTokens(); ok {
 		_spec.AddField(usagelog.FieldCacheReadTokens, field.TypeInt, value)
 	}
+	if value, ok := _u.mutation.CacheReadAdjustment(); ok {
+		_spec.SetField(usagelog.FieldCacheReadAdjustment, field.TypeJSON, value)
+	}
+	if _u.mutation.CacheReadAdjustmentCleared() {
+		_spec.ClearField(usagelog.FieldCacheReadAdjustment, field.TypeJSON)
+	}
 	if value, ok := _u.mutation.CacheCreation5mTokens(); ok {
 		_spec.SetField(usagelog.FieldCacheCreation5mTokens, field.TypeInt, value)
 	}
@@ -1904,6 +1922,18 @@ func (_u *UsageLogUpdateOne) SetNillableCacheReadTokens(v *int) *UsageLogUpdateO
 // AddCacheReadTokens adds value to the "cache_read_tokens" field.
 func (_u *UsageLogUpdateOne) AddCacheReadTokens(v int) *UsageLogUpdateOne {
 	_u.mutation.AddCacheReadTokens(v)
+	return _u
+}
+
+// SetCacheReadAdjustment sets the "cache_read_adjustment" field.
+func (_u *UsageLogUpdateOne) SetCacheReadAdjustment(v map[string]interface{}) *UsageLogUpdateOne {
+	_u.mutation.SetCacheReadAdjustment(v)
+	return _u
+}
+
+// ClearCacheReadAdjustment clears the value of the "cache_read_adjustment" field.
+func (_u *UsageLogUpdateOne) ClearCacheReadAdjustment() *UsageLogUpdateOne {
+	_u.mutation.ClearCacheReadAdjustment()
 	return _u
 }
 
@@ -2759,6 +2789,12 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.AddedCacheReadTokens(); ok {
 		_spec.AddField(usagelog.FieldCacheReadTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CacheReadAdjustment(); ok {
+		_spec.SetField(usagelog.FieldCacheReadAdjustment, field.TypeJSON, value)
+	}
+	if _u.mutation.CacheReadAdjustmentCleared() {
+		_spec.ClearField(usagelog.FieldCacheReadAdjustment, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.CacheCreation5mTokens(); ok {
 		_spec.SetField(usagelog.FieldCacheCreation5mTokens, field.TypeInt, value)

@@ -202,7 +202,7 @@ func (s *httpUpstreamService) adjustCacheReadUsage(req *http.Request, resp *http
 	// usage. The upstream endpoint still defines whether input includes cache.
 	path := strings.TrimRight(req.URL.Path, "/")
 	inclusive := strings.HasSuffix(path, "/responses") || strings.HasSuffix(path, "/completions") || strings.HasSuffix(path, "/responses/compact")
-	usageadjustment.WrapResponse(resp, percent, limit, inclusive)
+	usageadjustment.WrapResponse(resp, percent, limit, inclusive, usageadjustment.Observer(req.Context(), accountID, resp.Header.Get("x-request-id")))
 }
 
 // Do 执行 HTTP 请求

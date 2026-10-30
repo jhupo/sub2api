@@ -950,6 +950,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 
 	// 计算费用
 	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, pricingAt)
+	adjustmentBillingModel := billingModel
 	// response_model：按上游成功响应自报的模型计费（渠道显式开启才生效）。
 	// 采纳条件见 responseModelBillingDeclaration + hasIdentifiedResponseModelPricing
 	// + responseModelBillingAdoptable。任一条件不满足都静默回落基线，即开启本模式前的
@@ -968,6 +969,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 				// 因此这里不改写它，改由日志记录实际生效的计费基准。
 				logResponseModelBillingApplied("service.gateway", account, result.RequestID, billingModel, responseModel, cost, responseCost)
 				cost = responseCost
+				adjustmentBillingModel = responseModel
 			}
 		}
 	}
@@ -991,6 +993,15 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	accountRateMultiplier := account.BillingRateMultiplier()
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
 		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
+	recordCacheReadAdjustment(ctx, usageLog, result.RequestID, func(shift int) (*CostBreakdown, error) {
+		if result.Usage.AudioInputTokens > 0 || result.Usage.AudioCacheReadTokens > 0 || result.AudioUsage != nil {
+			return nil, errCacheAdjustmentMediaPricing
+		}
+		original := *result
+		original.Usage.InputTokens -= shift
+		original.Usage.CacheReadInputTokens += shift
+		return s.calculateRecordUsageCost(ctx, &original, apiKey, adjustmentBillingModel, multiplier, imageMultiplier, pricingAt), nil
+	})
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
 	if apiKey.GroupID != nil {

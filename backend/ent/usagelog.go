@@ -61,6 +61,8 @@ type UsageLog struct {
 	CacheCreationTokens int `json:"cache_creation_tokens,omitempty"`
 	// CacheReadTokens holds the value of the "cache_read_tokens" field.
 	CacheReadTokens int `json:"cache_read_tokens,omitempty"`
+	// CacheReadAdjustment holds the value of the "cache_read_adjustment" field.
+	CacheReadAdjustment map[string]interface{} `json:"cache_read_adjustment,omitempty"`
 	// CacheCreation5mTokens holds the value of the "cache_creation_5m_tokens" field.
 	CacheCreation5mTokens int `json:"cache_creation_5m_tokens,omitempty"`
 	// CacheCreation1hTokens holds the value of the "cache_creation_1h_tokens" field.
@@ -200,7 +202,7 @@ func (*UsageLog) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case usagelog.FieldImageSizeBreakdown:
+		case usagelog.FieldCacheReadAdjustment, usagelog.FieldImageSizeBreakdown:
 			values[i] = new([]byte)
 		case usagelog.FieldUpstreamModelMismatch, usagelog.FieldLongContextBillingApplied, usagelog.FieldStream, usagelog.FieldCacheTTLOverridden:
 			values[i] = new(sql.NullBool)
@@ -356,6 +358,14 @@ func (_m *UsageLog) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field cache_read_tokens", values[i])
 			} else if value.Valid {
 				_m.CacheReadTokens = int(value.Int64)
+			}
+		case usagelog.FieldCacheReadAdjustment:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field cache_read_adjustment", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.CacheReadAdjustment); err != nil {
+					return fmt.Errorf("unmarshal field cache_read_adjustment: %w", err)
+				}
 			}
 		case usagelog.FieldCacheCreation5mTokens:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -675,6 +685,9 @@ func (_m *UsageLog) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("cache_read_tokens=")
 	builder.WriteString(fmt.Sprintf("%v", _m.CacheReadTokens))
+	builder.WriteString(", ")
+	builder.WriteString("cache_read_adjustment=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CacheReadAdjustment))
 	builder.WriteString(", ")
 	builder.WriteString("cache_creation_5m_tokens=")
 	builder.WriteString(fmt.Sprintf("%v", _m.CacheCreation5mTokens))

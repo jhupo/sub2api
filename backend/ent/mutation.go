@@ -46930,6 +46930,7 @@ type UsageLogMutation struct {
 	addcache_creation_tokens     *int
 	cache_read_tokens            *int
 	addcache_read_tokens         *int
+	cache_read_adjustment        *map[string]interface{}
 	cache_creation_5m_tokens     *int
 	addcache_creation_5m_tokens  *int
 	cache_creation_1h_tokens     *int
@@ -48001,6 +48002,55 @@ func (m *UsageLogMutation) AddedCacheReadTokens() (r int, exists bool) {
 func (m *UsageLogMutation) ResetCacheReadTokens() {
 	m.cache_read_tokens = nil
 	m.addcache_read_tokens = nil
+}
+
+// SetCacheReadAdjustment sets the "cache_read_adjustment" field.
+func (m *UsageLogMutation) SetCacheReadAdjustment(value map[string]interface{}) {
+	m.cache_read_adjustment = &value
+}
+
+// CacheReadAdjustment returns the value of the "cache_read_adjustment" field in the mutation.
+func (m *UsageLogMutation) CacheReadAdjustment() (r map[string]interface{}, exists bool) {
+	v := m.cache_read_adjustment
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCacheReadAdjustment returns the old "cache_read_adjustment" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldCacheReadAdjustment(ctx context.Context) (v map[string]interface{}, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCacheReadAdjustment is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCacheReadAdjustment requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCacheReadAdjustment: %w", err)
+	}
+	return oldValue.CacheReadAdjustment, nil
+}
+
+// ClearCacheReadAdjustment clears the value of the "cache_read_adjustment" field.
+func (m *UsageLogMutation) ClearCacheReadAdjustment() {
+	m.cache_read_adjustment = nil
+	m.clearedFields[usagelog.FieldCacheReadAdjustment] = struct{}{}
+}
+
+// CacheReadAdjustmentCleared returns if the "cache_read_adjustment" field was cleared in this mutation.
+func (m *UsageLogMutation) CacheReadAdjustmentCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldCacheReadAdjustment]
+	return ok
+}
+
+// ResetCacheReadAdjustment resets all changes to the "cache_read_adjustment" field.
+func (m *UsageLogMutation) ResetCacheReadAdjustment() {
+	m.cache_read_adjustment = nil
+	delete(m.clearedFields, usagelog.FieldCacheReadAdjustment)
 }
 
 // SetCacheCreation5mTokens sets the "cache_creation_5m_tokens" field.
@@ -49660,7 +49710,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 47)
+	fields := make([]string, 0, 48)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -49717,6 +49767,9 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.cache_read_tokens != nil {
 		fields = append(fields, usagelog.FieldCacheReadTokens)
+	}
+	if m.cache_read_adjustment != nil {
+		fields = append(fields, usagelog.FieldCacheReadAdjustment)
 	}
 	if m.cache_creation_5m_tokens != nil {
 		fields = append(fields, usagelog.FieldCacheCreation5mTokens)
@@ -49848,6 +49901,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.CacheCreationTokens()
 	case usagelog.FieldCacheReadTokens:
 		return m.CacheReadTokens()
+	case usagelog.FieldCacheReadAdjustment:
+		return m.CacheReadAdjustment()
 	case usagelog.FieldCacheCreation5mTokens:
 		return m.CacheCreation5mTokens()
 	case usagelog.FieldCacheCreation1hTokens:
@@ -49951,6 +50006,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldCacheCreationTokens(ctx)
 	case usagelog.FieldCacheReadTokens:
 		return m.OldCacheReadTokens(ctx)
+	case usagelog.FieldCacheReadAdjustment:
+		return m.OldCacheReadAdjustment(ctx)
 	case usagelog.FieldCacheCreation5mTokens:
 		return m.OldCacheCreation5mTokens(ctx)
 	case usagelog.FieldCacheCreation1hTokens:
@@ -50148,6 +50205,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCacheReadTokens(v)
+		return nil
+	case usagelog.FieldCacheReadAdjustment:
+		v, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCacheReadAdjustment(v)
 		return nil
 	case usagelog.FieldCacheCreation5mTokens:
 		v, ok := value.(int)
@@ -50660,6 +50724,9 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldSubscriptionID) {
 		fields = append(fields, usagelog.FieldSubscriptionID)
 	}
+	if m.FieldCleared(usagelog.FieldCacheReadAdjustment) {
+		fields = append(fields, usagelog.FieldCacheReadAdjustment)
+	}
 	if m.FieldCleared(usagelog.FieldAccountRateMultiplier) {
 		fields = append(fields, usagelog.FieldAccountRateMultiplier)
 	}
@@ -50739,6 +50806,9 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldSubscriptionID:
 		m.ClearSubscriptionID()
+		return nil
+	case usagelog.FieldCacheReadAdjustment:
+		m.ClearCacheReadAdjustment()
 		return nil
 	case usagelog.FieldAccountRateMultiplier:
 		m.ClearAccountRateMultiplier()
@@ -50840,6 +50910,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldCacheReadTokens:
 		m.ResetCacheReadTokens()
+		return nil
+	case usagelog.FieldCacheReadAdjustment:
+		m.ResetCacheReadAdjustment()
 		return nil
 	case usagelog.FieldCacheCreation5mTokens:
 		m.ResetCacheCreation5mTokens()

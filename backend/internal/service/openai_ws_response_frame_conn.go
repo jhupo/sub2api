@@ -18,6 +18,7 @@ type openAIWSResponseFrameConn struct {
 	boundary          openAIWSResponseBoundary
 	pending           [][]byte
 	usagePercent      func(context.Context) int
+	usageObserver     func(string, usageadjustment.Snapshot)
 	usagePercentValue atomic.Int64
 }
 
@@ -89,7 +90,7 @@ func (c *openAIWSResponseFrameConn) readFrame(ctx context.Context) (coderws.Mess
 		c.boundary.retire()
 		c.pending = nil
 	}
-	rewriter := usageadjustment.Rewriter{Percent: int(c.usagePercentValue.Load()), InputIncludesCache: true}
+	rewriter := usageadjustment.Rewriter{Percent: int(c.usagePercentValue.Load()), InputIncludesCache: true, Observe: c.usageObserver}
 	return kind, rewriter.Rewrite(payload), nil
 }
 

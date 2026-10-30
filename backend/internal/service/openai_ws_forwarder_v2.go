@@ -487,7 +487,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	}
 
 	readTimeout := s.openAIWSReadTimeout()
-	usageRewriter := usageadjustment.Rewriter{Percent: s.settingService.CacheReadAdjustmentPercent(ctx, account.ID), InputIncludesCache: true}
+	usageRewriter := usageadjustment.Rewriter{Percent: s.settingService.CacheReadAdjustmentPercent(ctx, account.ID), InputIncludesCache: true, Observe: usageadjustment.Observer(ctx, account.ID, "")}
 	keepaliveInterval := time.Duration(0)
 	if reqStream && s.cfg != nil {
 		keepaliveInterval = time.Duration(s.cfg.Gateway.StreamKeepaliveInterval) * time.Second

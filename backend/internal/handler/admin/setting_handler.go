@@ -63,6 +63,7 @@ type SettingHandler struct {
 	totpService              *service.TotpService
 	userService              *service.UserService
 	upstreamStateManager     *service.OpenAIGatewayService
+	cacheAdjustmentAccounts  cacheAdjustmentAccountReader
 }
 
 func (h *SettingHandler) SetUpstreamStateManager(manager *service.OpenAIGatewayService) {
