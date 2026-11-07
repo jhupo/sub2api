@@ -68,6 +68,26 @@ func (_c *APIKeyCreate) SetNillableDeletedAt(v *time.Time) *APIKeyCreate {
 	return _c
 }
 
+// SetSubscriptionPriority sets the "subscription_priority" field.
+func (_c *APIKeyCreate) SetSubscriptionPriority(v []int64) *APIKeyCreate {
+	_c.mutation.SetSubscriptionPriority(v)
+	return _c
+}
+
+// SetAllowWalletFallback sets the "allow_wallet_fallback" field.
+func (_c *APIKeyCreate) SetAllowWalletFallback(v bool) *APIKeyCreate {
+	_c.mutation.SetAllowWalletFallback(v)
+	return _c
+}
+
+// SetNillableAllowWalletFallback sets the "allow_wallet_fallback" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableAllowWalletFallback(v *bool) *APIKeyCreate {
+	if v != nil {
+		_c.SetAllowWalletFallback(*v)
+	}
+	return _c
+}
+
 // SetUserID sets the "user_id" field.
 func (_c *APIKeyCreate) SetUserID(v int64) *APIKeyCreate {
 	_c.mutation.SetUserID(v)
@@ -417,6 +437,10 @@ func (_c *APIKeyCreate) defaults() error {
 		v := apikey.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
+	if _, ok := _c.mutation.AllowWalletFallback(); !ok {
+		v := apikey.DefaultAllowWalletFallback
+		_c.mutation.SetAllowWalletFallback(v)
+	}
 	if _, ok := _c.mutation.FundingSource(); !ok {
 		v := apikey.DefaultFundingSource
 		_c.mutation.SetFundingSource(v)
@@ -467,6 +491,9 @@ func (_c *APIKeyCreate) check() error {
 	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
 		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "APIKey.updated_at"`)}
+	}
+	if _, ok := _c.mutation.AllowWalletFallback(); !ok {
+		return &ValidationError{Name: "allow_wallet_fallback", err: errors.New(`ent: missing required field "APIKey.allow_wallet_fallback"`)}
 	}
 	if _, ok := _c.mutation.UserID(); !ok {
 		return &ValidationError{Name: "user_id", err: errors.New(`ent: missing required field "APIKey.user_id"`)}
@@ -568,6 +595,14 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.DeletedAt(); ok {
 		_spec.SetField(apikey.FieldDeletedAt, field.TypeTime, value)
 		_node.DeletedAt = &value
+	}
+	if value, ok := _c.mutation.SubscriptionPriority(); ok {
+		_spec.SetField(apikey.FieldSubscriptionPriority, field.TypeJSON, value)
+		_node.SubscriptionPriority = value
+	}
+	if value, ok := _c.mutation.AllowWalletFallback(); ok {
+		_spec.SetField(apikey.FieldAllowWalletFallback, field.TypeBool, value)
+		_node.AllowWalletFallback = value
 	}
 	if value, ok := _c.mutation.Key(); ok {
 		_spec.SetField(apikey.FieldKey, field.TypeString, value)
@@ -791,6 +826,36 @@ func (u *APIKeyUpsert) UpdateDeletedAt() *APIKeyUpsert {
 // ClearDeletedAt clears the value of the "deleted_at" field.
 func (u *APIKeyUpsert) ClearDeletedAt() *APIKeyUpsert {
 	u.SetNull(apikey.FieldDeletedAt)
+	return u
+}
+
+// SetSubscriptionPriority sets the "subscription_priority" field.
+func (u *APIKeyUpsert) SetSubscriptionPriority(v []int64) *APIKeyUpsert {
+	u.Set(apikey.FieldSubscriptionPriority, v)
+	return u
+}
+
+// UpdateSubscriptionPriority sets the "subscription_priority" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateSubscriptionPriority() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldSubscriptionPriority)
+	return u
+}
+
+// ClearSubscriptionPriority clears the value of the "subscription_priority" field.
+func (u *APIKeyUpsert) ClearSubscriptionPriority() *APIKeyUpsert {
+	u.SetNull(apikey.FieldSubscriptionPriority)
+	return u
+}
+
+// SetAllowWalletFallback sets the "allow_wallet_fallback" field.
+func (u *APIKeyUpsert) SetAllowWalletFallback(v bool) *APIKeyUpsert {
+	u.Set(apikey.FieldAllowWalletFallback, v)
+	return u
+}
+
+// UpdateAllowWalletFallback sets the "allow_wallet_fallback" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateAllowWalletFallback() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldAllowWalletFallback)
 	return u
 }
 
@@ -1237,6 +1302,41 @@ func (u *APIKeyUpsertOne) UpdateDeletedAt() *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) ClearDeletedAt() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearDeletedAt()
+	})
+}
+
+// SetSubscriptionPriority sets the "subscription_priority" field.
+func (u *APIKeyUpsertOne) SetSubscriptionPriority(v []int64) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetSubscriptionPriority(v)
+	})
+}
+
+// UpdateSubscriptionPriority sets the "subscription_priority" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateSubscriptionPriority() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateSubscriptionPriority()
+	})
+}
+
+// ClearSubscriptionPriority clears the value of the "subscription_priority" field.
+func (u *APIKeyUpsertOne) ClearSubscriptionPriority() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.ClearSubscriptionPriority()
+	})
+}
+
+// SetAllowWalletFallback sets the "allow_wallet_fallback" field.
+func (u *APIKeyUpsertOne) SetAllowWalletFallback(v bool) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetAllowWalletFallback(v)
+	})
+}
+
+// UpdateAllowWalletFallback sets the "allow_wallet_fallback" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateAllowWalletFallback() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateAllowWalletFallback()
 	})
 }
 
@@ -1910,6 +2010,41 @@ func (u *APIKeyUpsertBulk) UpdateDeletedAt() *APIKeyUpsertBulk {
 func (u *APIKeyUpsertBulk) ClearDeletedAt() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearDeletedAt()
+	})
+}
+
+// SetSubscriptionPriority sets the "subscription_priority" field.
+func (u *APIKeyUpsertBulk) SetSubscriptionPriority(v []int64) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetSubscriptionPriority(v)
+	})
+}
+
+// UpdateSubscriptionPriority sets the "subscription_priority" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateSubscriptionPriority() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateSubscriptionPriority()
+	})
+}
+
+// ClearSubscriptionPriority clears the value of the "subscription_priority" field.
+func (u *APIKeyUpsertBulk) ClearSubscriptionPriority() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.ClearSubscriptionPriority()
+	})
+}
+
+// SetAllowWalletFallback sets the "allow_wallet_fallback" field.
+func (u *APIKeyUpsertBulk) SetAllowWalletFallback(v bool) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetAllowWalletFallback(v)
+	})
+}
+
+// UpdateAllowWalletFallback sets the "allow_wallet_fallback" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateAllowWalletFallback() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateAllowWalletFallback()
 	})
 }
 

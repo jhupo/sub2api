@@ -9,6 +9,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
@@ -214,6 +216,14 @@ func (s *SettingService) CacheReadAdjustmentPercent(ctx context.Context, account
 	}
 	if !cached.settings.Enabled {
 		return 0
+	}
+	if group, ok := ctx.Value(ctxkey.Group).(*Group); ok && group != nil {
+		switch group.CacheReadAdjustmentMode {
+		case "disabled":
+			return 0
+		case "custom":
+			return group.CacheReadAdjustmentPercent
+		}
 	}
 	if _, ok := cached.accounts[accountID]; !ok {
 		return 0

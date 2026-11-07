@@ -1,7 +1,7 @@
 <template>
   <span
     :class="[
-      'inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium transition-colors',
+      'inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium transition-colors',
       badgeClass
     ]"
   >
@@ -23,6 +23,7 @@
     <span v-if="hasPeakRate" :class="peakRateClass" :title="peakRateTitle">
       {{ peakRateText }}
     </span>
+    <span v-if="showRate && nightRateText" :class="peakRateClass" :title="nightRateText">{{ t('quotaFeatures.nightRate') }} {{ nightRateText }}</span>
   </span>
 </template>
 
@@ -39,6 +40,10 @@ interface Props {
   platform?: GroupPlatform
   rateMultiplier?: number
   userRateMultiplier?: number | null // 用户专属倍率
+  nightRateEnabled?: boolean
+  nightStart?: string
+  nightEnd?: string
+  nightRateMultiplier?: number
   peakRateEnabled?: boolean
   peakStart?: string
   peakEnd?: string
@@ -81,6 +86,16 @@ const peakRateText = computed(() => {
     serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
   )
 })
+
+const nightRateText = computed(() => formatPeakRateWindow(
+  {
+    peak_rate_enabled: props.nightRateEnabled,
+    peak_start: props.nightStart,
+    peak_end: props.nightEnd,
+    peak_rate_multiplier: props.nightRateMultiplier
+  },
+  serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
+))
 
 const peakRateTitle = computed(() => {
   return t('common.peakRateTooltip', { window: peakRateText.value })

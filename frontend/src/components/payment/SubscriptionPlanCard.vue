@@ -10,13 +10,22 @@
       <span class="plan-card__currency">{{ planCurrencySymbol }}</span>
       <span class="plan-card__value">{{ plan.price }}</span>
       <span v-if="plan.currency" class="plan-card__currency-code">{{ plan.currency }}</span>
-      <span class="plan-card__period">/ {{ validitySuffix }}</span>
+      <span v-if="plan.card_mode !== 'deadline'" class="plan-card__period">/ {{ validitySuffix }}</span>
       <del v-if="plan.original_price && plan.original_price > plan.price">{{ planCurrencySymbol }}{{ plan.original_price }}<template v-if="plan.currency">{{ plan.currency }}</template></del>
     </div>
 
     <p v-if="plan.description" class="plan-card__description">{{ plan.description }}</p>
+    <SaleCountdown v-if="plan.sale_ends_at" :ends-at="plan.sale_ends_at" class="mt-4" />
 
     <dl class="plan-card__limits">
+      <div v-if="plan.card_mode === 'deadline' && plan.deadline_at">
+        <dt><Icon name="calendar" size="sm" aria-hidden="true" />{{ t('quotaFeatures.deadline') }}</dt>
+        <dd><time :datetime="plan.deadline_at">{{ formatDateTimeToMinute(plan.deadline_at) }}</time></dd>
+      </div>
+      <div v-if="plan.total_limit_usd != null">
+        <dt>{{ t('quotaFeatures.totalLimit') }}</dt>
+        <dd>${{ plan.total_limit_usd }}</dd>
+      </div>
       <div v-if="plan.daily_limit_usd != null">
         <dt><Icon name="bolt" size="sm" aria-hidden="true" />{{ t('payment.planCard.dailyLimit') }}</dt>
         <dd>${{ plan.daily_limit_usd }}</dd>
@@ -29,7 +38,7 @@
         <dt><Icon name="calendar" size="sm" aria-hidden="true" />{{ t('payment.planCard.monthlyLimit') }}</dt>
         <dd>${{ plan.monthly_limit_usd }}</dd>
       </div>
-      <div v-if="plan.daily_limit_usd == null && plan.weekly_limit_usd == null && plan.monthly_limit_usd == null">
+      <div v-if="plan.total_limit_usd == null && plan.daily_limit_usd == null && plan.weekly_limit_usd == null && plan.monthly_limit_usd == null">
         <dt><Icon name="sparkles" size="sm" aria-hidden="true" />{{ t('payment.planCard.quota') }}</dt>
         <dd>{{ t('payment.planCard.unlimited') }}</dd>
       </div>
@@ -59,13 +68,15 @@ import type { UserSubscription } from '@/types'
 import Icon from '@/components/icons/Icon.vue'
 import { planValiditySuffix } from './validity'
 import { currencySymbol } from '@/components/payment/currency'
+import { formatDateTimeToMinute } from '@/utils/format'
+import SaleCountdown from './SaleCountdown.vue'
 
 const props = defineProps<{ plan: SubscriptionPlan; activeSubscriptions?: UserSubscription[] }>()
 const emit = defineEmits<{ select: [plan: SubscriptionPlan] }>()
 const { t } = useI18n()
 
 const isRenewal = computed(() =>
-  props.activeSubscriptions?.some(s => s.plan_id === props.plan.id && s.status === 'active') ?? false
+  !props.plan.card_mode && (props.activeSubscriptions?.some(s => s.plan_id === props.plan.id && s.status === 'active') ?? false)
 )
 
 const discountText = computed(() => {

@@ -10,14 +10,16 @@ type APIKeyAuthSnapshot struct {
 	GroupID  *int64 `json:"group_id,omitempty"`
 	// Billing identity must survive auth-cache hits. Otherwise a subscription
 	// key can be materialized as a wallet key after the first request.
-	FundingSource  string                   `json:"funding_source"`
-	SubscriptionID *int64                   `json:"subscription_id,omitempty"`
-	Name           string                   `json:"name"`
-	Status         string                   `json:"status"`
-	IPWhitelist    []string                 `json:"ip_whitelist,omitempty"`
-	IPBlacklist    []string                 `json:"ip_blacklist,omitempty"`
-	User           APIKeyAuthUserSnapshot   `json:"user"`
-	Group          *APIKeyAuthGroupSnapshot `json:"group,omitempty"`
+	FundingSource        string                   `json:"funding_source"`
+	SubscriptionID       *int64                   `json:"subscription_id,omitempty"`
+	SubscriptionPriority []int64                  `json:"subscription_priority"`
+	AllowWalletFallback  bool                     `json:"allow_wallet_fallback"`
+	Name                 string                   `json:"name"`
+	Status               string                   `json:"status"`
+	IPWhitelist          []string                 `json:"ip_whitelist,omitempty"`
+	IPBlacklist          []string                 `json:"ip_blacklist,omitempty"`
+	User                 APIKeyAuthUserSnapshot   `json:"user"`
+	Group                *APIKeyAuthGroupSnapshot `json:"group,omitempty"`
 
 	// Quota fields for API Key independent quota feature
 	Quota     float64 `json:"quota"`      // Quota limit in USD (0 = unlimited)
@@ -123,10 +125,16 @@ type APIKeyAuthGroupSnapshot struct {
 	// 高峰时段倍率：PeakRateEnabled 为 true 且请求时刻处于 [PeakStart, PeakEnd) 时，
 	// token 计费倍率额外乘以 PeakRateMultiplier（详见 Group.PeakMultiplierAt）。
 	// 必须随快照缓存，否则扣费路径拿到的 apiKey.Group 缺字段、高峰倍率失效。
-	PeakRateEnabled    bool    `json:"peak_rate_enabled"`
-	PeakStart          string  `json:"peak_start"`
-	PeakEnd            string  `json:"peak_end"`
-	PeakRateMultiplier float64 `json:"peak_rate_multiplier"`
+	PeakRateEnabled            bool    `json:"peak_rate_enabled"`
+	PeakStart                  string  `json:"peak_start"`
+	PeakEnd                    string  `json:"peak_end"`
+	PeakRateMultiplier         float64 `json:"peak_rate_multiplier"`
+	NightRateEnabled           bool    `json:"night_rate_enabled"`
+	NightStart                 string  `json:"night_start"`
+	NightEnd                   string  `json:"night_end"`
+	NightRateMultiplier        float64 `json:"night_rate_multiplier"`
+	CacheReadAdjustmentMode    string  `json:"cache_read_adjustment_mode"`
+	CacheReadAdjustmentPercent int     `json:"cache_read_adjustment_percent"`
 
 	// 分组利润控制：调度准入门在直连热路径上读的就是这份快照——门解析
 	// （resolveOpenAIProfitControlGate / resolveProfitControlGroup）优先取

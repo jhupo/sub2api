@@ -36,6 +36,10 @@ func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.Us
 		SetUserID(sub.UserID).
 		SetPlanID(sub.PlanID).
 		SetPlanVersionID(sub.PlanVersionID).
+		SetIsQuotaCard(sub.IsQuotaCard).
+		SetRenewalCount(sub.RenewalCount).
+		SetTotalUsageUsd(sub.TotalUsageUSD).
+		SetTotalReservedUsd(sub.TotalReservedUSD).
 		SetExpiresAt(sub.ExpiresAt).
 		SetNillableDailyWindowStart(sub.DailyWindowStart).
 		SetNillableWeeklyWindowStart(sub.WeeklyWindowStart).
@@ -102,6 +106,7 @@ func (r *userSubscriptionRepository) GetByUserIDAndPlanVersionID(ctx context.Con
 	m, err := withSubscriptionRelations(client.UserSubscription.Query().Where(
 		usersubscription.UserIDEQ(userID),
 		usersubscription.PlanVersionIDEQ(planVersionID),
+		usersubscription.IsQuotaCardEQ(false),
 	)).ForUpdate().Only(ctx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
@@ -134,6 +139,10 @@ func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.Us
 		SetUserID(sub.UserID).
 		SetPlanID(sub.PlanID).
 		SetPlanVersionID(sub.PlanVersionID).
+		SetIsQuotaCard(sub.IsQuotaCard).
+		SetRenewalCount(sub.RenewalCount).
+		SetTotalUsageUsd(sub.TotalUsageUSD).
+		SetTotalReservedUsd(sub.TotalReservedUSD).
 		SetStartsAt(sub.StartsAt).
 		SetExpiresAt(sub.ExpiresAt).
 		SetStatus(sub.Status).
@@ -574,6 +583,7 @@ func userSubscriptionEntityToServiceWithStatusMapping(m *dbent.UserSubscription,
 	out := &service.UserSubscription{
 		ID: m.ID, UserID: m.UserID, PlanID: m.PlanID, PlanVersionID: m.PlanVersionID,
 		StartsAt: m.StartsAt, ExpiresAt: m.ExpiresAt, Status: status,
+		IsQuotaCard: m.IsQuotaCard, RenewalCount: m.RenewalCount, TotalUsageUSD: m.TotalUsageUsd, TotalReservedUSD: m.TotalReservedUsd,
 		DailyWindowStart: m.DailyWindowStart, WeeklyWindowStart: m.WeeklyWindowStart, MonthlyWindowStart: m.MonthlyWindowStart,
 		DailyUsageUSD: m.DailyUsageUsd, WeeklyUsageUSD: m.WeeklyUsageUsd, MonthlyUsageUSD: m.MonthlyUsageUsd,
 		DailyReservedUSD: m.DailyReservedUsd, WeeklyReservedUSD: m.WeeklyReservedUsd, MonthlyReservedUSD: m.MonthlyReservedUsd,
@@ -600,6 +610,7 @@ func subscriptionPlanEntityToService(plan *dbent.SubscriptionPlan, version *dben
 		ForSale: plan.ForSale, IsHistorical: plan.IsHistorical, SortOrder: plan.SortOrder, CreatedAt: plan.CreatedAt, UpdatedAt: plan.UpdatedAt,
 		Price: version.Price, OriginalPrice: version.OriginalPrice, Currency: version.Currency,
 		ValidityDays: version.ValidityDays, ValidityUnit: version.ValidityUnit,
+		CardMode: version.CardMode, ValidityHours: version.ValidityHours, DeadlineAt: version.DeadlineAt, TotalLimitUSD: version.TotalLimitUsd,
 		DailyLimitUSD: version.DailyLimitUsd, WeeklyLimitUSD: version.WeeklyLimitUsd, MonthlyLimitUSD: version.MonthlyLimitUsd,
 	}
 }

@@ -218,10 +218,11 @@ func TestTopUpSubscriptionAllowanceZeroAmountRebindsAdvancedWindow(t *testing.T)
 			"starts_at", "expires_at", "status", "daily_window_start", "weekly_window_start", "monthly_window_start",
 			"daily_usage_usd", "weekly_usage_usd", "monthly_usage_usd", "daily_reserved_usd", "weekly_reserved_usd", "monthly_reserved_usd",
 			"daily_limit_usd", "weekly_limit_usd", "monthly_limit_usd",
+			"total_usage_usd", "total_reserved_usd", "total_limit_usd",
 		}).AddRow(
 			now.Add(-2*24*time.Hour), expiresAt, service.SubscriptionStatusActive,
 			oldDaily, oldWeekly, oldMonthly, 3.0, 10.0, 20.0, 0.0, 0.0, 0.0,
-			10.0, 100.0, 300.0,
+			10.0, 100.0, 300.0, 20.0, 0.0, nil,
 		))
 	mock.ExpectExec(`(?s)UPDATE user_subscriptions\s+SET daily_window_start = \$2,`).
 		WithArgs(int64(99), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 0.5).

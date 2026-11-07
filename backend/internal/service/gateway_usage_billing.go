@@ -479,7 +479,7 @@ func actualUsageBillingAmount(cmd *UsageBillingCommand) float64 {
 func isSubscriptionAllowanceLimitError(err error) bool {
 	return errors.Is(err, ErrDailyLimitExceeded) ||
 		errors.Is(err, ErrWeeklyLimitExceeded) ||
-		errors.Is(err, ErrMonthlyLimitExceeded)
+		errors.Is(err, ErrMonthlyLimitExceeded) || errors.Is(err, ErrTotalLimitExceeded)
 }
 
 func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult, balancePreauthorized bool) {

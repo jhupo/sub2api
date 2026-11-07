@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
 	"github.com/Wei-Shaw/sub2api/ent/subscriptionplanversion"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
 
 // SubscriptionPlanCreate is the builder for creating a SubscriptionPlan entity.
@@ -96,6 +97,20 @@ func (_c *SubscriptionPlanCreate) SetForSale(v bool) *SubscriptionPlanCreate {
 func (_c *SubscriptionPlanCreate) SetNillableForSale(v *bool) *SubscriptionPlanCreate {
 	if v != nil {
 		_c.SetForSale(*v)
+	}
+	return _c
+}
+
+// SetSaleSchedule sets the "sale_schedule" field.
+func (_c *SubscriptionPlanCreate) SetSaleSchedule(v domain.PlanSaleSchedule) *SubscriptionPlanCreate {
+	_c.mutation.SetSaleSchedule(v)
+	return _c
+}
+
+// SetNillableSaleSchedule sets the "sale_schedule" field if the given value is not nil.
+func (_c *SubscriptionPlanCreate) SetNillableSaleSchedule(v *domain.PlanSaleSchedule) *SubscriptionPlanCreate {
+	if v != nil {
+		_c.SetSaleSchedule(*v)
 	}
 	return _c
 }
@@ -345,6 +360,10 @@ func (_c *SubscriptionPlanCreate) createSpec() (*SubscriptionPlan, *sqlgraph.Cre
 		_spec.SetField(subscriptionplan.FieldForSale, field.TypeBool, value)
 		_node.ForSale = value
 	}
+	if value, ok := _c.mutation.SaleSchedule(); ok {
+		_spec.SetField(subscriptionplan.FieldSaleSchedule, field.TypeJSON, value)
+		_node.SaleSchedule = value
+	}
 	if value, ok := _c.mutation.IsHistorical(); ok {
 		_spec.SetField(subscriptionplan.FieldIsHistorical, field.TypeBool, value)
 		_node.IsHistorical = value
@@ -529,6 +548,24 @@ func (u *SubscriptionPlanUpsert) UpdateForSale() *SubscriptionPlanUpsert {
 	return u
 }
 
+// SetSaleSchedule sets the "sale_schedule" field.
+func (u *SubscriptionPlanUpsert) SetSaleSchedule(v domain.PlanSaleSchedule) *SubscriptionPlanUpsert {
+	u.Set(subscriptionplan.FieldSaleSchedule, v)
+	return u
+}
+
+// UpdateSaleSchedule sets the "sale_schedule" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsert) UpdateSaleSchedule() *SubscriptionPlanUpsert {
+	u.SetExcluded(subscriptionplan.FieldSaleSchedule)
+	return u
+}
+
+// ClearSaleSchedule clears the value of the "sale_schedule" field.
+func (u *SubscriptionPlanUpsert) ClearSaleSchedule() *SubscriptionPlanUpsert {
+	u.SetNull(subscriptionplan.FieldSaleSchedule)
+	return u
+}
+
 // SetSortOrder sets the "sort_order" field.
 func (u *SubscriptionPlanUpsert) SetSortOrder(v int) *SubscriptionPlanUpsert {
 	u.Set(subscriptionplan.FieldSortOrder, v)
@@ -702,6 +739,27 @@ func (u *SubscriptionPlanUpsertOne) SetForSale(v bool) *SubscriptionPlanUpsertOn
 func (u *SubscriptionPlanUpsertOne) UpdateForSale() *SubscriptionPlanUpsertOne {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
 		s.UpdateForSale()
+	})
+}
+
+// SetSaleSchedule sets the "sale_schedule" field.
+func (u *SubscriptionPlanUpsertOne) SetSaleSchedule(v domain.PlanSaleSchedule) *SubscriptionPlanUpsertOne {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.SetSaleSchedule(v)
+	})
+}
+
+// UpdateSaleSchedule sets the "sale_schedule" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsertOne) UpdateSaleSchedule() *SubscriptionPlanUpsertOne {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.UpdateSaleSchedule()
+	})
+}
+
+// ClearSaleSchedule clears the value of the "sale_schedule" field.
+func (u *SubscriptionPlanUpsertOne) ClearSaleSchedule() *SubscriptionPlanUpsertOne {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.ClearSaleSchedule()
 	})
 }
 
@@ -1049,6 +1107,27 @@ func (u *SubscriptionPlanUpsertBulk) SetForSale(v bool) *SubscriptionPlanUpsertB
 func (u *SubscriptionPlanUpsertBulk) UpdateForSale() *SubscriptionPlanUpsertBulk {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
 		s.UpdateForSale()
+	})
+}
+
+// SetSaleSchedule sets the "sale_schedule" field.
+func (u *SubscriptionPlanUpsertBulk) SetSaleSchedule(v domain.PlanSaleSchedule) *SubscriptionPlanUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.SetSaleSchedule(v)
+	})
+}
+
+// UpdateSaleSchedule sets the "sale_schedule" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsertBulk) UpdateSaleSchedule() *SubscriptionPlanUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.UpdateSaleSchedule()
+	})
+}
+
+// ClearSaleSchedule clears the value of the "sale_schedule" field.
+func (u *SubscriptionPlanUpsertBulk) ClearSaleSchedule() *SubscriptionPlanUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.ClearSaleSchedule()
 	})
 }
 

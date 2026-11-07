@@ -16,6 +16,17 @@ type balancePreauthorizer interface {
 	Preauthorize(context.Context, service.BalancePreauthorizationRequest) (*service.BalancePreauthorizationGuard, error)
 }
 
+type fundingPriorityPreauthorizer interface {
+	PreauthorizeWithFunding(context.Context, service.BalancePreauthorizationRequest, *service.APIKey, *service.UserSubscription) (*service.BalancePreauthorizationGuard, error)
+}
+
+func preauthorizeWithFunding(ctx context.Context, preauthorizer balancePreauthorizer, apiKey *service.APIKey, subscription *service.UserSubscription, request service.BalancePreauthorizationRequest) (*service.BalancePreauthorizationGuard, error) {
+	if priority, ok := preauthorizer.(fundingPriorityPreauthorizer); ok {
+		return priority.PreauthorizeWithFunding(ctx, request, apiKey, subscription)
+	}
+	return preauthorizer.Preauthorize(ctx, request)
+}
+
 type balancePreauthorizationResumer interface {
 	Resume(context.Context, service.BalancePreauthorizationResumeRequest) (*service.BalancePreauthorizationGuard, error)
 }
@@ -133,7 +144,7 @@ func preauthorizeTokenGatewayRequest(
 			service.BalancePreauthorizationRateText,
 		)
 	}
-	return preauthorizer.Preauthorize(ctx, service.BalancePreauthorizationRequest{
+	return preauthorizeWithFunding(ctx, preauthorizer, apiKey, subscription, service.BalancePreauthorizationRequest{
 		RequestID:                  service.ResolveBalancePreauthorizationRequestID(ctx),
 		APIKeyID:                   apiKey.ID,
 		UserID:                     userID,
@@ -195,7 +206,7 @@ func preauthorizePerRequestGatewayRequest(
 			ctx, apiKey, billingModel, pricingAt, "", rateKind,
 		)
 	}
-	return preauthorizer.Preauthorize(ctx, service.BalancePreauthorizationRequest{
+	return preauthorizeWithFunding(ctx, preauthorizer, apiKey, subscription, service.BalancePreauthorizationRequest{
 		RequestID:                service.ResolveBalancePreauthorizationRequestID(ctx),
 		APIKeyID:                 apiKey.ID,
 		UserID:                   userID,
@@ -301,7 +312,7 @@ func preauthorizeFixedGatewayRequest(
 	if userID <= 0 && apiKey.User != nil {
 		userID = apiKey.User.ID
 	}
-	return preauthorizer.Preauthorize(ctx, service.BalancePreauthorizationRequest{
+	return preauthorizeWithFunding(ctx, preauthorizer, apiKey, subscription, service.BalancePreauthorizationRequest{
 		RequestID:                requestID,
 		APIKeyID:                 apiKey.ID,
 		UserID:                   userID,
@@ -349,7 +360,7 @@ func preauthorizeGrokVideoGatewayRequest(
 			ctx, apiKey, billingModel, pricingAt, "", service.BalancePreauthorizationRateVideo,
 		)
 	}
-	return preauthorizer.Preauthorize(ctx, service.BalancePreauthorizationRequest{
+	return preauthorizeWithFunding(ctx, preauthorizer, apiKey, subscription, service.BalancePreauthorizationRequest{
 		RequestID:                service.NewGrokVideoHoldRequestID(),
 		APIKeyID:                 apiKey.ID,
 		UserID:                   userID,
@@ -406,7 +417,7 @@ func preauthorizeGrokAudioGatewayRequest(
 	if userID <= 0 && apiKey.User != nil {
 		userID = apiKey.User.ID
 	}
-	return preauthorizer.Preauthorize(ctx, service.BalancePreauthorizationRequest{
+	return preauthorizeWithFunding(ctx, preauthorizer, apiKey, subscription, service.BalancePreauthorizationRequest{
 		RequestID:                service.StableGrokAudioBillingRequestID(""),
 		APIKeyID:                 apiKey.ID,
 		UserID:                   userID,
@@ -460,12 +471,13 @@ func preauthorizeGrokRealtimeGatewayRequest(
 	if apiKey.UsesSubscription() && subscription != nil {
 		source = service.FundingSourceSubscription
 	}
-	return preauthorizer.Preauthorize(ctx, service.BalancePreauthorizationRequest{
+	return preauthorizeWithFunding(ctx, preauthorizer, apiKey, subscription, service.BalancePreauthorizationRequest{
 		RequestID:                service.StableGrokRealtimeBillingRequestID(""),
 		APIKeyID:                 apiKey.ID,
 		UserID:                   userID,
 		SubscriptionID:           subscriptionID,
 		BaselineKey:              service.BuildBalancePreauthorizationBaselineKey(userID, apiKey.ID, source, subscriptionID, sessionID),
+		BaselineSessionID:        sessionID,
 		AuthorizationFingerprint: fingerprint,
 		BillingType:              billingType,
 		EstimateKind:             service.PreauthorizationEstimateFixed,

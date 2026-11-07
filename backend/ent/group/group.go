@@ -36,6 +36,18 @@ const (
 	FieldPeakEnd = "peak_end"
 	// FieldPeakRateMultiplier holds the string denoting the peak_rate_multiplier field in the database.
 	FieldPeakRateMultiplier = "peak_rate_multiplier"
+	// FieldNightRateEnabled holds the string denoting the night_rate_enabled field in the database.
+	FieldNightRateEnabled = "night_rate_enabled"
+	// FieldNightStart holds the string denoting the night_start field in the database.
+	FieldNightStart = "night_start"
+	// FieldNightEnd holds the string denoting the night_end field in the database.
+	FieldNightEnd = "night_end"
+	// FieldNightRateMultiplier holds the string denoting the night_rate_multiplier field in the database.
+	FieldNightRateMultiplier = "night_rate_multiplier"
+	// FieldCacheReadAdjustmentMode holds the string denoting the cache_read_adjustment_mode field in the database.
+	FieldCacheReadAdjustmentMode = "cache_read_adjustment_mode"
+	// FieldCacheReadAdjustmentPercent holds the string denoting the cache_read_adjustment_percent field in the database.
+	FieldCacheReadAdjustmentPercent = "cache_read_adjustment_percent"
 	// FieldIsExclusive holds the string denoting the is_exclusive field in the database.
 	FieldIsExclusive = "is_exclusive"
 	// FieldStatus holds the string denoting the status field in the database.
@@ -203,6 +215,12 @@ var Columns = []string{
 	FieldPeakStart,
 	FieldPeakEnd,
 	FieldPeakRateMultiplier,
+	FieldNightRateEnabled,
+	FieldNightStart,
+	FieldNightEnd,
+	FieldNightRateMultiplier,
+	FieldCacheReadAdjustmentMode,
+	FieldCacheReadAdjustmentPercent,
 	FieldIsExclusive,
 	FieldStatus,
 	FieldDuplicateOperationID,
@@ -304,6 +322,24 @@ var (
 	PeakEndValidator func(string) error
 	// DefaultPeakRateMultiplier holds the default value on creation for the "peak_rate_multiplier" field.
 	DefaultPeakRateMultiplier float64
+	// DefaultNightRateEnabled holds the default value on creation for the "night_rate_enabled" field.
+	DefaultNightRateEnabled bool
+	// DefaultNightStart holds the default value on creation for the "night_start" field.
+	DefaultNightStart string
+	// NightStartValidator is a validator for the "night_start" field. It is called by the builders before save.
+	NightStartValidator func(string) error
+	// DefaultNightEnd holds the default value on creation for the "night_end" field.
+	DefaultNightEnd string
+	// NightEndValidator is a validator for the "night_end" field. It is called by the builders before save.
+	NightEndValidator func(string) error
+	// DefaultNightRateMultiplier holds the default value on creation for the "night_rate_multiplier" field.
+	DefaultNightRateMultiplier float64
+	// DefaultCacheReadAdjustmentMode holds the default value on creation for the "cache_read_adjustment_mode" field.
+	DefaultCacheReadAdjustmentMode string
+	// CacheReadAdjustmentModeValidator is a validator for the "cache_read_adjustment_mode" field. It is called by the builders before save.
+	CacheReadAdjustmentModeValidator func(string) error
+	// DefaultCacheReadAdjustmentPercent holds the default value on creation for the "cache_read_adjustment_percent" field.
+	DefaultCacheReadAdjustmentPercent int
 	// DefaultIsExclusive holds the default value on creation for the "is_exclusive" field.
 	DefaultIsExclusive bool
 	// DefaultStatus holds the default value on creation for the "status" field.
@@ -448,6 +484,36 @@ func ByPeakEnd(opts ...sql.OrderTermOption) OrderOption {
 // ByPeakRateMultiplier orders the results by the peak_rate_multiplier field.
 func ByPeakRateMultiplier(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPeakRateMultiplier, opts...).ToFunc()
+}
+
+// ByNightRateEnabled orders the results by the night_rate_enabled field.
+func ByNightRateEnabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldNightRateEnabled, opts...).ToFunc()
+}
+
+// ByNightStart orders the results by the night_start field.
+func ByNightStart(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldNightStart, opts...).ToFunc()
+}
+
+// ByNightEnd orders the results by the night_end field.
+func ByNightEnd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldNightEnd, opts...).ToFunc()
+}
+
+// ByNightRateMultiplier orders the results by the night_rate_multiplier field.
+func ByNightRateMultiplier(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldNightRateMultiplier, opts...).ToFunc()
+}
+
+// ByCacheReadAdjustmentMode orders the results by the cache_read_adjustment_mode field.
+func ByCacheReadAdjustmentMode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCacheReadAdjustmentMode, opts...).ToFunc()
+}
+
+// ByCacheReadAdjustmentPercent orders the results by the cache_read_adjustment_percent field.
+func ByCacheReadAdjustmentPercent(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCacheReadAdjustmentPercent, opts...).ToFunc()
 }
 
 // ByIsExclusive orders the results by the is_exclusive field.

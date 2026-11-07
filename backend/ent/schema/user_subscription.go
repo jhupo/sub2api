@@ -38,6 +38,10 @@ func (UserSubscription) Fields() []ent.Field {
 		field.Int64("user_id"),
 		field.Int64("plan_id"),
 		field.Int64("plan_version_id"),
+		field.Bool("is_quota_card").Default(false),
+		field.Int("renewal_count").Default(0),
+		field.Float("total_usage_usd").SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).Default(0),
+		field.Float("total_reserved_usd").SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).Default(0),
 
 		field.Time("starts_at").
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),

@@ -429,6 +429,7 @@ export default {
       INVALID_AMOUNT: 'Invalid amount.',
       INVALID_INPUT: 'Invalid request.',
       PLAN_NOT_AVAILABLE: 'Plan not found or no longer available.',
+      PLAN_PRICE_CHANGED: 'The plan price has changed. Refresh and confirm the updated price.',
       GROUP_NOT_FOUND: 'Subscription group is no longer available.',
       GROUP_TYPE_MISMATCH: 'Group is not a subscription type.',
       TOO_MANY_PENDING: 'Too many pending orders (max {max}). Please complete or cancel existing orders first.',

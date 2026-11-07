@@ -15,6 +15,10 @@
           :peak-start="group.peak_start"
           :peak-end="group.peak_end"
           :peak-rate-multiplier="group.peak_rate_multiplier"
+          :night-rate-enabled="group.night_rate_enabled"
+          :night-start="group.night_start"
+          :night-end="group.night_end"
+          :night-rate-multiplier="group.night_rate_multiplier"
         />
         <span
           v-if="group.is_exclusive"

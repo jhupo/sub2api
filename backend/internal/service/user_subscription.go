@@ -9,10 +9,14 @@ import (
 const subscriptionDayDuration = 24 * time.Hour
 
 type UserSubscription struct {
-	ID            int64
-	UserID        int64
-	PlanID        int64
-	PlanVersionID int64
+	ID               int64
+	UserID           int64
+	PlanID           int64
+	PlanVersionID    int64
+	IsQuotaCard      bool
+	RenewalCount     int
+	TotalUsageUSD    float64
+	TotalReservedUSD float64
 
 	StartsAt  time.Time
 	ExpiresAt time.Time

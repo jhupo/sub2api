@@ -26,6 +26,14 @@ const (
 	FieldCurrency = "currency"
 	// FieldValidityDays holds the string denoting the validity_days field in the database.
 	FieldValidityDays = "validity_days"
+	// FieldCardMode holds the string denoting the card_mode field in the database.
+	FieldCardMode = "card_mode"
+	// FieldValidityHours holds the string denoting the validity_hours field in the database.
+	FieldValidityHours = "validity_hours"
+	// FieldDeadlineAt holds the string denoting the deadline_at field in the database.
+	FieldDeadlineAt = "deadline_at"
+	// FieldTotalLimitUsd holds the string denoting the total_limit_usd field in the database.
+	FieldTotalLimitUsd = "total_limit_usd"
 	// FieldValidityUnit holds the string denoting the validity_unit field in the database.
 	FieldValidityUnit = "validity_unit"
 	// FieldDailyLimitUsd holds the string denoting the daily_limit_usd field in the database.
@@ -76,6 +84,10 @@ var Columns = []string{
 	FieldOriginalPrice,
 	FieldCurrency,
 	FieldValidityDays,
+	FieldCardMode,
+	FieldValidityHours,
+	FieldDeadlineAt,
+	FieldTotalLimitUsd,
 	FieldValidityUnit,
 	FieldDailyLimitUsd,
 	FieldWeeklyLimitUsd,
@@ -98,6 +110,12 @@ var (
 	DefaultCurrency string
 	// CurrencyValidator is a validator for the "currency" field. It is called by the builders before save.
 	CurrencyValidator func(string) error
+	// DefaultCardMode holds the default value on creation for the "card_mode" field.
+	DefaultCardMode string
+	// CardModeValidator is a validator for the "card_mode" field. It is called by the builders before save.
+	CardModeValidator func(string) error
+	// DefaultValidityHours holds the default value on creation for the "validity_hours" field.
+	DefaultValidityHours int
 	// DefaultValidityUnit holds the default value on creation for the "validity_unit" field.
 	DefaultValidityUnit string
 	// ValidityUnitValidator is a validator for the "validity_unit" field. It is called by the builders before save.
@@ -142,6 +160,26 @@ func ByCurrency(opts ...sql.OrderTermOption) OrderOption {
 // ByValidityDays orders the results by the validity_days field.
 func ByValidityDays(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldValidityDays, opts...).ToFunc()
+}
+
+// ByCardMode orders the results by the card_mode field.
+func ByCardMode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCardMode, opts...).ToFunc()
+}
+
+// ByValidityHours orders the results by the validity_hours field.
+func ByValidityHours(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldValidityHours, opts...).ToFunc()
+}
+
+// ByDeadlineAt orders the results by the deadline_at field.
+func ByDeadlineAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDeadlineAt, opts...).ToFunc()
+}
+
+// ByTotalLimitUsd orders the results by the total_limit_usd field.
+func ByTotalLimitUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTotalLimitUsd, opts...).ToFunc()
 }
 
 // ByValidityUnit orders the results by the validity_unit field.

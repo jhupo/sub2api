@@ -25,6 +25,11 @@ type keyBillingInfoResponse struct {
 	PeakEnd                 *string   `json:"peak_end,omitempty"`
 	PeakRateMultiplier      *float64  `json:"peak_rate_multiplier,omitempty"`
 	AppliedPeakMultiplier   *float64  `json:"applied_peak_multiplier,omitempty"`
+	NightRateEnabled        bool      `json:"night_rate_enabled"`
+	NightStart              string    `json:"night_start,omitempty"`
+	NightEnd                string    `json:"night_end,omitempty"`
+	NightRateMultiplier     float64   `json:"night_rate_multiplier"`
+	AppliedNightMultiplier  float64   `json:"applied_night_multiplier"`
 	EffectiveRateMultiplier float64   `json:"effective_rate_multiplier"`
 	Timezone                *string   `json:"timezone,omitempty"`
 	ObservedAt              time.Time `json:"observed_at"`
@@ -93,8 +98,17 @@ func buildKeyBillingInfo(apiKey *service.APIKey, resolvedRate float64, now time.
 		UserRateMultiplier:      userRate,
 		ResolvedRateMultiplier:  resolvedRate,
 		PeakRateEnabled:         apiKey.Group.PeakRateEnabled,
-		EffectiveRateMultiplier: resolvedRate * appliedPeak,
+		NightRateEnabled:        apiKey.Group.NightRateEnabled,
+		NightStart:              apiKey.Group.NightStart,
+		NightEnd:                apiKey.Group.NightEnd,
+		NightRateMultiplier:     apiKey.Group.NightRateMultiplier,
+		AppliedNightMultiplier:  apiKey.Group.NightMultiplierAt(now),
+		EffectiveRateMultiplier: resolvedRate * apiKey.Group.TimeRateMultiplierAt(now),
 		ObservedAt:              now.UTC(),
+	}
+	if apiKey.Group.PeakRateEnabled || apiKey.Group.NightRateEnabled {
+		tz := timezone.Location().String()
+		response.Timezone = &tz
 	}
 	if apiKey.Group.PeakRateEnabled {
 		response.PeakStart = &apiKey.Group.PeakStart

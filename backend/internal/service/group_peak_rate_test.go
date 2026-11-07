@@ -110,7 +110,7 @@ func TestValidatePeakRateConfig(t *testing.T) {
 		{"enabled malformed start", true, "99:99", "18:00", 1.0, true},
 		{"enabled malformed end", true, "14:00", "25:00", 1.0, true},
 		{"enabled equal start==end", true, "14:00", "14:00", 1.0, true},
-		{"enabled cross-day rejected", true, "22:00", "02:00", 1.0, true},
+		{"enabled cross-day allowed", true, "22:00", "02:00", 1.0, false},
 		{"enabled negative multiplier", true, "14:00", "18:00", -0.5, true},
 		{"enabled zero multiplier allowed", true, "14:00", "18:00", 0, false},
 	}

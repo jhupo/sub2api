@@ -244,10 +244,10 @@ func (r *usageBillingRepository) AuthorizeSubscriptionAllowance(
 
 func lockSubscriptionAllowance(ctx context.Context, tx *sql.Tx, cmd *service.SubscriptionAllowanceCommand) (*service.UserSubscription, error) {
 	var (
-		sub                                   service.UserSubscription
-		status                                string
-		dailyStart, weeklyStart, monthlyStart sql.NullTime
-		dailyLimit, weeklyLimit, monthlyLimit sql.NullFloat64
+		sub                                               service.UserSubscription
+		status                                            string
+		dailyStart, weeklyStart, monthlyStart             sql.NullTime
+		dailyLimit, weeklyLimit, monthlyLimit, totalLimit sql.NullFloat64
 	)
 	err := tx.QueryRowContext(ctx, `
 		SELECT us.id, us.user_id, us.plan_id, us.plan_version_id,
@@ -255,12 +255,13 @@ func lockSubscriptionAllowance(ctx context.Context, tx *sql.Tx, cmd *service.Sub
 			us.daily_window_start, us.weekly_window_start, us.monthly_window_start,
 			us.daily_usage_usd, us.weekly_usage_usd, us.monthly_usage_usd,
 			us.daily_reserved_usd, us.weekly_reserved_usd, us.monthly_reserved_usd,
-			spv.daily_limit_usd, spv.weekly_limit_usd, spv.monthly_limit_usd
+			spv.daily_limit_usd, spv.weekly_limit_usd, spv.monthly_limit_usd,
+			us.total_usage_usd, us.total_reserved_usd, spv.total_limit_usd
 		FROM user_subscriptions us
 		JOIN subscription_plan_versions spv ON spv.id = us.plan_version_id
 		JOIN api_keys ak ON ak.id = $2
 			AND ak.user_id = us.user_id
-			AND ak.subscription_id = us.id
+			AND (ak.subscription_id = us.id OR ak.subscription_priority @> jsonb_build_array(us.id))
 			AND ak.funding_source = $3
 			AND ak.deleted_at IS NULL
 		WHERE us.id = $1 AND us.user_id = $4 AND us.deleted_at IS NULL
@@ -272,6 +273,7 @@ func lockSubscriptionAllowance(ctx context.Context, tx *sql.Tx, cmd *service.Sub
 		&sub.DailyUsageUSD, &sub.WeeklyUsageUSD, &sub.MonthlyUsageUSD,
 		&sub.DailyReservedUSD, &sub.WeeklyReservedUSD, &sub.MonthlyReservedUSD,
 		&dailyLimit, &weeklyLimit, &monthlyLimit,
+		&sub.TotalUsageUSD, &sub.TotalReservedUSD, &totalLimit,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, service.ErrSubscriptionNotFound
@@ -290,6 +292,7 @@ func lockSubscriptionAllowance(ctx context.Context, tx *sql.Tx, cmd *service.Sub
 		sub.MonthlyWindowStart = &monthlyStart.Time
 	}
 	sub.Plan = &service.SubscriptionPlan{}
+	sub.Plan.TotalLimitUSD = nullableFloatPointer(totalLimit)
 	if dailyLimit.Valid {
 		sub.Plan.DailyLimitUSD = &dailyLimit.Float64
 	}
@@ -323,6 +326,9 @@ func ensureSubscriptionAllowanceAvailable(sub *service.UserSubscription, transit
 		return service.ErrSubscriptionNotFound
 	}
 	additional := decimal.NewFromFloat(amount)
+	if !subscriptionAllowanceWindowAvailable(sub.TotalUsageUSD, sub.TotalReservedUSD, sub.Plan.TotalLimitUSD, additional) {
+		return service.ErrTotalLimitExceeded
+	}
 	if !subscriptionAllowanceWindowAvailable(transitionedUsage(sub.DailyUsageUSD, transition.ResetDaily), sub.DailyReservedUSD, sub.Plan.DailyLimitUSD, additional) {
 		return service.ErrDailyLimitExceeded
 	}
@@ -355,6 +361,7 @@ func applySubscriptionWindowReservation(ctx context.Context, tx *sql.Tx, subscri
 			daily_reserved_usd = daily_reserved_usd + $8,
 			weekly_reserved_usd = weekly_reserved_usd + $8,
 			monthly_reserved_usd = monthly_reserved_usd + $8,
+			total_reserved_usd = total_reserved_usd + $8,
 			updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL
 	`, subscriptionID, transition.DailyStart, transition.WeeklyStart, transition.MonthlyStart,
@@ -468,14 +475,16 @@ func lockAndTopUpSubscriptionAllowance(ctx context.Context, tx *sql.Tx, record *
 		dailyStart, weeklyStart, monthlyStart                                              sql.NullTime
 		startsAt, expiresAt                                                                time.Time
 		status                                                                             string
+		totalUsed, totalReserved                                                           float64
 	)
-	var dailyLimit, weeklyLimit, monthlyLimit sql.NullFloat64
+	var dailyLimit, weeklyLimit, monthlyLimit, totalLimit sql.NullFloat64
 	err := tx.QueryRowContext(ctx, `
 		SELECT us.starts_at, us.expires_at, us.status,
 			us.daily_window_start, us.weekly_window_start, us.monthly_window_start,
 			us.daily_usage_usd, us.weekly_usage_usd, us.monthly_usage_usd,
 			us.daily_reserved_usd, us.weekly_reserved_usd, us.monthly_reserved_usd,
-			spv.daily_limit_usd, spv.weekly_limit_usd, spv.monthly_limit_usd
+			spv.daily_limit_usd, spv.weekly_limit_usd, spv.monthly_limit_usd,
+			us.total_usage_usd, us.total_reserved_usd, spv.total_limit_usd
 		FROM user_subscriptions us
 		JOIN subscription_plan_versions spv ON spv.id = us.plan_version_id
 		WHERE us.id = $1 AND us.deleted_at IS NULL
@@ -484,6 +493,7 @@ func lockAndTopUpSubscriptionAllowance(ctx context.Context, tx *sql.Tx, record *
 		&startsAt, &expiresAt, &status, &dailyStart, &weeklyStart, &monthlyStart,
 		&dailyUsed, &weeklyUsed, &monthlyUsed, &dailyReserved, &weeklyReserved, &monthlyReserved,
 		&dailyLimit, &weeklyLimit, &monthlyLimit,
+		&totalUsed, &totalReserved, &totalLimit,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return service.ErrUsageBillingRequestConflict
@@ -510,7 +520,10 @@ func lockAndTopUpSubscriptionAllowance(ctx context.Context, tx *sql.Tx, record *
 		DailyReservedUSD:   dailyReserved,
 		WeeklyReservedUSD:  weeklyReserved,
 		MonthlyReservedUSD: monthlyReserved,
+		TotalUsageUSD:      totalUsed,
+		TotalReservedUSD:   totalReserved,
 		Plan: &service.SubscriptionPlan{
+			TotalLimitUSD:   nullableFloatPointer(totalLimit),
 			DailyLimitUSD:   nullableFloatPointer(dailyLimit),
 			WeeklyLimitUSD:  nullableFloatPointer(weeklyLimit),
 			MonthlyLimitUSD: nullableFloatPointer(monthlyLimit),
@@ -692,9 +705,11 @@ func (r *usageBillingRepository) finishSubscriptionAllowance(
 			SET daily_reserved_usd = daily_reserved_usd - $2,
 				weekly_reserved_usd = weekly_reserved_usd - $2,
 				monthly_reserved_usd = monthly_reserved_usd - $2,
+				total_reserved_usd = total_reserved_usd - $2,
 				daily_usage_usd = daily_usage_usd + $3,
 				weekly_usage_usd = weekly_usage_usd + $3,
 				monthly_usage_usd = monthly_usage_usd + $3,
+				total_usage_usd = total_usage_usd + $3,
 				updated_at = NOW()
 			WHERE id = $1
 				AND daily_window_start IS NOT DISTINCT FROM $4
@@ -703,6 +718,7 @@ func (r *usageBillingRepository) finishSubscriptionAllowance(
 				AND daily_reserved_usd >= $2
 				AND weekly_reserved_usd >= $2
 				AND monthly_reserved_usd >= $2
+				AND total_reserved_usd >= $2
 		`, record.SubscriptionID, record.AuthorizedAmount, captured,
 			record.DailyWindowStart, record.WeeklyWindowStart, record.MonthlyWindowStart)
 		if err != nil {

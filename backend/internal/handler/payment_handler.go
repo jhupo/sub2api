@@ -7,6 +7,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -49,6 +50,10 @@ func (h *PaymentHandler) GetPlans(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	for _, p := range plans {
+		p.OriginalPrice = saleOriginalPrice(p)
+		p.Price = p.CurrentPrice
+	}
 	response.Success(c, plans)
 }
 
@@ -89,10 +94,15 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 	planList := make([]checkoutPlan, 0, len(plans))
 	for _, p := range plans {
 		planList = append(planList, checkoutPlan{
+			SaleEndsAt: p.SaleEndsAt, SaleSchedule: p.SaleSchedule,
 			ID:             p.ID,
+			CardMode:       p.CardMode,
+			ValidityHours:  p.ValidityHours,
+			DeadlineAt:     p.DeadlineAt,
+			TotalLimitUSD:  p.TotalLimitUSD,
 			DailyLimitUSD:  p.DailyLimitUSD,
 			WeeklyLimitUSD: p.WeeklyLimitUSD, MonthlyLimitUSD: p.MonthlyLimitUSD,
-			Name: p.Name, Description: p.Description, Price: p.Price, OriginalPrice: p.OriginalPrice,
+			Name: p.Name, Description: p.Description, Price: p.CurrentPrice, OriginalPrice: saleOriginalPrice(p),
 			Currency:     p.Currency,
 			ValidityDays: p.ValidityDays, ValidityUnit: p.ValidityUnit, Features: parseFeatures(p.Features),
 			ProductName: p.ProductName,
@@ -133,19 +143,33 @@ type checkoutInfoResponse struct {
 }
 
 type checkoutPlan struct {
-	ID              int64    `json:"id"`
-	DailyLimitUSD   *float64 `json:"daily_limit_usd"`
-	WeeklyLimitUSD  *float64 `json:"weekly_limit_usd"`
-	MonthlyLimitUSD *float64 `json:"monthly_limit_usd"`
-	Name            string   `json:"name"`
-	Description     string   `json:"description"`
-	Price           float64  `json:"price"`
-	OriginalPrice   *float64 `json:"original_price,omitempty"`
-	Currency        string   `json:"currency,omitempty"`
-	ValidityDays    int      `json:"validity_days"`
-	ValidityUnit    string   `json:"validity_unit"`
-	Features        []string `json:"features"`
-	ProductName     string   `json:"product_name"`
+	SaleEndsAt      *time.Time              `json:"sale_ends_at"`
+	SaleSchedule    domain.PlanSaleSchedule `json:"sale_schedule"`
+	ID              int64                   `json:"id"`
+	CardMode        string                  `json:"card_mode"`
+	ValidityHours   int                     `json:"validity_hours"`
+	DeadlineAt      *time.Time              `json:"deadline_at"`
+	TotalLimitUSD   *float64                `json:"total_limit_usd"`
+	DailyLimitUSD   *float64                `json:"daily_limit_usd"`
+	WeeklyLimitUSD  *float64                `json:"weekly_limit_usd"`
+	MonthlyLimitUSD *float64                `json:"monthly_limit_usd"`
+	Name            string                  `json:"name"`
+	Description     string                  `json:"description"`
+	Price           float64                 `json:"price"`
+	OriginalPrice   *float64                `json:"original_price,omitempty"`
+	Currency        string                  `json:"currency,omitempty"`
+	ValidityDays    int                     `json:"validity_days"`
+	ValidityUnit    string                  `json:"validity_unit"`
+	Features        []string                `json:"features"`
+	ProductName     string                  `json:"product_name"`
+}
+
+func saleOriginalPrice(p *service.SubscriptionPlan) *float64 {
+	if p.CurrentPrice < p.Price && (p.OriginalPrice == nil || *p.OriginalPrice < p.Price) {
+		original := p.Price
+		return &original
+	}
+	return p.OriginalPrice
 }
 
 // parseFeatures splits a newline-separated features string into a string slice.

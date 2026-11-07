@@ -39,6 +39,18 @@ type Group struct {
 	PeakEnd string `json:"peak_end,omitempty"`
 	// 高峰时段叠加倍率，仅在 peak_rate_enabled 且处于 [peak_start, peak_end) 时乘入文本倍率
 	PeakRateMultiplier float64 `json:"peak_rate_multiplier,omitempty"`
+	// NightRateEnabled holds the value of the "night_rate_enabled" field.
+	NightRateEnabled bool `json:"night_rate_enabled,omitempty"`
+	// NightStart holds the value of the "night_start" field.
+	NightStart string `json:"night_start,omitempty"`
+	// NightEnd holds the value of the "night_end" field.
+	NightEnd string `json:"night_end,omitempty"`
+	// NightRateMultiplier holds the value of the "night_rate_multiplier" field.
+	NightRateMultiplier float64 `json:"night_rate_multiplier,omitempty"`
+	// CacheReadAdjustmentMode holds the value of the "cache_read_adjustment_mode" field.
+	CacheReadAdjustmentMode string `json:"cache_read_adjustment_mode,omitempty"`
+	// CacheReadAdjustmentPercent holds the value of the "cache_read_adjustment_percent" field.
+	CacheReadAdjustmentPercent int `json:"cache_read_adjustment_percent,omitempty"`
 	// IsExclusive holds the value of the "is_exclusive" field.
 	IsExclusive bool `json:"is_exclusive,omitempty"`
 	// Status holds the value of the "status" field.
@@ -225,13 +237,13 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case group.FieldVideoModelPrices, group.FieldModelPricing, group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig, group.FieldModelsListConfig, group.FieldReasoningEffortMappings:
 			values[i] = new([]byte)
-		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldAllowLive, group.FieldForceOpenaiFast, group.FieldFreeOpenaiFast, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
+		case group.FieldPeakRateEnabled, group.FieldNightRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldAllowLive, group.FieldForceOpenaiFast, group.FieldFreeOpenaiFast, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
 			values[i] = new(sql.NullBool)
-		case group.FieldRateMultiplier, group.FieldPeakRateMultiplier, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldBatchImageDiscountMultiplier, group.FieldBatchImageHoldMultiplier, group.FieldVideoRateMultiplier, group.FieldVideoPrice480p, group.FieldVideoPrice720p, group.FieldVideoPrice1080p, group.FieldWebSearchPricePerCall, group.FieldSearchPricePer1k, group.FieldAudioRealtimePricePerMin, group.FieldAudioTtsPricePerMillionChars, group.FieldAudioSttPricePerHour, group.FieldProfitMinMargin, group.FieldProfitSafetyBuffer:
+		case group.FieldRateMultiplier, group.FieldPeakRateMultiplier, group.FieldNightRateMultiplier, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldBatchImageDiscountMultiplier, group.FieldBatchImageHoldMultiplier, group.FieldVideoRateMultiplier, group.FieldVideoPrice480p, group.FieldVideoPrice720p, group.FieldVideoPrice1080p, group.FieldWebSearchPricePerCall, group.FieldSearchPricePer1k, group.FieldAudioRealtimePricePerMin, group.FieldAudioTtsPricePerMillionChars, group.FieldAudioSttPricePerHour, group.FieldProfitMinMargin, group.FieldProfitSafetyBuffer:
 			values[i] = new(sql.NullFloat64)
-		case group.FieldID, group.FieldFallbackGroupID, group.FieldFallbackGroupIDOnInvalidRequest, group.FieldSortOrder, group.FieldRpmLimit:
+		case group.FieldID, group.FieldCacheReadAdjustmentPercent, group.FieldFallbackGroupID, group.FieldFallbackGroupIDOnInvalidRequest, group.FieldSortOrder, group.FieldRpmLimit:
 			values[i] = new(sql.NullInt64)
-		case group.FieldName, group.FieldDescription, group.FieldPeakStart, group.FieldPeakEnd, group.FieldStatus, group.FieldDuplicateOperationID, group.FieldPlatform, group.FieldDefaultMappedModel, group.FieldMaxReasoningEffort, group.FieldMaxReasoningEffortOverLimit:
+		case group.FieldName, group.FieldDescription, group.FieldPeakStart, group.FieldPeakEnd, group.FieldNightStart, group.FieldNightEnd, group.FieldCacheReadAdjustmentMode, group.FieldStatus, group.FieldDuplicateOperationID, group.FieldPlatform, group.FieldDefaultMappedModel, group.FieldMaxReasoningEffort, group.FieldMaxReasoningEffortOverLimit:
 			values[i] = new(sql.NullString)
 		case group.FieldCreatedAt, group.FieldUpdatedAt, group.FieldDeletedAt:
 			values[i] = new(sql.NullTime)
@@ -317,6 +329,42 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field peak_rate_multiplier", values[i])
 			} else if value.Valid {
 				_m.PeakRateMultiplier = value.Float64
+			}
+		case group.FieldNightRateEnabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field night_rate_enabled", values[i])
+			} else if value.Valid {
+				_m.NightRateEnabled = value.Bool
+			}
+		case group.FieldNightStart:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field night_start", values[i])
+			} else if value.Valid {
+				_m.NightStart = value.String
+			}
+		case group.FieldNightEnd:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field night_end", values[i])
+			} else if value.Valid {
+				_m.NightEnd = value.String
+			}
+		case group.FieldNightRateMultiplier:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field night_rate_multiplier", values[i])
+			} else if value.Valid {
+				_m.NightRateMultiplier = value.Float64
+			}
+		case group.FieldCacheReadAdjustmentMode:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field cache_read_adjustment_mode", values[i])
+			} else if value.Valid {
+				_m.CacheReadAdjustmentMode = value.String
+			}
+		case group.FieldCacheReadAdjustmentPercent:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field cache_read_adjustment_percent", values[i])
+			} else if value.Valid {
+				_m.CacheReadAdjustmentPercent = int(value.Int64)
 			}
 		case group.FieldIsExclusive:
 			if value, ok := values[i].(*sql.NullBool); !ok {
@@ -745,6 +793,24 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("peak_rate_multiplier=")
 	builder.WriteString(fmt.Sprintf("%v", _m.PeakRateMultiplier))
+	builder.WriteString(", ")
+	builder.WriteString("night_rate_enabled=")
+	builder.WriteString(fmt.Sprintf("%v", _m.NightRateEnabled))
+	builder.WriteString(", ")
+	builder.WriteString("night_start=")
+	builder.WriteString(_m.NightStart)
+	builder.WriteString(", ")
+	builder.WriteString("night_end=")
+	builder.WriteString(_m.NightEnd)
+	builder.WriteString(", ")
+	builder.WriteString("night_rate_multiplier=")
+	builder.WriteString(fmt.Sprintf("%v", _m.NightRateMultiplier))
+	builder.WriteString(", ")
+	builder.WriteString("cache_read_adjustment_mode=")
+	builder.WriteString(_m.CacheReadAdjustmentMode)
+	builder.WriteString(", ")
+	builder.WriteString("cache_read_adjustment_percent=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CacheReadAdjustmentPercent))
 	builder.WriteString(", ")
 	builder.WriteString("is_exclusive=")
 	builder.WriteString(fmt.Sprintf("%v", _m.IsExclusive))

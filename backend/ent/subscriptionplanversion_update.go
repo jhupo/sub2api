@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
@@ -145,6 +146,88 @@ func (_u *SubscriptionPlanVersionUpdate) SetNillableValidityDays(v *int) *Subscr
 // AddValidityDays adds value to the "validity_days" field.
 func (_u *SubscriptionPlanVersionUpdate) AddValidityDays(v int) *SubscriptionPlanVersionUpdate {
 	_u.mutation.AddValidityDays(v)
+	return _u
+}
+
+// SetCardMode sets the "card_mode" field.
+func (_u *SubscriptionPlanVersionUpdate) SetCardMode(v string) *SubscriptionPlanVersionUpdate {
+	_u.mutation.SetCardMode(v)
+	return _u
+}
+
+// SetNillableCardMode sets the "card_mode" field if the given value is not nil.
+func (_u *SubscriptionPlanVersionUpdate) SetNillableCardMode(v *string) *SubscriptionPlanVersionUpdate {
+	if v != nil {
+		_u.SetCardMode(*v)
+	}
+	return _u
+}
+
+// SetValidityHours sets the "validity_hours" field.
+func (_u *SubscriptionPlanVersionUpdate) SetValidityHours(v int) *SubscriptionPlanVersionUpdate {
+	_u.mutation.ResetValidityHours()
+	_u.mutation.SetValidityHours(v)
+	return _u
+}
+
+// SetNillableValidityHours sets the "validity_hours" field if the given value is not nil.
+func (_u *SubscriptionPlanVersionUpdate) SetNillableValidityHours(v *int) *SubscriptionPlanVersionUpdate {
+	if v != nil {
+		_u.SetValidityHours(*v)
+	}
+	return _u
+}
+
+// AddValidityHours adds value to the "validity_hours" field.
+func (_u *SubscriptionPlanVersionUpdate) AddValidityHours(v int) *SubscriptionPlanVersionUpdate {
+	_u.mutation.AddValidityHours(v)
+	return _u
+}
+
+// SetDeadlineAt sets the "deadline_at" field.
+func (_u *SubscriptionPlanVersionUpdate) SetDeadlineAt(v time.Time) *SubscriptionPlanVersionUpdate {
+	_u.mutation.SetDeadlineAt(v)
+	return _u
+}
+
+// SetNillableDeadlineAt sets the "deadline_at" field if the given value is not nil.
+func (_u *SubscriptionPlanVersionUpdate) SetNillableDeadlineAt(v *time.Time) *SubscriptionPlanVersionUpdate {
+	if v != nil {
+		_u.SetDeadlineAt(*v)
+	}
+	return _u
+}
+
+// ClearDeadlineAt clears the value of the "deadline_at" field.
+func (_u *SubscriptionPlanVersionUpdate) ClearDeadlineAt() *SubscriptionPlanVersionUpdate {
+	_u.mutation.ClearDeadlineAt()
+	return _u
+}
+
+// SetTotalLimitUsd sets the "total_limit_usd" field.
+func (_u *SubscriptionPlanVersionUpdate) SetTotalLimitUsd(v float64) *SubscriptionPlanVersionUpdate {
+	_u.mutation.ResetTotalLimitUsd()
+	_u.mutation.SetTotalLimitUsd(v)
+	return _u
+}
+
+// SetNillableTotalLimitUsd sets the "total_limit_usd" field if the given value is not nil.
+func (_u *SubscriptionPlanVersionUpdate) SetNillableTotalLimitUsd(v *float64) *SubscriptionPlanVersionUpdate {
+	if v != nil {
+		_u.SetTotalLimitUsd(*v)
+	}
+	return _u
+}
+
+// AddTotalLimitUsd adds value to the "total_limit_usd" field.
+func (_u *SubscriptionPlanVersionUpdate) AddTotalLimitUsd(v float64) *SubscriptionPlanVersionUpdate {
+	_u.mutation.AddTotalLimitUsd(v)
+	return _u
+}
+
+// ClearTotalLimitUsd clears the value of the "total_limit_usd" field.
+func (_u *SubscriptionPlanVersionUpdate) ClearTotalLimitUsd() *SubscriptionPlanVersionUpdate {
+	_u.mutation.ClearTotalLimitUsd()
 	return _u
 }
 
@@ -365,6 +448,11 @@ func (_u *SubscriptionPlanVersionUpdate) check() error {
 			return &ValidationError{Name: "currency", err: fmt.Errorf(`ent: validator failed for field "SubscriptionPlanVersion.currency": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.CardMode(); ok {
+		if err := subscriptionplanversion.CardModeValidator(v); err != nil {
+			return &ValidationError{Name: "card_mode", err: fmt.Errorf(`ent: validator failed for field "SubscriptionPlanVersion.card_mode": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.ValidityUnit(); ok {
 		if err := subscriptionplanversion.ValidityUnitValidator(v); err != nil {
 			return &ValidationError{Name: "validity_unit", err: fmt.Errorf(`ent: validator failed for field "SubscriptionPlanVersion.validity_unit": %w`, err)}
@@ -417,6 +505,30 @@ func (_u *SubscriptionPlanVersionUpdate) sqlSave(ctx context.Context) (_node int
 	}
 	if value, ok := _u.mutation.AddedValidityDays(); ok {
 		_spec.AddField(subscriptionplanversion.FieldValidityDays, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CardMode(); ok {
+		_spec.SetField(subscriptionplanversion.FieldCardMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.ValidityHours(); ok {
+		_spec.SetField(subscriptionplanversion.FieldValidityHours, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedValidityHours(); ok {
+		_spec.AddField(subscriptionplanversion.FieldValidityHours, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.DeadlineAt(); ok {
+		_spec.SetField(subscriptionplanversion.FieldDeadlineAt, field.TypeTime, value)
+	}
+	if _u.mutation.DeadlineAtCleared() {
+		_spec.ClearField(subscriptionplanversion.FieldDeadlineAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.TotalLimitUsd(); ok {
+		_spec.SetField(subscriptionplanversion.FieldTotalLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedTotalLimitUsd(); ok {
+		_spec.AddField(subscriptionplanversion.FieldTotalLimitUsd, field.TypeFloat64, value)
+	}
+	if _u.mutation.TotalLimitUsdCleared() {
+		_spec.ClearField(subscriptionplanversion.FieldTotalLimitUsd, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.ValidityUnit(); ok {
 		_spec.SetField(subscriptionplanversion.FieldValidityUnit, field.TypeString, value)
@@ -705,6 +817,88 @@ func (_u *SubscriptionPlanVersionUpdateOne) AddValidityDays(v int) *Subscription
 	return _u
 }
 
+// SetCardMode sets the "card_mode" field.
+func (_u *SubscriptionPlanVersionUpdateOne) SetCardMode(v string) *SubscriptionPlanVersionUpdateOne {
+	_u.mutation.SetCardMode(v)
+	return _u
+}
+
+// SetNillableCardMode sets the "card_mode" field if the given value is not nil.
+func (_u *SubscriptionPlanVersionUpdateOne) SetNillableCardMode(v *string) *SubscriptionPlanVersionUpdateOne {
+	if v != nil {
+		_u.SetCardMode(*v)
+	}
+	return _u
+}
+
+// SetValidityHours sets the "validity_hours" field.
+func (_u *SubscriptionPlanVersionUpdateOne) SetValidityHours(v int) *SubscriptionPlanVersionUpdateOne {
+	_u.mutation.ResetValidityHours()
+	_u.mutation.SetValidityHours(v)
+	return _u
+}
+
+// SetNillableValidityHours sets the "validity_hours" field if the given value is not nil.
+func (_u *SubscriptionPlanVersionUpdateOne) SetNillableValidityHours(v *int) *SubscriptionPlanVersionUpdateOne {
+	if v != nil {
+		_u.SetValidityHours(*v)
+	}
+	return _u
+}
+
+// AddValidityHours adds value to the "validity_hours" field.
+func (_u *SubscriptionPlanVersionUpdateOne) AddValidityHours(v int) *SubscriptionPlanVersionUpdateOne {
+	_u.mutation.AddValidityHours(v)
+	return _u
+}
+
+// SetDeadlineAt sets the "deadline_at" field.
+func (_u *SubscriptionPlanVersionUpdateOne) SetDeadlineAt(v time.Time) *SubscriptionPlanVersionUpdateOne {
+	_u.mutation.SetDeadlineAt(v)
+	return _u
+}
+
+// SetNillableDeadlineAt sets the "deadline_at" field if the given value is not nil.
+func (_u *SubscriptionPlanVersionUpdateOne) SetNillableDeadlineAt(v *time.Time) *SubscriptionPlanVersionUpdateOne {
+	if v != nil {
+		_u.SetDeadlineAt(*v)
+	}
+	return _u
+}
+
+// ClearDeadlineAt clears the value of the "deadline_at" field.
+func (_u *SubscriptionPlanVersionUpdateOne) ClearDeadlineAt() *SubscriptionPlanVersionUpdateOne {
+	_u.mutation.ClearDeadlineAt()
+	return _u
+}
+
+// SetTotalLimitUsd sets the "total_limit_usd" field.
+func (_u *SubscriptionPlanVersionUpdateOne) SetTotalLimitUsd(v float64) *SubscriptionPlanVersionUpdateOne {
+	_u.mutation.ResetTotalLimitUsd()
+	_u.mutation.SetTotalLimitUsd(v)
+	return _u
+}
+
+// SetNillableTotalLimitUsd sets the "total_limit_usd" field if the given value is not nil.
+func (_u *SubscriptionPlanVersionUpdateOne) SetNillableTotalLimitUsd(v *float64) *SubscriptionPlanVersionUpdateOne {
+	if v != nil {
+		_u.SetTotalLimitUsd(*v)
+	}
+	return _u
+}
+
+// AddTotalLimitUsd adds value to the "total_limit_usd" field.
+func (_u *SubscriptionPlanVersionUpdateOne) AddTotalLimitUsd(v float64) *SubscriptionPlanVersionUpdateOne {
+	_u.mutation.AddTotalLimitUsd(v)
+	return _u
+}
+
+// ClearTotalLimitUsd clears the value of the "total_limit_usd" field.
+func (_u *SubscriptionPlanVersionUpdateOne) ClearTotalLimitUsd() *SubscriptionPlanVersionUpdateOne {
+	_u.mutation.ClearTotalLimitUsd()
+	return _u
+}
+
 // SetValidityUnit sets the "validity_unit" field.
 func (_u *SubscriptionPlanVersionUpdateOne) SetValidityUnit(v string) *SubscriptionPlanVersionUpdateOne {
 	_u.mutation.SetValidityUnit(v)
@@ -935,6 +1129,11 @@ func (_u *SubscriptionPlanVersionUpdateOne) check() error {
 			return &ValidationError{Name: "currency", err: fmt.Errorf(`ent: validator failed for field "SubscriptionPlanVersion.currency": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.CardMode(); ok {
+		if err := subscriptionplanversion.CardModeValidator(v); err != nil {
+			return &ValidationError{Name: "card_mode", err: fmt.Errorf(`ent: validator failed for field "SubscriptionPlanVersion.card_mode": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.ValidityUnit(); ok {
 		if err := subscriptionplanversion.ValidityUnitValidator(v); err != nil {
 			return &ValidationError{Name: "validity_unit", err: fmt.Errorf(`ent: validator failed for field "SubscriptionPlanVersion.validity_unit": %w`, err)}
@@ -1004,6 +1203,30 @@ func (_u *SubscriptionPlanVersionUpdateOne) sqlSave(ctx context.Context) (_node 
 	}
 	if value, ok := _u.mutation.AddedValidityDays(); ok {
 		_spec.AddField(subscriptionplanversion.FieldValidityDays, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CardMode(); ok {
+		_spec.SetField(subscriptionplanversion.FieldCardMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.ValidityHours(); ok {
+		_spec.SetField(subscriptionplanversion.FieldValidityHours, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedValidityHours(); ok {
+		_spec.AddField(subscriptionplanversion.FieldValidityHours, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.DeadlineAt(); ok {
+		_spec.SetField(subscriptionplanversion.FieldDeadlineAt, field.TypeTime, value)
+	}
+	if _u.mutation.DeadlineAtCleared() {
+		_spec.ClearField(subscriptionplanversion.FieldDeadlineAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.TotalLimitUsd(); ok {
+		_spec.SetField(subscriptionplanversion.FieldTotalLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedTotalLimitUsd(); ok {
+		_spec.AddField(subscriptionplanversion.FieldTotalLimitUsd, field.TypeFloat64, value)
+	}
+	if _u.mutation.TotalLimitUsdCleared() {
+		_spec.ClearField(subscriptionplanversion.FieldTotalLimitUsd, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.ValidityUnit(); ok {
 		_spec.SetField(subscriptionplanversion.FieldValidityUnit, field.TypeString, value)

@@ -593,6 +593,12 @@ export interface Group {
   peak_start: string
   peak_end: string
   peak_rate_multiplier: number
+  night_rate_enabled: boolean
+  night_start: string
+  night_end: string
+  night_rate_multiplier: number
+  cache_read_adjustment_mode: string
+  cache_read_adjustment_percent: number
   // Claude Code 客户端限制
   claude_code_only: boolean
   fallback_group_id: number | null
@@ -713,6 +719,8 @@ export interface ApiKey {
   group_id: number | null
   funding_source: 'wallet' | 'subscription'
   subscription_id: number | null
+  subscription_priority?: number[]
+  allow_wallet_fallback?: boolean
   status: 'active' | 'inactive' | 'quota_exhausted' | 'expired'
   ip_whitelist: string[]
   ip_blacklist: string[]
@@ -744,6 +752,8 @@ export interface CreateApiKeyRequest {
   group_id?: number | null
   funding_source: 'wallet' | 'subscription'
   subscription_id?: number | null
+  subscription_priority?: number[]
+  allow_wallet_fallback?: boolean
   custom_key?: string // Optional custom API Key
   ip_whitelist?: string[]
   ip_blacklist?: string[]
@@ -759,6 +769,8 @@ export interface UpdateApiKeyRequest {
   group_id?: number | null
   funding_source?: 'wallet' | 'subscription'
   subscription_id?: number | null
+  subscription_priority?: number[]
+  allow_wallet_fallback?: boolean
   status?: 'active' | 'inactive'
   ip_whitelist?: string[]
   ip_blacklist?: string[]
@@ -805,6 +817,12 @@ export interface CreateGroupRequest {
   peak_start?: string
   peak_end?: string
   peak_rate_multiplier?: number
+  night_rate_enabled?: boolean
+  night_start?: string
+  night_end?: string
+  night_rate_multiplier?: number
+  cache_read_adjustment_mode?: string
+  cache_read_adjustment_percent?: number
   // 分组利润控制（五个 token 平台；margin/buffer 为小数）
   profit_control_enabled?: boolean
   profit_min_margin?: number
@@ -866,6 +884,12 @@ export interface UpdateGroupRequest {
   peak_start?: string
   peak_end?: string
   peak_rate_multiplier?: number
+  night_rate_enabled?: boolean
+  night_start?: string
+  night_end?: string
+  night_rate_multiplier?: number
+  cache_read_adjustment_mode?: string
+  cache_read_adjustment_percent?: number
   // 分组利润控制（五个 token 平台；margin/buffer 为小数）
   profit_control_enabled?: boolean
   profit_min_margin?: number
@@ -1031,7 +1055,12 @@ export interface UpstreamBillingData {
   peak_start?: string
   peak_end?: string
   peak_rate_multiplier?: number
+  night_rate_enabled?: boolean
+  night_start?: string
+  night_end?: string
+  night_rate_multiplier?: number
   applied_peak_multiplier?: number
+  applied_night_multiplier?: number
   effective_rate_multiplier: number
   timezone?: string
   observed_at: string
@@ -1996,6 +2025,11 @@ export interface UserSubscription {
   user_id: number
   plan_id: number
   plan_version_id: number
+  is_quota_card?: boolean
+  renewal_count?: number
+  total_usage_usd?: number
+  total_reserved_usd?: number
+  can_self_revoke?: boolean
   status: 'active' | 'expired' | 'revoked' | 'suspended'
   starts_at: string
   expires_at: string
@@ -2027,6 +2061,7 @@ export interface SubscriptionUsageWindowProgress {
 }
 
 export interface SubscriptionProgress {
+  total?: SubscriptionUsageWindowProgress
   id: number
   plan_name: string
   expires_at: string

@@ -85,6 +85,26 @@ func ValidityDays(v int) predicate.SubscriptionPlanVersion {
 	return predicate.SubscriptionPlanVersion(sql.FieldEQ(FieldValidityDays, v))
 }
 
+// CardMode applies equality check predicate on the "card_mode" field. It's identical to CardModeEQ.
+func CardMode(v string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldEQ(FieldCardMode, v))
+}
+
+// ValidityHours applies equality check predicate on the "validity_hours" field. It's identical to ValidityHoursEQ.
+func ValidityHours(v int) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldEQ(FieldValidityHours, v))
+}
+
+// DeadlineAt applies equality check predicate on the "deadline_at" field. It's identical to DeadlineAtEQ.
+func DeadlineAt(v time.Time) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldEQ(FieldDeadlineAt, v))
+}
+
+// TotalLimitUsd applies equality check predicate on the "total_limit_usd" field. It's identical to TotalLimitUsdEQ.
+func TotalLimitUsd(v float64) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldEQ(FieldTotalLimitUsd, v))
+}
+
 // ValidityUnit applies equality check predicate on the "validity_unit" field. It's identical to ValidityUnitEQ.
 func ValidityUnit(v string) predicate.SubscriptionPlanVersion {
 	return predicate.SubscriptionPlanVersion(sql.FieldEQ(FieldValidityUnit, v))
@@ -363,6 +383,211 @@ func ValidityDaysLT(v int) predicate.SubscriptionPlanVersion {
 // ValidityDaysLTE applies the LTE predicate on the "validity_days" field.
 func ValidityDaysLTE(v int) predicate.SubscriptionPlanVersion {
 	return predicate.SubscriptionPlanVersion(sql.FieldLTE(FieldValidityDays, v))
+}
+
+// CardModeEQ applies the EQ predicate on the "card_mode" field.
+func CardModeEQ(v string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldEQ(FieldCardMode, v))
+}
+
+// CardModeNEQ applies the NEQ predicate on the "card_mode" field.
+func CardModeNEQ(v string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldNEQ(FieldCardMode, v))
+}
+
+// CardModeIn applies the In predicate on the "card_mode" field.
+func CardModeIn(vs ...string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldIn(FieldCardMode, vs...))
+}
+
+// CardModeNotIn applies the NotIn predicate on the "card_mode" field.
+func CardModeNotIn(vs ...string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldNotIn(FieldCardMode, vs...))
+}
+
+// CardModeGT applies the GT predicate on the "card_mode" field.
+func CardModeGT(v string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldGT(FieldCardMode, v))
+}
+
+// CardModeGTE applies the GTE predicate on the "card_mode" field.
+func CardModeGTE(v string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldGTE(FieldCardMode, v))
+}
+
+// CardModeLT applies the LT predicate on the "card_mode" field.
+func CardModeLT(v string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldLT(FieldCardMode, v))
+}
+
+// CardModeLTE applies the LTE predicate on the "card_mode" field.
+func CardModeLTE(v string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldLTE(FieldCardMode, v))
+}
+
+// CardModeContains applies the Contains predicate on the "card_mode" field.
+func CardModeContains(v string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldContains(FieldCardMode, v))
+}
+
+// CardModeHasPrefix applies the HasPrefix predicate on the "card_mode" field.
+func CardModeHasPrefix(v string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldHasPrefix(FieldCardMode, v))
+}
+
+// CardModeHasSuffix applies the HasSuffix predicate on the "card_mode" field.
+func CardModeHasSuffix(v string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldHasSuffix(FieldCardMode, v))
+}
+
+// CardModeEqualFold applies the EqualFold predicate on the "card_mode" field.
+func CardModeEqualFold(v string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldEqualFold(FieldCardMode, v))
+}
+
+// CardModeContainsFold applies the ContainsFold predicate on the "card_mode" field.
+func CardModeContainsFold(v string) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldContainsFold(FieldCardMode, v))
+}
+
+// ValidityHoursEQ applies the EQ predicate on the "validity_hours" field.
+func ValidityHoursEQ(v int) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldEQ(FieldValidityHours, v))
+}
+
+// ValidityHoursNEQ applies the NEQ predicate on the "validity_hours" field.
+func ValidityHoursNEQ(v int) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldNEQ(FieldValidityHours, v))
+}
+
+// ValidityHoursIn applies the In predicate on the "validity_hours" field.
+func ValidityHoursIn(vs ...int) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldIn(FieldValidityHours, vs...))
+}
+
+// ValidityHoursNotIn applies the NotIn predicate on the "validity_hours" field.
+func ValidityHoursNotIn(vs ...int) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldNotIn(FieldValidityHours, vs...))
+}
+
+// ValidityHoursGT applies the GT predicate on the "validity_hours" field.
+func ValidityHoursGT(v int) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldGT(FieldValidityHours, v))
+}
+
+// ValidityHoursGTE applies the GTE predicate on the "validity_hours" field.
+func ValidityHoursGTE(v int) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldGTE(FieldValidityHours, v))
+}
+
+// ValidityHoursLT applies the LT predicate on the "validity_hours" field.
+func ValidityHoursLT(v int) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldLT(FieldValidityHours, v))
+}
+
+// ValidityHoursLTE applies the LTE predicate on the "validity_hours" field.
+func ValidityHoursLTE(v int) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldLTE(FieldValidityHours, v))
+}
+
+// DeadlineAtEQ applies the EQ predicate on the "deadline_at" field.
+func DeadlineAtEQ(v time.Time) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldEQ(FieldDeadlineAt, v))
+}
+
+// DeadlineAtNEQ applies the NEQ predicate on the "deadline_at" field.
+func DeadlineAtNEQ(v time.Time) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldNEQ(FieldDeadlineAt, v))
+}
+
+// DeadlineAtIn applies the In predicate on the "deadline_at" field.
+func DeadlineAtIn(vs ...time.Time) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldIn(FieldDeadlineAt, vs...))
+}
+
+// DeadlineAtNotIn applies the NotIn predicate on the "deadline_at" field.
+func DeadlineAtNotIn(vs ...time.Time) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldNotIn(FieldDeadlineAt, vs...))
+}
+
+// DeadlineAtGT applies the GT predicate on the "deadline_at" field.
+func DeadlineAtGT(v time.Time) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldGT(FieldDeadlineAt, v))
+}
+
+// DeadlineAtGTE applies the GTE predicate on the "deadline_at" field.
+func DeadlineAtGTE(v time.Time) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldGTE(FieldDeadlineAt, v))
+}
+
+// DeadlineAtLT applies the LT predicate on the "deadline_at" field.
+func DeadlineAtLT(v time.Time) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldLT(FieldDeadlineAt, v))
+}
+
+// DeadlineAtLTE applies the LTE predicate on the "deadline_at" field.
+func DeadlineAtLTE(v time.Time) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldLTE(FieldDeadlineAt, v))
+}
+
+// DeadlineAtIsNil applies the IsNil predicate on the "deadline_at" field.
+func DeadlineAtIsNil() predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldIsNull(FieldDeadlineAt))
+}
+
+// DeadlineAtNotNil applies the NotNil predicate on the "deadline_at" field.
+func DeadlineAtNotNil() predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldNotNull(FieldDeadlineAt))
+}
+
+// TotalLimitUsdEQ applies the EQ predicate on the "total_limit_usd" field.
+func TotalLimitUsdEQ(v float64) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldEQ(FieldTotalLimitUsd, v))
+}
+
+// TotalLimitUsdNEQ applies the NEQ predicate on the "total_limit_usd" field.
+func TotalLimitUsdNEQ(v float64) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldNEQ(FieldTotalLimitUsd, v))
+}
+
+// TotalLimitUsdIn applies the In predicate on the "total_limit_usd" field.
+func TotalLimitUsdIn(vs ...float64) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldIn(FieldTotalLimitUsd, vs...))
+}
+
+// TotalLimitUsdNotIn applies the NotIn predicate on the "total_limit_usd" field.
+func TotalLimitUsdNotIn(vs ...float64) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldNotIn(FieldTotalLimitUsd, vs...))
+}
+
+// TotalLimitUsdGT applies the GT predicate on the "total_limit_usd" field.
+func TotalLimitUsdGT(v float64) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldGT(FieldTotalLimitUsd, v))
+}
+
+// TotalLimitUsdGTE applies the GTE predicate on the "total_limit_usd" field.
+func TotalLimitUsdGTE(v float64) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldGTE(FieldTotalLimitUsd, v))
+}
+
+// TotalLimitUsdLT applies the LT predicate on the "total_limit_usd" field.
+func TotalLimitUsdLT(v float64) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldLT(FieldTotalLimitUsd, v))
+}
+
+// TotalLimitUsdLTE applies the LTE predicate on the "total_limit_usd" field.
+func TotalLimitUsdLTE(v float64) predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldLTE(FieldTotalLimitUsd, v))
+}
+
+// TotalLimitUsdIsNil applies the IsNil predicate on the "total_limit_usd" field.
+func TotalLimitUsdIsNil() predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldIsNull(FieldTotalLimitUsd))
+}
+
+// TotalLimitUsdNotNil applies the NotNil predicate on the "total_limit_usd" field.
+func TotalLimitUsdNotNil() predicate.SubscriptionPlanVersion {
+	return predicate.SubscriptionPlanVersion(sql.FieldNotNull(FieldTotalLimitUsd))
 }
 
 // ValidityUnitEQ applies the EQ predicate on the "validity_unit" field.

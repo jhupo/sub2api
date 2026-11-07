@@ -77,6 +77,62 @@ func (_c *SubscriptionPlanVersionCreate) SetValidityDays(v int) *SubscriptionPla
 	return _c
 }
 
+// SetCardMode sets the "card_mode" field.
+func (_c *SubscriptionPlanVersionCreate) SetCardMode(v string) *SubscriptionPlanVersionCreate {
+	_c.mutation.SetCardMode(v)
+	return _c
+}
+
+// SetNillableCardMode sets the "card_mode" field if the given value is not nil.
+func (_c *SubscriptionPlanVersionCreate) SetNillableCardMode(v *string) *SubscriptionPlanVersionCreate {
+	if v != nil {
+		_c.SetCardMode(*v)
+	}
+	return _c
+}
+
+// SetValidityHours sets the "validity_hours" field.
+func (_c *SubscriptionPlanVersionCreate) SetValidityHours(v int) *SubscriptionPlanVersionCreate {
+	_c.mutation.SetValidityHours(v)
+	return _c
+}
+
+// SetNillableValidityHours sets the "validity_hours" field if the given value is not nil.
+func (_c *SubscriptionPlanVersionCreate) SetNillableValidityHours(v *int) *SubscriptionPlanVersionCreate {
+	if v != nil {
+		_c.SetValidityHours(*v)
+	}
+	return _c
+}
+
+// SetDeadlineAt sets the "deadline_at" field.
+func (_c *SubscriptionPlanVersionCreate) SetDeadlineAt(v time.Time) *SubscriptionPlanVersionCreate {
+	_c.mutation.SetDeadlineAt(v)
+	return _c
+}
+
+// SetNillableDeadlineAt sets the "deadline_at" field if the given value is not nil.
+func (_c *SubscriptionPlanVersionCreate) SetNillableDeadlineAt(v *time.Time) *SubscriptionPlanVersionCreate {
+	if v != nil {
+		_c.SetDeadlineAt(*v)
+	}
+	return _c
+}
+
+// SetTotalLimitUsd sets the "total_limit_usd" field.
+func (_c *SubscriptionPlanVersionCreate) SetTotalLimitUsd(v float64) *SubscriptionPlanVersionCreate {
+	_c.mutation.SetTotalLimitUsd(v)
+	return _c
+}
+
+// SetNillableTotalLimitUsd sets the "total_limit_usd" field if the given value is not nil.
+func (_c *SubscriptionPlanVersionCreate) SetNillableTotalLimitUsd(v *float64) *SubscriptionPlanVersionCreate {
+	if v != nil {
+		_c.SetTotalLimitUsd(*v)
+	}
+	return _c
+}
+
 // SetValidityUnit sets the "validity_unit" field.
 func (_c *SubscriptionPlanVersionCreate) SetValidityUnit(v string) *SubscriptionPlanVersionCreate {
 	_c.mutation.SetValidityUnit(v)
@@ -221,6 +277,14 @@ func (_c *SubscriptionPlanVersionCreate) defaults() {
 		v := subscriptionplanversion.DefaultCurrency
 		_c.mutation.SetCurrency(v)
 	}
+	if _, ok := _c.mutation.CardMode(); !ok {
+		v := subscriptionplanversion.DefaultCardMode
+		_c.mutation.SetCardMode(v)
+	}
+	if _, ok := _c.mutation.ValidityHours(); !ok {
+		v := subscriptionplanversion.DefaultValidityHours
+		_c.mutation.SetValidityHours(v)
+	}
 	if _, ok := _c.mutation.ValidityUnit(); !ok {
 		v := subscriptionplanversion.DefaultValidityUnit
 		_c.mutation.SetValidityUnit(v)
@@ -252,6 +316,17 @@ func (_c *SubscriptionPlanVersionCreate) check() error {
 	}
 	if _, ok := _c.mutation.ValidityDays(); !ok {
 		return &ValidationError{Name: "validity_days", err: errors.New(`ent: missing required field "SubscriptionPlanVersion.validity_days"`)}
+	}
+	if _, ok := _c.mutation.CardMode(); !ok {
+		return &ValidationError{Name: "card_mode", err: errors.New(`ent: missing required field "SubscriptionPlanVersion.card_mode"`)}
+	}
+	if v, ok := _c.mutation.CardMode(); ok {
+		if err := subscriptionplanversion.CardModeValidator(v); err != nil {
+			return &ValidationError{Name: "card_mode", err: fmt.Errorf(`ent: validator failed for field "SubscriptionPlanVersion.card_mode": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.ValidityHours(); !ok {
+		return &ValidationError{Name: "validity_hours", err: errors.New(`ent: missing required field "SubscriptionPlanVersion.validity_hours"`)}
 	}
 	if _, ok := _c.mutation.ValidityUnit(); !ok {
 		return &ValidationError{Name: "validity_unit", err: errors.New(`ent: missing required field "SubscriptionPlanVersion.validity_unit"`)}
@@ -313,6 +388,22 @@ func (_c *SubscriptionPlanVersionCreate) createSpec() (*SubscriptionPlanVersion,
 	if value, ok := _c.mutation.ValidityDays(); ok {
 		_spec.SetField(subscriptionplanversion.FieldValidityDays, field.TypeInt, value)
 		_node.ValidityDays = value
+	}
+	if value, ok := _c.mutation.CardMode(); ok {
+		_spec.SetField(subscriptionplanversion.FieldCardMode, field.TypeString, value)
+		_node.CardMode = value
+	}
+	if value, ok := _c.mutation.ValidityHours(); ok {
+		_spec.SetField(subscriptionplanversion.FieldValidityHours, field.TypeInt, value)
+		_node.ValidityHours = value
+	}
+	if value, ok := _c.mutation.DeadlineAt(); ok {
+		_spec.SetField(subscriptionplanversion.FieldDeadlineAt, field.TypeTime, value)
+		_node.DeadlineAt = &value
+	}
+	if value, ok := _c.mutation.TotalLimitUsd(); ok {
+		_spec.SetField(subscriptionplanversion.FieldTotalLimitUsd, field.TypeFloat64, value)
+		_node.TotalLimitUsd = &value
 	}
 	if value, ok := _c.mutation.ValidityUnit(); ok {
 		_spec.SetField(subscriptionplanversion.FieldValidityUnit, field.TypeString, value)
@@ -534,6 +625,78 @@ func (u *SubscriptionPlanVersionUpsert) UpdateValidityDays() *SubscriptionPlanVe
 // AddValidityDays adds v to the "validity_days" field.
 func (u *SubscriptionPlanVersionUpsert) AddValidityDays(v int) *SubscriptionPlanVersionUpsert {
 	u.Add(subscriptionplanversion.FieldValidityDays, v)
+	return u
+}
+
+// SetCardMode sets the "card_mode" field.
+func (u *SubscriptionPlanVersionUpsert) SetCardMode(v string) *SubscriptionPlanVersionUpsert {
+	u.Set(subscriptionplanversion.FieldCardMode, v)
+	return u
+}
+
+// UpdateCardMode sets the "card_mode" field to the value that was provided on create.
+func (u *SubscriptionPlanVersionUpsert) UpdateCardMode() *SubscriptionPlanVersionUpsert {
+	u.SetExcluded(subscriptionplanversion.FieldCardMode)
+	return u
+}
+
+// SetValidityHours sets the "validity_hours" field.
+func (u *SubscriptionPlanVersionUpsert) SetValidityHours(v int) *SubscriptionPlanVersionUpsert {
+	u.Set(subscriptionplanversion.FieldValidityHours, v)
+	return u
+}
+
+// UpdateValidityHours sets the "validity_hours" field to the value that was provided on create.
+func (u *SubscriptionPlanVersionUpsert) UpdateValidityHours() *SubscriptionPlanVersionUpsert {
+	u.SetExcluded(subscriptionplanversion.FieldValidityHours)
+	return u
+}
+
+// AddValidityHours adds v to the "validity_hours" field.
+func (u *SubscriptionPlanVersionUpsert) AddValidityHours(v int) *SubscriptionPlanVersionUpsert {
+	u.Add(subscriptionplanversion.FieldValidityHours, v)
+	return u
+}
+
+// SetDeadlineAt sets the "deadline_at" field.
+func (u *SubscriptionPlanVersionUpsert) SetDeadlineAt(v time.Time) *SubscriptionPlanVersionUpsert {
+	u.Set(subscriptionplanversion.FieldDeadlineAt, v)
+	return u
+}
+
+// UpdateDeadlineAt sets the "deadline_at" field to the value that was provided on create.
+func (u *SubscriptionPlanVersionUpsert) UpdateDeadlineAt() *SubscriptionPlanVersionUpsert {
+	u.SetExcluded(subscriptionplanversion.FieldDeadlineAt)
+	return u
+}
+
+// ClearDeadlineAt clears the value of the "deadline_at" field.
+func (u *SubscriptionPlanVersionUpsert) ClearDeadlineAt() *SubscriptionPlanVersionUpsert {
+	u.SetNull(subscriptionplanversion.FieldDeadlineAt)
+	return u
+}
+
+// SetTotalLimitUsd sets the "total_limit_usd" field.
+func (u *SubscriptionPlanVersionUpsert) SetTotalLimitUsd(v float64) *SubscriptionPlanVersionUpsert {
+	u.Set(subscriptionplanversion.FieldTotalLimitUsd, v)
+	return u
+}
+
+// UpdateTotalLimitUsd sets the "total_limit_usd" field to the value that was provided on create.
+func (u *SubscriptionPlanVersionUpsert) UpdateTotalLimitUsd() *SubscriptionPlanVersionUpsert {
+	u.SetExcluded(subscriptionplanversion.FieldTotalLimitUsd)
+	return u
+}
+
+// AddTotalLimitUsd adds v to the "total_limit_usd" field.
+func (u *SubscriptionPlanVersionUpsert) AddTotalLimitUsd(v float64) *SubscriptionPlanVersionUpsert {
+	u.Add(subscriptionplanversion.FieldTotalLimitUsd, v)
+	return u
+}
+
+// ClearTotalLimitUsd clears the value of the "total_limit_usd" field.
+func (u *SubscriptionPlanVersionUpsert) ClearTotalLimitUsd() *SubscriptionPlanVersionUpsert {
+	u.SetNull(subscriptionplanversion.FieldTotalLimitUsd)
 	return u
 }
 
@@ -782,6 +945,90 @@ func (u *SubscriptionPlanVersionUpsertOne) AddValidityDays(v int) *SubscriptionP
 func (u *SubscriptionPlanVersionUpsertOne) UpdateValidityDays() *SubscriptionPlanVersionUpsertOne {
 	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
 		s.UpdateValidityDays()
+	})
+}
+
+// SetCardMode sets the "card_mode" field.
+func (u *SubscriptionPlanVersionUpsertOne) SetCardMode(v string) *SubscriptionPlanVersionUpsertOne {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.SetCardMode(v)
+	})
+}
+
+// UpdateCardMode sets the "card_mode" field to the value that was provided on create.
+func (u *SubscriptionPlanVersionUpsertOne) UpdateCardMode() *SubscriptionPlanVersionUpsertOne {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.UpdateCardMode()
+	})
+}
+
+// SetValidityHours sets the "validity_hours" field.
+func (u *SubscriptionPlanVersionUpsertOne) SetValidityHours(v int) *SubscriptionPlanVersionUpsertOne {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.SetValidityHours(v)
+	})
+}
+
+// AddValidityHours adds v to the "validity_hours" field.
+func (u *SubscriptionPlanVersionUpsertOne) AddValidityHours(v int) *SubscriptionPlanVersionUpsertOne {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.AddValidityHours(v)
+	})
+}
+
+// UpdateValidityHours sets the "validity_hours" field to the value that was provided on create.
+func (u *SubscriptionPlanVersionUpsertOne) UpdateValidityHours() *SubscriptionPlanVersionUpsertOne {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.UpdateValidityHours()
+	})
+}
+
+// SetDeadlineAt sets the "deadline_at" field.
+func (u *SubscriptionPlanVersionUpsertOne) SetDeadlineAt(v time.Time) *SubscriptionPlanVersionUpsertOne {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.SetDeadlineAt(v)
+	})
+}
+
+// UpdateDeadlineAt sets the "deadline_at" field to the value that was provided on create.
+func (u *SubscriptionPlanVersionUpsertOne) UpdateDeadlineAt() *SubscriptionPlanVersionUpsertOne {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.UpdateDeadlineAt()
+	})
+}
+
+// ClearDeadlineAt clears the value of the "deadline_at" field.
+func (u *SubscriptionPlanVersionUpsertOne) ClearDeadlineAt() *SubscriptionPlanVersionUpsertOne {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.ClearDeadlineAt()
+	})
+}
+
+// SetTotalLimitUsd sets the "total_limit_usd" field.
+func (u *SubscriptionPlanVersionUpsertOne) SetTotalLimitUsd(v float64) *SubscriptionPlanVersionUpsertOne {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.SetTotalLimitUsd(v)
+	})
+}
+
+// AddTotalLimitUsd adds v to the "total_limit_usd" field.
+func (u *SubscriptionPlanVersionUpsertOne) AddTotalLimitUsd(v float64) *SubscriptionPlanVersionUpsertOne {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.AddTotalLimitUsd(v)
+	})
+}
+
+// UpdateTotalLimitUsd sets the "total_limit_usd" field to the value that was provided on create.
+func (u *SubscriptionPlanVersionUpsertOne) UpdateTotalLimitUsd() *SubscriptionPlanVersionUpsertOne {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.UpdateTotalLimitUsd()
+	})
+}
+
+// ClearTotalLimitUsd clears the value of the "total_limit_usd" field.
+func (u *SubscriptionPlanVersionUpsertOne) ClearTotalLimitUsd() *SubscriptionPlanVersionUpsertOne {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.ClearTotalLimitUsd()
 	})
 }
 
@@ -1210,6 +1457,90 @@ func (u *SubscriptionPlanVersionUpsertBulk) AddValidityDays(v int) *Subscription
 func (u *SubscriptionPlanVersionUpsertBulk) UpdateValidityDays() *SubscriptionPlanVersionUpsertBulk {
 	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
 		s.UpdateValidityDays()
+	})
+}
+
+// SetCardMode sets the "card_mode" field.
+func (u *SubscriptionPlanVersionUpsertBulk) SetCardMode(v string) *SubscriptionPlanVersionUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.SetCardMode(v)
+	})
+}
+
+// UpdateCardMode sets the "card_mode" field to the value that was provided on create.
+func (u *SubscriptionPlanVersionUpsertBulk) UpdateCardMode() *SubscriptionPlanVersionUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.UpdateCardMode()
+	})
+}
+
+// SetValidityHours sets the "validity_hours" field.
+func (u *SubscriptionPlanVersionUpsertBulk) SetValidityHours(v int) *SubscriptionPlanVersionUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.SetValidityHours(v)
+	})
+}
+
+// AddValidityHours adds v to the "validity_hours" field.
+func (u *SubscriptionPlanVersionUpsertBulk) AddValidityHours(v int) *SubscriptionPlanVersionUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.AddValidityHours(v)
+	})
+}
+
+// UpdateValidityHours sets the "validity_hours" field to the value that was provided on create.
+func (u *SubscriptionPlanVersionUpsertBulk) UpdateValidityHours() *SubscriptionPlanVersionUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.UpdateValidityHours()
+	})
+}
+
+// SetDeadlineAt sets the "deadline_at" field.
+func (u *SubscriptionPlanVersionUpsertBulk) SetDeadlineAt(v time.Time) *SubscriptionPlanVersionUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.SetDeadlineAt(v)
+	})
+}
+
+// UpdateDeadlineAt sets the "deadline_at" field to the value that was provided on create.
+func (u *SubscriptionPlanVersionUpsertBulk) UpdateDeadlineAt() *SubscriptionPlanVersionUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.UpdateDeadlineAt()
+	})
+}
+
+// ClearDeadlineAt clears the value of the "deadline_at" field.
+func (u *SubscriptionPlanVersionUpsertBulk) ClearDeadlineAt() *SubscriptionPlanVersionUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.ClearDeadlineAt()
+	})
+}
+
+// SetTotalLimitUsd sets the "total_limit_usd" field.
+func (u *SubscriptionPlanVersionUpsertBulk) SetTotalLimitUsd(v float64) *SubscriptionPlanVersionUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.SetTotalLimitUsd(v)
+	})
+}
+
+// AddTotalLimitUsd adds v to the "total_limit_usd" field.
+func (u *SubscriptionPlanVersionUpsertBulk) AddTotalLimitUsd(v float64) *SubscriptionPlanVersionUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.AddTotalLimitUsd(v)
+	})
+}
+
+// UpdateTotalLimitUsd sets the "total_limit_usd" field to the value that was provided on create.
+func (u *SubscriptionPlanVersionUpsertBulk) UpdateTotalLimitUsd() *SubscriptionPlanVersionUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.UpdateTotalLimitUsd()
+	})
+}
+
+// ClearTotalLimitUsd clears the value of the "total_limit_usd" field.
+func (u *SubscriptionPlanVersionUpsertBulk) ClearTotalLimitUsd() *SubscriptionPlanVersionUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanVersionUpsert) {
+		s.ClearTotalLimitUsd()
 	})
 }
 

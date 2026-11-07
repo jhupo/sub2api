@@ -67,7 +67,12 @@ export async function getSubscriptionProgress(
   return response.data
 }
 
+export async function selfRevoke(id: number): Promise<void> {
+  await apiClient.post(`/subscriptions/${id}/revoke`)
+}
+
 export default {
+  selfRevoke,
   getMySubscriptions,
   getActiveSubscriptions,
   getSubscriptionsProgress,

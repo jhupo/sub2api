@@ -87,6 +87,62 @@ func (_c *UserSubscriptionCreate) SetPlanVersionID(v int64) *UserSubscriptionCre
 	return _c
 }
 
+// SetIsQuotaCard sets the "is_quota_card" field.
+func (_c *UserSubscriptionCreate) SetIsQuotaCard(v bool) *UserSubscriptionCreate {
+	_c.mutation.SetIsQuotaCard(v)
+	return _c
+}
+
+// SetNillableIsQuotaCard sets the "is_quota_card" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableIsQuotaCard(v *bool) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetIsQuotaCard(*v)
+	}
+	return _c
+}
+
+// SetRenewalCount sets the "renewal_count" field.
+func (_c *UserSubscriptionCreate) SetRenewalCount(v int) *UserSubscriptionCreate {
+	_c.mutation.SetRenewalCount(v)
+	return _c
+}
+
+// SetNillableRenewalCount sets the "renewal_count" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableRenewalCount(v *int) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetRenewalCount(*v)
+	}
+	return _c
+}
+
+// SetTotalUsageUsd sets the "total_usage_usd" field.
+func (_c *UserSubscriptionCreate) SetTotalUsageUsd(v float64) *UserSubscriptionCreate {
+	_c.mutation.SetTotalUsageUsd(v)
+	return _c
+}
+
+// SetNillableTotalUsageUsd sets the "total_usage_usd" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableTotalUsageUsd(v *float64) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetTotalUsageUsd(*v)
+	}
+	return _c
+}
+
+// SetTotalReservedUsd sets the "total_reserved_usd" field.
+func (_c *UserSubscriptionCreate) SetTotalReservedUsd(v float64) *UserSubscriptionCreate {
+	_c.mutation.SetTotalReservedUsd(v)
+	return _c
+}
+
+// SetNillableTotalReservedUsd sets the "total_reserved_usd" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableTotalReservedUsd(v *float64) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetTotalReservedUsd(*v)
+	}
+	return _c
+}
+
 // SetStartsAt sets the "starts_at" field.
 func (_c *UserSubscriptionCreate) SetStartsAt(v time.Time) *UserSubscriptionCreate {
 	_c.mutation.SetStartsAt(v)
@@ -396,6 +452,22 @@ func (_c *UserSubscriptionCreate) defaults() error {
 		v := usersubscription.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
+	if _, ok := _c.mutation.IsQuotaCard(); !ok {
+		v := usersubscription.DefaultIsQuotaCard
+		_c.mutation.SetIsQuotaCard(v)
+	}
+	if _, ok := _c.mutation.RenewalCount(); !ok {
+		v := usersubscription.DefaultRenewalCount
+		_c.mutation.SetRenewalCount(v)
+	}
+	if _, ok := _c.mutation.TotalUsageUsd(); !ok {
+		v := usersubscription.DefaultTotalUsageUsd
+		_c.mutation.SetTotalUsageUsd(v)
+	}
+	if _, ok := _c.mutation.TotalReservedUsd(); !ok {
+		v := usersubscription.DefaultTotalReservedUsd
+		_c.mutation.SetTotalReservedUsd(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := usersubscription.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -450,6 +522,18 @@ func (_c *UserSubscriptionCreate) check() error {
 	}
 	if _, ok := _c.mutation.PlanVersionID(); !ok {
 		return &ValidationError{Name: "plan_version_id", err: errors.New(`ent: missing required field "UserSubscription.plan_version_id"`)}
+	}
+	if _, ok := _c.mutation.IsQuotaCard(); !ok {
+		return &ValidationError{Name: "is_quota_card", err: errors.New(`ent: missing required field "UserSubscription.is_quota_card"`)}
+	}
+	if _, ok := _c.mutation.RenewalCount(); !ok {
+		return &ValidationError{Name: "renewal_count", err: errors.New(`ent: missing required field "UserSubscription.renewal_count"`)}
+	}
+	if _, ok := _c.mutation.TotalUsageUsd(); !ok {
+		return &ValidationError{Name: "total_usage_usd", err: errors.New(`ent: missing required field "UserSubscription.total_usage_usd"`)}
+	}
+	if _, ok := _c.mutation.TotalReservedUsd(); !ok {
+		return &ValidationError{Name: "total_reserved_usd", err: errors.New(`ent: missing required field "UserSubscription.total_reserved_usd"`)}
 	}
 	if _, ok := _c.mutation.StartsAt(); !ok {
 		return &ValidationError{Name: "starts_at", err: errors.New(`ent: missing required field "UserSubscription.starts_at"`)}
@@ -533,6 +617,22 @@ func (_c *UserSubscriptionCreate) createSpec() (*UserSubscription, *sqlgraph.Cre
 	if value, ok := _c.mutation.DeletedAt(); ok {
 		_spec.SetField(usersubscription.FieldDeletedAt, field.TypeTime, value)
 		_node.DeletedAt = &value
+	}
+	if value, ok := _c.mutation.IsQuotaCard(); ok {
+		_spec.SetField(usersubscription.FieldIsQuotaCard, field.TypeBool, value)
+		_node.IsQuotaCard = value
+	}
+	if value, ok := _c.mutation.RenewalCount(); ok {
+		_spec.SetField(usersubscription.FieldRenewalCount, field.TypeInt, value)
+		_node.RenewalCount = value
+	}
+	if value, ok := _c.mutation.TotalUsageUsd(); ok {
+		_spec.SetField(usersubscription.FieldTotalUsageUsd, field.TypeFloat64, value)
+		_node.TotalUsageUsd = value
+	}
+	if value, ok := _c.mutation.TotalReservedUsd(); ok {
+		_spec.SetField(usersubscription.FieldTotalReservedUsd, field.TypeFloat64, value)
+		_node.TotalReservedUsd = value
 	}
 	if value, ok := _c.mutation.StartsAt(); ok {
 		_spec.SetField(usersubscription.FieldStartsAt, field.TypeTime, value)
@@ -805,6 +905,72 @@ func (u *UserSubscriptionUpsert) SetPlanVersionID(v int64) *UserSubscriptionUpse
 // UpdatePlanVersionID sets the "plan_version_id" field to the value that was provided on create.
 func (u *UserSubscriptionUpsert) UpdatePlanVersionID() *UserSubscriptionUpsert {
 	u.SetExcluded(usersubscription.FieldPlanVersionID)
+	return u
+}
+
+// SetIsQuotaCard sets the "is_quota_card" field.
+func (u *UserSubscriptionUpsert) SetIsQuotaCard(v bool) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldIsQuotaCard, v)
+	return u
+}
+
+// UpdateIsQuotaCard sets the "is_quota_card" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateIsQuotaCard() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldIsQuotaCard)
+	return u
+}
+
+// SetRenewalCount sets the "renewal_count" field.
+func (u *UserSubscriptionUpsert) SetRenewalCount(v int) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldRenewalCount, v)
+	return u
+}
+
+// UpdateRenewalCount sets the "renewal_count" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateRenewalCount() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldRenewalCount)
+	return u
+}
+
+// AddRenewalCount adds v to the "renewal_count" field.
+func (u *UserSubscriptionUpsert) AddRenewalCount(v int) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldRenewalCount, v)
+	return u
+}
+
+// SetTotalUsageUsd sets the "total_usage_usd" field.
+func (u *UserSubscriptionUpsert) SetTotalUsageUsd(v float64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldTotalUsageUsd, v)
+	return u
+}
+
+// UpdateTotalUsageUsd sets the "total_usage_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateTotalUsageUsd() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldTotalUsageUsd)
+	return u
+}
+
+// AddTotalUsageUsd adds v to the "total_usage_usd" field.
+func (u *UserSubscriptionUpsert) AddTotalUsageUsd(v float64) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldTotalUsageUsd, v)
+	return u
+}
+
+// SetTotalReservedUsd sets the "total_reserved_usd" field.
+func (u *UserSubscriptionUpsert) SetTotalReservedUsd(v float64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldTotalReservedUsd, v)
+	return u
+}
+
+// UpdateTotalReservedUsd sets the "total_reserved_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateTotalReservedUsd() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldTotalReservedUsd)
+	return u
+}
+
+// AddTotalReservedUsd adds v to the "total_reserved_usd" field.
+func (u *UserSubscriptionUpsert) AddTotalReservedUsd(v float64) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldTotalReservedUsd, v)
 	return u
 }
 
@@ -1173,6 +1339,83 @@ func (u *UserSubscriptionUpsertOne) SetPlanVersionID(v int64) *UserSubscriptionU
 func (u *UserSubscriptionUpsertOne) UpdatePlanVersionID() *UserSubscriptionUpsertOne {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdatePlanVersionID()
+	})
+}
+
+// SetIsQuotaCard sets the "is_quota_card" field.
+func (u *UserSubscriptionUpsertOne) SetIsQuotaCard(v bool) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetIsQuotaCard(v)
+	})
+}
+
+// UpdateIsQuotaCard sets the "is_quota_card" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateIsQuotaCard() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateIsQuotaCard()
+	})
+}
+
+// SetRenewalCount sets the "renewal_count" field.
+func (u *UserSubscriptionUpsertOne) SetRenewalCount(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetRenewalCount(v)
+	})
+}
+
+// AddRenewalCount adds v to the "renewal_count" field.
+func (u *UserSubscriptionUpsertOne) AddRenewalCount(v int) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddRenewalCount(v)
+	})
+}
+
+// UpdateRenewalCount sets the "renewal_count" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateRenewalCount() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateRenewalCount()
+	})
+}
+
+// SetTotalUsageUsd sets the "total_usage_usd" field.
+func (u *UserSubscriptionUpsertOne) SetTotalUsageUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetTotalUsageUsd(v)
+	})
+}
+
+// AddTotalUsageUsd adds v to the "total_usage_usd" field.
+func (u *UserSubscriptionUpsertOne) AddTotalUsageUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddTotalUsageUsd(v)
+	})
+}
+
+// UpdateTotalUsageUsd sets the "total_usage_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateTotalUsageUsd() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateTotalUsageUsd()
+	})
+}
+
+// SetTotalReservedUsd sets the "total_reserved_usd" field.
+func (u *UserSubscriptionUpsertOne) SetTotalReservedUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetTotalReservedUsd(v)
+	})
+}
+
+// AddTotalReservedUsd adds v to the "total_reserved_usd" field.
+func (u *UserSubscriptionUpsertOne) AddTotalReservedUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddTotalReservedUsd(v)
+	})
+}
+
+// UpdateTotalReservedUsd sets the "total_reserved_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateTotalReservedUsd() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateTotalReservedUsd()
 	})
 }
 
@@ -1748,6 +1991,83 @@ func (u *UserSubscriptionUpsertBulk) SetPlanVersionID(v int64) *UserSubscription
 func (u *UserSubscriptionUpsertBulk) UpdatePlanVersionID() *UserSubscriptionUpsertBulk {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdatePlanVersionID()
+	})
+}
+
+// SetIsQuotaCard sets the "is_quota_card" field.
+func (u *UserSubscriptionUpsertBulk) SetIsQuotaCard(v bool) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetIsQuotaCard(v)
+	})
+}
+
+// UpdateIsQuotaCard sets the "is_quota_card" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateIsQuotaCard() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateIsQuotaCard()
+	})
+}
+
+// SetRenewalCount sets the "renewal_count" field.
+func (u *UserSubscriptionUpsertBulk) SetRenewalCount(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetRenewalCount(v)
+	})
+}
+
+// AddRenewalCount adds v to the "renewal_count" field.
+func (u *UserSubscriptionUpsertBulk) AddRenewalCount(v int) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddRenewalCount(v)
+	})
+}
+
+// UpdateRenewalCount sets the "renewal_count" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateRenewalCount() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateRenewalCount()
+	})
+}
+
+// SetTotalUsageUsd sets the "total_usage_usd" field.
+func (u *UserSubscriptionUpsertBulk) SetTotalUsageUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetTotalUsageUsd(v)
+	})
+}
+
+// AddTotalUsageUsd adds v to the "total_usage_usd" field.
+func (u *UserSubscriptionUpsertBulk) AddTotalUsageUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddTotalUsageUsd(v)
+	})
+}
+
+// UpdateTotalUsageUsd sets the "total_usage_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateTotalUsageUsd() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateTotalUsageUsd()
+	})
+}
+
+// SetTotalReservedUsd sets the "total_reserved_usd" field.
+func (u *UserSubscriptionUpsertBulk) SetTotalReservedUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetTotalReservedUsd(v)
+	})
+}
+
+// AddTotalReservedUsd adds v to the "total_reserved_usd" field.
+func (u *UserSubscriptionUpsertBulk) AddTotalReservedUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddTotalReservedUsd(v)
+	})
+}
+
+// UpdateTotalReservedUsd sets the "total_reserved_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateTotalReservedUsd() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateTotalReservedUsd()
 	})
 }
 

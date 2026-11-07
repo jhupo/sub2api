@@ -72,6 +72,13 @@
 
               <!-- Progress bars for limited subscriptions -->
               <template v-else>
+                <div v-if="subscription.plan?.total_limit_usd != null" class="flex items-center gap-2">
+                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{ t('quotaFeatures.totalLimit') }}</span>
+                  <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
+                    <div class="h-1.5 rounded-full transition-all" :class="getProgressBarClass((subscription.total_usage_usd ?? 0) + (subscription.total_reserved_usd ?? 0), subscription.plan.total_limit_usd)" :style="{ width: getProgressWidth((subscription.total_usage_usd ?? 0) + (subscription.total_reserved_usd ?? 0), subscription.plan.total_limit_usd) }"></div>
+                  </div>
+                  <span class="w-24 flex-shrink-0 text-right text-[10px] text-gray-500">{{ formatUsage(subscription.total_usage_usd ?? 0, subscription.total_reserved_usd ?? 0, subscription.plan.total_limit_usd) }}</span>
+                </div>
                 <div v-if="subscription.plan?.daily_limit_usd != null" class="flex items-center gap-2">
                   <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
                     t('subscriptionProgress.daily')
@@ -207,6 +214,9 @@ const displaySubscriptions = computed(() => {
 
 function getMaxUsagePercentage(sub: UserSubscription): number {
   const percentages: number[] = []
+  if (sub.plan?.total_limit_usd != null) {
+    percentages.push(getUsagePercentage((sub.total_usage_usd ?? 0) + (sub.total_reserved_usd ?? 0), sub.plan.total_limit_usd))
+  }
   if (sub.plan?.daily_limit_usd != null) {
     percentages.push(getUsagePercentage(sub.daily_usage_usd + sub.daily_reserved_usd, sub.plan.daily_limit_usd))
   }
@@ -226,6 +236,7 @@ function getUsagePercentage(used: number, limit: number): number {
 
 function isUnlimited(sub: UserSubscription): boolean {
   return (
+    sub.plan != null && sub.plan.total_limit_usd == null &&
     sub.plan?.daily_limit_usd == null &&
     sub.plan?.weekly_limit_usd == null &&
     sub.plan?.monthly_limit_usd == null

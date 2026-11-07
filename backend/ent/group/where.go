@@ -105,6 +105,36 @@ func PeakRateMultiplier(v float64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldPeakRateMultiplier, v))
 }
 
+// NightRateEnabled applies equality check predicate on the "night_rate_enabled" field. It's identical to NightRateEnabledEQ.
+func NightRateEnabled(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldNightRateEnabled, v))
+}
+
+// NightStart applies equality check predicate on the "night_start" field. It's identical to NightStartEQ.
+func NightStart(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldNightStart, v))
+}
+
+// NightEnd applies equality check predicate on the "night_end" field. It's identical to NightEndEQ.
+func NightEnd(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldNightEnd, v))
+}
+
+// NightRateMultiplier applies equality check predicate on the "night_rate_multiplier" field. It's identical to NightRateMultiplierEQ.
+func NightRateMultiplier(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldNightRateMultiplier, v))
+}
+
+// CacheReadAdjustmentMode applies equality check predicate on the "cache_read_adjustment_mode" field. It's identical to CacheReadAdjustmentModeEQ.
+func CacheReadAdjustmentMode(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCacheReadAdjustmentMode, v))
+}
+
+// CacheReadAdjustmentPercent applies equality check predicate on the "cache_read_adjustment_percent" field. It's identical to CacheReadAdjustmentPercentEQ.
+func CacheReadAdjustmentPercent(v int) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCacheReadAdjustmentPercent, v))
+}
+
 // IsExclusive applies equality check predicate on the "is_exclusive" field. It's identical to IsExclusiveEQ.
 func IsExclusive(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldIsExclusive, v))
@@ -808,6 +838,291 @@ func PeakRateMultiplierLT(v float64) predicate.Group {
 // PeakRateMultiplierLTE applies the LTE predicate on the "peak_rate_multiplier" field.
 func PeakRateMultiplierLTE(v float64) predicate.Group {
 	return predicate.Group(sql.FieldLTE(FieldPeakRateMultiplier, v))
+}
+
+// NightRateEnabledEQ applies the EQ predicate on the "night_rate_enabled" field.
+func NightRateEnabledEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldNightRateEnabled, v))
+}
+
+// NightRateEnabledNEQ applies the NEQ predicate on the "night_rate_enabled" field.
+func NightRateEnabledNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldNightRateEnabled, v))
+}
+
+// NightStartEQ applies the EQ predicate on the "night_start" field.
+func NightStartEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldNightStart, v))
+}
+
+// NightStartNEQ applies the NEQ predicate on the "night_start" field.
+func NightStartNEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldNightStart, v))
+}
+
+// NightStartIn applies the In predicate on the "night_start" field.
+func NightStartIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldNightStart, vs...))
+}
+
+// NightStartNotIn applies the NotIn predicate on the "night_start" field.
+func NightStartNotIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldNightStart, vs...))
+}
+
+// NightStartGT applies the GT predicate on the "night_start" field.
+func NightStartGT(v string) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldNightStart, v))
+}
+
+// NightStartGTE applies the GTE predicate on the "night_start" field.
+func NightStartGTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldNightStart, v))
+}
+
+// NightStartLT applies the LT predicate on the "night_start" field.
+func NightStartLT(v string) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldNightStart, v))
+}
+
+// NightStartLTE applies the LTE predicate on the "night_start" field.
+func NightStartLTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldNightStart, v))
+}
+
+// NightStartContains applies the Contains predicate on the "night_start" field.
+func NightStartContains(v string) predicate.Group {
+	return predicate.Group(sql.FieldContains(FieldNightStart, v))
+}
+
+// NightStartHasPrefix applies the HasPrefix predicate on the "night_start" field.
+func NightStartHasPrefix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasPrefix(FieldNightStart, v))
+}
+
+// NightStartHasSuffix applies the HasSuffix predicate on the "night_start" field.
+func NightStartHasSuffix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasSuffix(FieldNightStart, v))
+}
+
+// NightStartEqualFold applies the EqualFold predicate on the "night_start" field.
+func NightStartEqualFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldEqualFold(FieldNightStart, v))
+}
+
+// NightStartContainsFold applies the ContainsFold predicate on the "night_start" field.
+func NightStartContainsFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldContainsFold(FieldNightStart, v))
+}
+
+// NightEndEQ applies the EQ predicate on the "night_end" field.
+func NightEndEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldNightEnd, v))
+}
+
+// NightEndNEQ applies the NEQ predicate on the "night_end" field.
+func NightEndNEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldNightEnd, v))
+}
+
+// NightEndIn applies the In predicate on the "night_end" field.
+func NightEndIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldNightEnd, vs...))
+}
+
+// NightEndNotIn applies the NotIn predicate on the "night_end" field.
+func NightEndNotIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldNightEnd, vs...))
+}
+
+// NightEndGT applies the GT predicate on the "night_end" field.
+func NightEndGT(v string) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldNightEnd, v))
+}
+
+// NightEndGTE applies the GTE predicate on the "night_end" field.
+func NightEndGTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldNightEnd, v))
+}
+
+// NightEndLT applies the LT predicate on the "night_end" field.
+func NightEndLT(v string) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldNightEnd, v))
+}
+
+// NightEndLTE applies the LTE predicate on the "night_end" field.
+func NightEndLTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldNightEnd, v))
+}
+
+// NightEndContains applies the Contains predicate on the "night_end" field.
+func NightEndContains(v string) predicate.Group {
+	return predicate.Group(sql.FieldContains(FieldNightEnd, v))
+}
+
+// NightEndHasPrefix applies the HasPrefix predicate on the "night_end" field.
+func NightEndHasPrefix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasPrefix(FieldNightEnd, v))
+}
+
+// NightEndHasSuffix applies the HasSuffix predicate on the "night_end" field.
+func NightEndHasSuffix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasSuffix(FieldNightEnd, v))
+}
+
+// NightEndEqualFold applies the EqualFold predicate on the "night_end" field.
+func NightEndEqualFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldEqualFold(FieldNightEnd, v))
+}
+
+// NightEndContainsFold applies the ContainsFold predicate on the "night_end" field.
+func NightEndContainsFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldContainsFold(FieldNightEnd, v))
+}
+
+// NightRateMultiplierEQ applies the EQ predicate on the "night_rate_multiplier" field.
+func NightRateMultiplierEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldNightRateMultiplier, v))
+}
+
+// NightRateMultiplierNEQ applies the NEQ predicate on the "night_rate_multiplier" field.
+func NightRateMultiplierNEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldNightRateMultiplier, v))
+}
+
+// NightRateMultiplierIn applies the In predicate on the "night_rate_multiplier" field.
+func NightRateMultiplierIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldNightRateMultiplier, vs...))
+}
+
+// NightRateMultiplierNotIn applies the NotIn predicate on the "night_rate_multiplier" field.
+func NightRateMultiplierNotIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldNightRateMultiplier, vs...))
+}
+
+// NightRateMultiplierGT applies the GT predicate on the "night_rate_multiplier" field.
+func NightRateMultiplierGT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldNightRateMultiplier, v))
+}
+
+// NightRateMultiplierGTE applies the GTE predicate on the "night_rate_multiplier" field.
+func NightRateMultiplierGTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldNightRateMultiplier, v))
+}
+
+// NightRateMultiplierLT applies the LT predicate on the "night_rate_multiplier" field.
+func NightRateMultiplierLT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldNightRateMultiplier, v))
+}
+
+// NightRateMultiplierLTE applies the LTE predicate on the "night_rate_multiplier" field.
+func NightRateMultiplierLTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldNightRateMultiplier, v))
+}
+
+// CacheReadAdjustmentModeEQ applies the EQ predicate on the "cache_read_adjustment_mode" field.
+func CacheReadAdjustmentModeEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCacheReadAdjustmentMode, v))
+}
+
+// CacheReadAdjustmentModeNEQ applies the NEQ predicate on the "cache_read_adjustment_mode" field.
+func CacheReadAdjustmentModeNEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldCacheReadAdjustmentMode, v))
+}
+
+// CacheReadAdjustmentModeIn applies the In predicate on the "cache_read_adjustment_mode" field.
+func CacheReadAdjustmentModeIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldCacheReadAdjustmentMode, vs...))
+}
+
+// CacheReadAdjustmentModeNotIn applies the NotIn predicate on the "cache_read_adjustment_mode" field.
+func CacheReadAdjustmentModeNotIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldCacheReadAdjustmentMode, vs...))
+}
+
+// CacheReadAdjustmentModeGT applies the GT predicate on the "cache_read_adjustment_mode" field.
+func CacheReadAdjustmentModeGT(v string) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldCacheReadAdjustmentMode, v))
+}
+
+// CacheReadAdjustmentModeGTE applies the GTE predicate on the "cache_read_adjustment_mode" field.
+func CacheReadAdjustmentModeGTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldCacheReadAdjustmentMode, v))
+}
+
+// CacheReadAdjustmentModeLT applies the LT predicate on the "cache_read_adjustment_mode" field.
+func CacheReadAdjustmentModeLT(v string) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldCacheReadAdjustmentMode, v))
+}
+
+// CacheReadAdjustmentModeLTE applies the LTE predicate on the "cache_read_adjustment_mode" field.
+func CacheReadAdjustmentModeLTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldCacheReadAdjustmentMode, v))
+}
+
+// CacheReadAdjustmentModeContains applies the Contains predicate on the "cache_read_adjustment_mode" field.
+func CacheReadAdjustmentModeContains(v string) predicate.Group {
+	return predicate.Group(sql.FieldContains(FieldCacheReadAdjustmentMode, v))
+}
+
+// CacheReadAdjustmentModeHasPrefix applies the HasPrefix predicate on the "cache_read_adjustment_mode" field.
+func CacheReadAdjustmentModeHasPrefix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasPrefix(FieldCacheReadAdjustmentMode, v))
+}
+
+// CacheReadAdjustmentModeHasSuffix applies the HasSuffix predicate on the "cache_read_adjustment_mode" field.
+func CacheReadAdjustmentModeHasSuffix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasSuffix(FieldCacheReadAdjustmentMode, v))
+}
+
+// CacheReadAdjustmentModeEqualFold applies the EqualFold predicate on the "cache_read_adjustment_mode" field.
+func CacheReadAdjustmentModeEqualFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldEqualFold(FieldCacheReadAdjustmentMode, v))
+}
+
+// CacheReadAdjustmentModeContainsFold applies the ContainsFold predicate on the "cache_read_adjustment_mode" field.
+func CacheReadAdjustmentModeContainsFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldContainsFold(FieldCacheReadAdjustmentMode, v))
+}
+
+// CacheReadAdjustmentPercentEQ applies the EQ predicate on the "cache_read_adjustment_percent" field.
+func CacheReadAdjustmentPercentEQ(v int) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldCacheReadAdjustmentPercent, v))
+}
+
+// CacheReadAdjustmentPercentNEQ applies the NEQ predicate on the "cache_read_adjustment_percent" field.
+func CacheReadAdjustmentPercentNEQ(v int) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldCacheReadAdjustmentPercent, v))
+}
+
+// CacheReadAdjustmentPercentIn applies the In predicate on the "cache_read_adjustment_percent" field.
+func CacheReadAdjustmentPercentIn(vs ...int) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldCacheReadAdjustmentPercent, vs...))
+}
+
+// CacheReadAdjustmentPercentNotIn applies the NotIn predicate on the "cache_read_adjustment_percent" field.
+func CacheReadAdjustmentPercentNotIn(vs ...int) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldCacheReadAdjustmentPercent, vs...))
+}
+
+// CacheReadAdjustmentPercentGT applies the GT predicate on the "cache_read_adjustment_percent" field.
+func CacheReadAdjustmentPercentGT(v int) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldCacheReadAdjustmentPercent, v))
+}
+
+// CacheReadAdjustmentPercentGTE applies the GTE predicate on the "cache_read_adjustment_percent" field.
+func CacheReadAdjustmentPercentGTE(v int) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldCacheReadAdjustmentPercent, v))
+}
+
+// CacheReadAdjustmentPercentLT applies the LT predicate on the "cache_read_adjustment_percent" field.
+func CacheReadAdjustmentPercentLT(v int) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldCacheReadAdjustmentPercent, v))
+}
+
+// CacheReadAdjustmentPercentLTE applies the LTE predicate on the "cache_read_adjustment_percent" field.
+func CacheReadAdjustmentPercentLTE(v int) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldCacheReadAdjustmentPercent, v))
 }
 
 // IsExclusiveEQ applies the EQ predicate on the "is_exclusive" field.

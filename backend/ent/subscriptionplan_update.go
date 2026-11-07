@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
 	"github.com/Wei-Shaw/sub2api/ent/subscriptionplanversion"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
 
 // SubscriptionPlanUpdate is the builder for updating SubscriptionPlan entities.
@@ -124,6 +125,26 @@ func (_u *SubscriptionPlanUpdate) SetNillableForSale(v *bool) *SubscriptionPlanU
 	if v != nil {
 		_u.SetForSale(*v)
 	}
+	return _u
+}
+
+// SetSaleSchedule sets the "sale_schedule" field.
+func (_u *SubscriptionPlanUpdate) SetSaleSchedule(v domain.PlanSaleSchedule) *SubscriptionPlanUpdate {
+	_u.mutation.SetSaleSchedule(v)
+	return _u
+}
+
+// SetNillableSaleSchedule sets the "sale_schedule" field if the given value is not nil.
+func (_u *SubscriptionPlanUpdate) SetNillableSaleSchedule(v *domain.PlanSaleSchedule) *SubscriptionPlanUpdate {
+	if v != nil {
+		_u.SetSaleSchedule(*v)
+	}
+	return _u
+}
+
+// ClearSaleSchedule clears the value of the "sale_schedule" field.
+func (_u *SubscriptionPlanUpdate) ClearSaleSchedule() *SubscriptionPlanUpdate {
+	_u.mutation.ClearSaleSchedule()
 	return _u
 }
 
@@ -317,6 +338,12 @@ func (_u *SubscriptionPlanUpdate) sqlSave(ctx context.Context) (_node int, err e
 	}
 	if value, ok := _u.mutation.ForSale(); ok {
 		_spec.SetField(subscriptionplan.FieldForSale, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.SaleSchedule(); ok {
+		_spec.SetField(subscriptionplan.FieldSaleSchedule, field.TypeJSON, value)
+	}
+	if _u.mutation.SaleScheduleCleared() {
+		_spec.ClearField(subscriptionplan.FieldSaleSchedule, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.SortOrder(); ok {
 		_spec.SetField(subscriptionplan.FieldSortOrder, field.TypeInt, value)
@@ -531,6 +558,26 @@ func (_u *SubscriptionPlanUpdateOne) SetNillableForSale(v *bool) *SubscriptionPl
 	if v != nil {
 		_u.SetForSale(*v)
 	}
+	return _u
+}
+
+// SetSaleSchedule sets the "sale_schedule" field.
+func (_u *SubscriptionPlanUpdateOne) SetSaleSchedule(v domain.PlanSaleSchedule) *SubscriptionPlanUpdateOne {
+	_u.mutation.SetSaleSchedule(v)
+	return _u
+}
+
+// SetNillableSaleSchedule sets the "sale_schedule" field if the given value is not nil.
+func (_u *SubscriptionPlanUpdateOne) SetNillableSaleSchedule(v *domain.PlanSaleSchedule) *SubscriptionPlanUpdateOne {
+	if v != nil {
+		_u.SetSaleSchedule(*v)
+	}
+	return _u
+}
+
+// ClearSaleSchedule clears the value of the "sale_schedule" field.
+func (_u *SubscriptionPlanUpdateOne) ClearSaleSchedule() *SubscriptionPlanUpdateOne {
+	_u.mutation.ClearSaleSchedule()
 	return _u
 }
 
@@ -754,6 +801,12 @@ func (_u *SubscriptionPlanUpdateOne) sqlSave(ctx context.Context) (_node *Subscr
 	}
 	if value, ok := _u.mutation.ForSale(); ok {
 		_spec.SetField(subscriptionplan.FieldForSale, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.SaleSchedule(); ok {
+		_spec.SetField(subscriptionplan.FieldSaleSchedule, field.TypeJSON, value)
+	}
+	if _u.mutation.SaleScheduleCleared() {
+		_spec.ClearField(subscriptionplan.FieldSaleSchedule, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.SortOrder(); ok {
 		_spec.SetField(subscriptionplan.FieldSortOrder, field.TypeInt, value)

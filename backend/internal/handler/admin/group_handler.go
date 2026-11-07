@@ -64,6 +64,12 @@ type CreateGroupRequest struct {
 	PeakStart                       string                        `json:"peak_start"`
 	PeakEnd                         string                        `json:"peak_end"`
 	PeakRateMultiplier              *float64                      `json:"peak_rate_multiplier"`
+	NightRateEnabled                bool                          `json:"night_rate_enabled"`
+	NightStart                      string                        `json:"night_start"`
+	NightEnd                        string                        `json:"night_end"`
+	NightRateMultiplier             *float64                      `json:"night_rate_multiplier"`
+	CacheReadAdjustmentMode         string                        `json:"cache_read_adjustment_mode"`
+	CacheReadAdjustmentPercent      int                           `json:"cache_read_adjustment_percent"`
 	ProfitControlEnabled            bool                          `json:"profit_control_enabled"`
 	ProfitMinMargin                 *float64                      `json:"profit_min_margin"`
 	ProfitSafetyBuffer              *float64                      `json:"profit_safety_buffer"`
@@ -133,6 +139,12 @@ type UpdateGroupRequest struct {
 	PeakStart                       *string                       `json:"peak_start"`
 	PeakEnd                         *string                       `json:"peak_end"`
 	PeakRateMultiplier              *float64                      `json:"peak_rate_multiplier"`
+	NightRateEnabled                *bool                         `json:"night_rate_enabled"`
+	NightStart                      *string                       `json:"night_start"`
+	NightEnd                        *string                       `json:"night_end"`
+	NightRateMultiplier             *float64                      `json:"night_rate_multiplier"`
+	CacheReadAdjustmentMode         *string                       `json:"cache_read_adjustment_mode"`
+	CacheReadAdjustmentPercent      *int                          `json:"cache_read_adjustment_percent"`
 	ProfitControlEnabled            *bool                         `json:"profit_control_enabled"`
 	ProfitMinMargin                 *float64                      `json:"profit_min_margin"`
 	ProfitSafetyBuffer              *float64                      `json:"profit_safety_buffer"`
@@ -470,6 +482,12 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		PeakStart:                       req.PeakStart,
 		PeakEnd:                         req.PeakEnd,
 		PeakRateMultiplier:              req.PeakRateMultiplier,
+		NightRateEnabled:                req.NightRateEnabled,
+		NightStart:                      req.NightStart,
+		NightEnd:                        req.NightEnd,
+		NightRateMultiplier:             req.NightRateMultiplier,
+		CacheReadAdjustmentMode:         req.CacheReadAdjustmentMode,
+		CacheReadAdjustmentPercent:      req.CacheReadAdjustmentPercent,
 		ProfitControlEnabled:            req.ProfitControlEnabled,
 		ProfitMinMargin:                 req.ProfitMinMargin,
 		ProfitSafetyBuffer:              req.ProfitSafetyBuffer,
@@ -598,6 +616,12 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		PeakStart:                       req.PeakStart,
 		PeakEnd:                         req.PeakEnd,
 		PeakRateMultiplier:              req.PeakRateMultiplier,
+		NightRateEnabled:                req.NightRateEnabled,
+		NightStart:                      req.NightStart,
+		NightEnd:                        req.NightEnd,
+		NightRateMultiplier:             req.NightRateMultiplier,
+		CacheReadAdjustmentMode:         req.CacheReadAdjustmentMode,
+		CacheReadAdjustmentPercent:      req.CacheReadAdjustmentPercent,
 		ProfitControlEnabled:            req.ProfitControlEnabled,
 		ProfitMinMargin:                 req.ProfitMinMargin,
 		ProfitSafetyBuffer:              req.ProfitSafetyBuffer,

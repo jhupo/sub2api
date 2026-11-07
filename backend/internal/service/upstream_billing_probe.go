@@ -140,6 +140,11 @@ type upstreamBillingProbeResponse struct {
 	PeakEnd                 *string  `json:"peak_end"`
 	PeakRateMultiplier      *float64 `json:"peak_rate_multiplier"`
 	AppliedPeakMultiplier   *float64 `json:"applied_peak_multiplier"`
+	NightRateEnabled        *bool    `json:"night_rate_enabled"`
+	NightStart              *string  `json:"night_start"`
+	NightEnd                *string  `json:"night_end"`
+	NightRateMultiplier     *float64 `json:"night_rate_multiplier"`
+	AppliedNightMultiplier  *float64 `json:"applied_night_multiplier"`
 	EffectiveRateMultiplier *float64 `json:"effective_rate_multiplier"`
 	Timezone                *string  `json:"timezone"`
 	ObservedAt              string   `json:"observed_at"`
@@ -846,7 +851,20 @@ func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {
 	} else if response.AppliedPeakMultiplier != nil && !equalBillingMultiplier(*response.AppliedPeakMultiplier, 1) {
 		return nil, fmt.Errorf("inconsistent applied peak multiplier")
 	}
-	if !equalBillingMultiplier(*response.EffectiveRateMultiplier, *response.ResolvedRateMultiplier*appliedPeak) {
+	data["night_rate_enabled"] = response.NightRateEnabled != nil && *response.NightRateEnabled
+	if response.NightRateEnabled != nil && *response.NightRateEnabled {
+		if response.NightStart == nil || response.NightEnd == nil || response.NightRateMultiplier == nil || response.AppliedNightMultiplier == nil || response.Timezone == nil {
+			return nil, fmt.Errorf("incomplete night billing response")
+		}
+		data["night_start"], data["night_end"] = *response.NightStart, *response.NightEnd
+		data["night_rate_multiplier"], data["applied_night_multiplier"] = *response.NightRateMultiplier, *response.AppliedNightMultiplier
+		data["timezone"] = *response.Timezone
+	}
+	appliedNight, validNight := upstreamBillingTimeMultiplierAt(data, observedAt, "night")
+	if !validNight || (response.AppliedNightMultiplier != nil && !equalBillingMultiplier(*response.AppliedNightMultiplier, appliedNight)) {
+		return nil, fmt.Errorf("inconsistent night billing response")
+	}
+	if !equalBillingMultiplier(*response.EffectiveRateMultiplier, *response.ResolvedRateMultiplier*appliedPeak*appliedNight) {
 		return nil, fmt.Errorf("inconsistent effective billing multiplier")
 	}
 	return data, nil
@@ -865,6 +883,11 @@ func upstreamBillingRateAt(data map[string]any, now time.Time) (float64, bool) {
 		return 0, false
 	}
 	base *= appliedPeak
+	appliedNight, ok := upstreamBillingTimeMultiplierAt(data, now, "night")
+	if !ok {
+		return 0, false
+	}
+	base *= appliedNight
 	if math.IsNaN(base) || math.IsInf(base, 0) {
 		return 0, false
 	}
@@ -903,7 +926,14 @@ func upstreamBillingProbeSyncRate(data map[string]any) (float64, bool) {
 }
 
 func upstreamBillingPeakMultiplierAt(data map[string]any, now time.Time) (float64, bool) {
-	peakEnabled, ok := data["peak_rate_enabled"].(bool)
+	return upstreamBillingTimeMultiplierAt(data, now, "peak")
+}
+
+func upstreamBillingTimeMultiplierAt(data map[string]any, now time.Time, prefix string) (float64, bool) {
+	peakEnabled, ok := data[prefix+"_rate_enabled"].(bool)
+	if !ok && prefix == "night" && data[prefix+"_rate_enabled"] == nil {
+		return 1, true
+	}
 	if !ok {
 		return 0, false
 	}
@@ -911,14 +941,14 @@ func upstreamBillingPeakMultiplierAt(data map[string]any, now time.Time) (float6
 		return 1, true
 	}
 
-	start, startOK := data["peak_start"].(string)
-	end, endOK := data["peak_end"].(string)
+	start, startOK := data[prefix+"_start"].(string)
+	end, endOK := data[prefix+"_end"].(string)
 	timezoneName, timezoneOK := data["timezone"].(string)
-	peakMultiplier, multiplierOK := resolveAccountExtraNumber(data, "peak_rate_multiplier")
+	peakMultiplier, multiplierOK := resolveAccountExtraNumber(data, prefix+"_rate_multiplier")
 	startMinute, validStart := parseMinutes(start)
 	endMinute, validEnd := parseMinutes(end)
 	if !startOK || !endOK || !timezoneOK || !multiplierOK || !validStart || !validEnd ||
-		startMinute >= endMinute || peakMultiplier < 0 || math.IsNaN(peakMultiplier) || math.IsInf(peakMultiplier, 0) {
+		startMinute == endMinute || peakMultiplier < 0 || math.IsNaN(peakMultiplier) || math.IsInf(peakMultiplier, 0) {
 		return 0, false
 	}
 	location, err := time.LoadLocation(timezoneName)
@@ -928,7 +958,7 @@ func upstreamBillingPeakMultiplierAt(data map[string]any, now time.Time) (float6
 
 	local := now.In(location)
 	minute := local.Hour()*60 + local.Minute()
-	if minute >= startMinute && minute < endMinute {
+	if minuteInRateWindow(minute, startMinute, endMinute) {
 		return peakMultiplier, true
 	}
 	return 1, true

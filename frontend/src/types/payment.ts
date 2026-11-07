@@ -108,7 +108,22 @@ export interface PaymentOrder {
 
 // ==================== Plans & Channels ====================
 
+export interface PlanSaleSchedule {
+  ends_at: string | null
+  price_steps: { at: string; price: number }[]
+  daily_windows: { start: string; end: string }[]
+}
+
 export interface SubscriptionPlan {
+  sale_schedule?: PlanSaleSchedule
+  sale_ends_at?: string | null
+  sale_available?: boolean
+  sale_timezone?: string
+  current_price?: number
+  card_mode?: '' | 'hours' | 'deadline'
+  validity_hours?: number
+  deadline_at?: string | null
+  total_limit_usd?: number | null
   id: number
   published_version_id?: number
   version?: number

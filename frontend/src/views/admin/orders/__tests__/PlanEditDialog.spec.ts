@@ -3,6 +3,7 @@ import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 
 import PlanEditDialog from '../PlanEditDialog.vue'
+import PlanSaleEditor from '@/components/payment/PlanSaleEditor.vue'
 import { adminPaymentAPI } from '@/api/admin/payment'
 
 vi.mock('vue-i18n', () => ({
@@ -93,6 +94,34 @@ function mountDialog({ paymentConfig = null }: { paymentConfig?: Record<string, 
 }
 
 describe('PlanEditDialog', () => {
+  it('publishes multiple scheduled prices and a cross-midnight daily sale window', async () => {
+    const wrapper = mountDialog()
+    await wrapper.get('select').setValue('hours')
+    const inputs = wrapper.findAll('input[type="number"]')
+    await inputs[0]!.setValue('45')
+    await inputs[2]!.setValue('300')
+    await inputs[3]!.setValue('12')
+    const sale = wrapper.getComponent(PlanSaleEditor)
+    await sale.get('input[type="datetime-local"]').setValue('2027-01-03T12:00')
+    await sale.findAll('button')[0]!.trigger('click')
+    await sale.findAll('input[type="datetime-local"]')[1]!.setValue('2027-01-01T20:00')
+    await sale.get('input[type="number"]').setValue('35')
+    await sale.findAll('button')[0]!.trigger('click')
+    await sale.findAll('input[type="datetime-local"]')[2]!.setValue('2027-01-02T20:00')
+    await sale.findAll('input[type="number"]')[1]!.setValue('25')
+    const addButtons = sale.findAll('button').filter(button => button.text().includes('common.add'))
+    await addButtons[1]!.trigger('click')
+    await wrapper.get('#plan-form').trigger('submit')
+    expect(adminPaymentAPI.createPlan).toHaveBeenLastCalledWith(expect.objectContaining({
+      price: 45,
+      sale_schedule: {
+        ends_at: new Date('2027-01-03T12:00').toISOString(),
+        price_steps: [{ at: new Date('2027-01-01T20:00').toISOString(), price: 35 }, { at: new Date('2027-01-02T20:00').toISOString(), price: 25 }],
+        daily_windows: [{ start: '22:00', end: '08:00' }],
+      },
+    }))
+    wrapper.unmount()
+  })
   it('shows CNY channel charge using the configured subscription rate and fee', async () => {
     const wrapper = mountDialog({
       paymentConfig: {
@@ -143,5 +172,31 @@ describe('PlanEditDialog', () => {
         monthly_limit_usd: 900,
       }),
     )
+  })
+
+  it('publishes an hourly card with a lifetime allowance and no recurring refill', async () => {
+    const wrapper = mountDialog()
+    await wrapper.get('select').setValue('hours')
+    const inputs = wrapper.findAll('input[type="number"]')
+    await inputs[0]!.setValue('9.99')
+    await inputs[2]!.setValue('300')
+    await inputs[3]!.setValue('12')
+    await wrapper.get('#plan-form').trigger('submit')
+    expect(adminPaymentAPI.createPlan).toHaveBeenLastCalledWith(expect.objectContaining({
+      card_mode: 'hours', validity_hours: 12, deadline_at: null, total_limit_usd: 300,
+      daily_limit_usd: null, weekly_limit_usd: null, monthly_limit_usd: null
+    }))
+  })
+
+  it('publishes a fixed deadline as an absolute timestamp', async () => {
+    const wrapper = mountDialog()
+    await wrapper.get('select').setValue('deadline')
+    await wrapper.findAll('input[type="number"]')[0]!.setValue('9.99')
+    await wrapper.get('input[type="datetime-local"]').setValue('2027-01-02T18:30')
+    await wrapper.findAll('input[type="number"]')[2]!.setValue('200')
+    await wrapper.get('#plan-form').trigger('submit')
+    expect(adminPaymentAPI.createPlan).toHaveBeenLastCalledWith(expect.objectContaining({
+      card_mode: 'deadline', validity_hours: 0, deadline_at: new Date('2027-01-02T18:30').toISOString(), total_limit_usd: 200
+    }))
   })
 })

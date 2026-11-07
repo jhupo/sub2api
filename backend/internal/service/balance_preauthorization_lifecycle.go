@@ -124,6 +124,7 @@ type BalancePreauthorizationService struct {
 	watermarkWallet  balancePreauthorizationWatermarkedWallet
 	repo             balancePreauthorizationRepository
 	subscriptionRepo SubscriptionAllowanceRepository
+	apiKeyService    *APIKeyService
 }
 
 func (s *BalancePreauthorizationService) cleanupLiveBalanceAttempt(ctx context.Context, userID int64, attemptID string) {
@@ -143,12 +144,14 @@ func NewBalancePreauthorizationService(
 	billingService *BillingService,
 	billingCacheService *BillingCacheService,
 	repo UsageBillingRepository,
+	apiKeyService *APIKeyService,
 ) *BalancePreauthorizationService {
 	service := &BalancePreauthorizationService{
 		cfg:            cfg,
 		settingService: settingService,
 		costCalculator: billingService,
 		repo:           repo,
+		apiKeyService:  apiKeyService,
 	}
 	service.snapshotReader, _ = repo.(balancePreauthorizationSnapshotReader)
 	service.subscriptionRepo, _ = repo.(SubscriptionAllowanceRepository)
@@ -205,6 +208,7 @@ type BalancePreauthorizationRequest struct {
 	APIKeyID                   int64
 	UserID                     int64
 	BaselineKey                string
+	BaselineSessionID          string
 	AuthorizationFingerprint   string
 	BillingType                int8
 	SubscriptionID             int64

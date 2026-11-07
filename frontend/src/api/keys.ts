@@ -67,7 +67,8 @@ export async function create(
   ipBlacklist?: string[],
   quota?: number,
   expiresInDays?: number,
-  rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number }
+  rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number },
+  fundingPriority?: { subscription_priority: number[]; allow_wallet_fallback: boolean }
 ): Promise<ApiKey> {
   const payload: CreateApiKeyRequest = { name, funding_source: fundingSource }
   if (groupId !== undefined) {
@@ -75,6 +76,8 @@ export async function create(
   }
   if (fundingSource === 'subscription') {
     payload.subscription_id = subscriptionId
+    payload.subscription_priority = fundingPriority?.subscription_priority
+    payload.allow_wallet_fallback = fundingPriority?.allow_wallet_fallback
   }
   if (customKey) {
     payload.custom_key = customKey

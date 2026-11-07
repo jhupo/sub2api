@@ -30,6 +30,14 @@ type SubscriptionPlanVersion struct {
 	Currency string `json:"currency,omitempty"`
 	// ValidityDays holds the value of the "validity_days" field.
 	ValidityDays int `json:"validity_days,omitempty"`
+	// CardMode holds the value of the "card_mode" field.
+	CardMode string `json:"card_mode,omitempty"`
+	// ValidityHours holds the value of the "validity_hours" field.
+	ValidityHours int `json:"validity_hours,omitempty"`
+	// DeadlineAt holds the value of the "deadline_at" field.
+	DeadlineAt *time.Time `json:"deadline_at,omitempty"`
+	// TotalLimitUsd holds the value of the "total_limit_usd" field.
+	TotalLimitUsd *float64 `json:"total_limit_usd,omitempty"`
 	// ValidityUnit holds the value of the "validity_unit" field.
 	ValidityUnit string `json:"validity_unit,omitempty"`
 	// DailyLimitUsd holds the value of the "daily_limit_usd" field.
@@ -93,13 +101,13 @@ func (*SubscriptionPlanVersion) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case subscriptionplanversion.FieldPrice, subscriptionplanversion.FieldOriginalPrice, subscriptionplanversion.FieldDailyLimitUsd, subscriptionplanversion.FieldWeeklyLimitUsd, subscriptionplanversion.FieldMonthlyLimitUsd:
+		case subscriptionplanversion.FieldPrice, subscriptionplanversion.FieldOriginalPrice, subscriptionplanversion.FieldTotalLimitUsd, subscriptionplanversion.FieldDailyLimitUsd, subscriptionplanversion.FieldWeeklyLimitUsd, subscriptionplanversion.FieldMonthlyLimitUsd:
 			values[i] = new(sql.NullFloat64)
-		case subscriptionplanversion.FieldID, subscriptionplanversion.FieldPlanID, subscriptionplanversion.FieldVersion, subscriptionplanversion.FieldValidityDays:
+		case subscriptionplanversion.FieldID, subscriptionplanversion.FieldPlanID, subscriptionplanversion.FieldVersion, subscriptionplanversion.FieldValidityDays, subscriptionplanversion.FieldValidityHours:
 			values[i] = new(sql.NullInt64)
-		case subscriptionplanversion.FieldCurrency, subscriptionplanversion.FieldValidityUnit:
+		case subscriptionplanversion.FieldCurrency, subscriptionplanversion.FieldCardMode, subscriptionplanversion.FieldValidityUnit:
 			values[i] = new(sql.NullString)
-		case subscriptionplanversion.FieldPublishedAt:
+		case subscriptionplanversion.FieldDeadlineAt, subscriptionplanversion.FieldPublishedAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -158,6 +166,32 @@ func (_m *SubscriptionPlanVersion) assignValues(columns []string, values []any) 
 				return fmt.Errorf("unexpected type %T for field validity_days", values[i])
 			} else if value.Valid {
 				_m.ValidityDays = int(value.Int64)
+			}
+		case subscriptionplanversion.FieldCardMode:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field card_mode", values[i])
+			} else if value.Valid {
+				_m.CardMode = value.String
+			}
+		case subscriptionplanversion.FieldValidityHours:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field validity_hours", values[i])
+			} else if value.Valid {
+				_m.ValidityHours = int(value.Int64)
+			}
+		case subscriptionplanversion.FieldDeadlineAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field deadline_at", values[i])
+			} else if value.Valid {
+				_m.DeadlineAt = new(time.Time)
+				*_m.DeadlineAt = value.Time
+			}
+		case subscriptionplanversion.FieldTotalLimitUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field total_limit_usd", values[i])
+			} else if value.Valid {
+				_m.TotalLimitUsd = new(float64)
+				*_m.TotalLimitUsd = value.Float64
 			}
 		case subscriptionplanversion.FieldValidityUnit:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -262,6 +296,22 @@ func (_m *SubscriptionPlanVersion) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("validity_days=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ValidityDays))
+	builder.WriteString(", ")
+	builder.WriteString("card_mode=")
+	builder.WriteString(_m.CardMode)
+	builder.WriteString(", ")
+	builder.WriteString("validity_hours=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ValidityHours))
+	builder.WriteString(", ")
+	if v := _m.DeadlineAt; v != nil {
+		builder.WriteString("deadline_at=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
+	builder.WriteString(", ")
+	if v := _m.TotalLimitUsd; v != nil {
+		builder.WriteString("total_limit_usd=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
 	builder.WriteString(", ")
 	builder.WriteString("validity_unit=")
 	builder.WriteString(_m.ValidityUnit)

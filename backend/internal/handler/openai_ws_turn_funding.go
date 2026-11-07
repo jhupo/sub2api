@@ -126,6 +126,7 @@ func (f *openAIWSTurnFunding) prepare(ctx context.Context, h *OpenAIGatewayHandl
 	request := service.BalancePreauthorizationRequest{
 		RequestID: a.id, APIKeyID: a.key.ID, UserID: a.userID,
 		BaselineKey:              a.baselineKey,
+		BaselineSessionID:        f.connectionID,
 		SubscriptionID:           subscriptionPreauthorizationID(a.key, a.subscription),
 		BillingType:              service.BalancePreauthorizationBillingType(a.key, a.subscription),
 		AuthorizationFingerprint: a.fingerprint, BillableInputBytes: len(payload),
@@ -143,11 +144,14 @@ func (f *openAIWSTurnFunding) prepare(ctx context.Context, h *OpenAIGatewayHandl
 		}
 		return repricer.RepriceBeforeSend(ctx, a.guard, request)
 	}
-	guard, err := h.balancePreauthorizer.Preauthorize(ctx, request)
+	guard, err := preauthorizeWithFunding(ctx, h.balancePreauthorizer, a.key, a.subscription, request)
 	if err != nil {
 		return err
 	}
 	a.guard = guard
+	if guard != nil {
+		a.baselineKey = guard.BaselineKey()
+	}
 	return nil
 }
 

@@ -321,6 +321,7 @@ func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscrip
 			daily_usage_usd = us.daily_usage_usd + $1,
 			weekly_usage_usd = us.weekly_usage_usd + $1,
 			monthly_usage_usd = us.monthly_usage_usd + $1,
+			total_usage_usd = us.total_usage_usd + $1,
 			updated_at = NOW()
 		WHERE us.id = $2
 			AND us.deleted_at IS NULL

@@ -22,11 +22,24 @@
         </div>
         <div><label class="input-label">{{ t('payment.admin.originalPrice') }}</label><input v-model.number="planForm.original_price" type="number" step="0.01" min="0" class="input" /></div>
       </div>
-      <div class="grid grid-cols-2 gap-4">
+      <label class="block"><span class="input-label">{{ t('quotaFeatures.cardMode') }}</span>
+        <select v-model="planForm.card_mode" class="input">
+          <option value="">{{ t('quotaFeatures.recurringPlan') }}</option>
+          <option value="hours">{{ t('quotaFeatures.hoursCard') }}</option>
+          <option value="deadline">{{ t('quotaFeatures.deadlineCard') }}</option>
+        </select>
+      </label>
+      <div v-if="planForm.card_mode" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <label class="block"><span class="input-label">{{ t('quotaFeatures.totalLimit') }} (USD)</span><input v-model.number="planForm.total_limit_usd" type="number" min="0.01" step="0.01" class="input" required /></label>
+        <label v-if="planForm.card_mode === 'hours'" class="block"><span class="input-label">{{ t('quotaFeatures.validityHours') }}</span><input v-model.number="planForm.validity_hours" type="number" min="1" max="87600" step="1" class="input" required /></label>
+        <label v-else class="block"><span class="input-label">{{ t('quotaFeatures.deadline') }}</span><input v-model="planForm.deadline_at" type="datetime-local" class="input" required /></label>
+      </div>
+      <div v-if="!planForm.card_mode" class="grid grid-cols-2 gap-4">
         <div><label class="input-label">{{ t('payment.admin.validity') }} <span class="text-red-500">*</span></label><input v-model.number="planForm.validity_days" type="number" min="1" class="input" required /></div>
         <div><label class="input-label">{{ t('payment.admin.validityUnit') }} <span class="text-red-500">*</span></label><Select v-model="planForm.validity_unit" :options="validityUnitOptions" /></div>
       </div>
-      <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <PlanSaleEditor v-if="planForm.card_mode" v-model="planForm.sale_schedule" :mode="planForm.card_mode" :timezone="plan?.sale_timezone || 'Asia/Shanghai'" />
+      <div v-if="!planForm.card_mode" class="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div>
           <label class="input-label">{{ t('payment.admin.dailyLimit') }}</label>
           <input v-model.number="planForm.daily_limit_usd" type="number" step="0.01" min="0" class="input" :placeholder="t('payment.admin.unlimited')" />
@@ -87,7 +100,8 @@ import { adminPaymentAPI } from '@/api/admin/payment'
 import type { AdminPaymentConfig } from '@/api/admin/payment'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatPaymentAmount } from '@/components/payment/currency'
-import type { SubscriptionPlan } from '@/types/payment'
+import type { SubscriptionPlan, PlanSaleSchedule } from '@/types/payment'
+import PlanSaleEditor from '@/components/payment/PlanSaleEditor.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 
@@ -107,6 +121,11 @@ const appStore = useAppStore()
 
 const saving = ref(false)
 const planForm = reactive({
+  sale_schedule: { ends_at: null, price_steps: [], daily_windows: [] } as PlanSaleSchedule,
+  card_mode: '' as '' | 'hours' | 'deadline',
+  validity_hours: 24,
+  deadline_at: '',
+  total_limit_usd: null as number | null,
   name: '',
   description: '',
   price: 0,
@@ -158,6 +177,11 @@ watch(() => props.show, (visible) => {
   if (!visible) return
   if (props.plan) {
     Object.assign(planForm, {
+      sale_schedule: { ends_at: props.plan.sale_schedule?.ends_at ?? null, price_steps: props.plan.sale_schedule?.price_steps?.map(step => ({ ...step })) ?? [], daily_windows: props.plan.sale_schedule?.daily_windows?.map(window => ({ ...window })) ?? [] },
+      card_mode: props.plan.card_mode || '',
+      validity_hours: props.plan.validity_hours || 24,
+      deadline_at: toLocalDateTime(props.plan.deadline_at),
+      total_limit_usd: props.plan.total_limit_usd ?? null,
       name: props.plan.name,
       description: props.plan.description,
       price: props.plan.price,
@@ -174,6 +198,11 @@ watch(() => props.show, (visible) => {
     planFeaturesText.value = (props.plan.features || []).join('\n')
   } else {
     Object.assign(planForm, {
+      sale_schedule: { ends_at: null, price_steps: [], daily_windows: [] },
+      card_mode: '',
+      validity_hours: 24,
+      deadline_at: '',
+      total_limit_usd: null,
       name: '',
       description: '',
       price: 0,
@@ -200,6 +229,11 @@ function buildPlanPayload() {
     return Number.isFinite(parsed) ? parsed : null
   }
   return {
+    sale_schedule: planForm.card_mode ? { ...planForm.sale_schedule, daily_windows: planForm.card_mode === 'hours' ? planForm.sale_schedule.daily_windows : [] } : { ends_at: null, price_steps: [], daily_windows: [] },
+    card_mode: planForm.card_mode,
+    validity_hours: planForm.card_mode === 'hours' ? planForm.validity_hours : 0,
+    deadline_at: planForm.card_mode === 'deadline' ? new Date(planForm.deadline_at).toISOString() : null,
+    total_limit_usd: planForm.card_mode ? normalizeLimit(planForm.total_limit_usd) : null,
     name: planForm.name,
     description: planForm.description,
     price: planForm.price,
@@ -207,9 +241,9 @@ function buildPlanPayload() {
     currency: planForm.currency.trim().toUpperCase(),
     validity_days: planForm.validity_days,
     validity_unit: planForm.validity_unit,
-    daily_limit_usd: normalizeLimit(planForm.daily_limit_usd),
-    weekly_limit_usd: normalizeLimit(planForm.weekly_limit_usd),
-    monthly_limit_usd: normalizeLimit(planForm.monthly_limit_usd),
+    daily_limit_usd: planForm.card_mode ? null : normalizeLimit(planForm.daily_limit_usd),
+    weekly_limit_usd: planForm.card_mode ? null : normalizeLimit(planForm.weekly_limit_usd),
+    monthly_limit_usd: planForm.card_mode ? null : normalizeLimit(planForm.monthly_limit_usd),
     sort_order: planForm.sort_order,
     for_sale: planForm.for_sale,
     features,
@@ -235,5 +269,11 @@ async function handleSavePlan() {
     emit('saved')
   } catch (err: unknown) { appStore.showError(extractApiErrorMessage(err, t('common.error'))) }
   finally { saving.value = false }
+}
+
+function toLocalDateTime(value?: string | null): string {
+  if (!value) return ''
+  const date = new Date(value)
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
 }
 </script>

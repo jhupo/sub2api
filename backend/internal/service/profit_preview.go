@@ -102,7 +102,7 @@ func PreviewProfitAdmission(inputs []ProfitPreviewGroupInput, evalAt time.Time) 
 			report.RemainingByModelMinD[model] = 0
 		}
 
-		peak := group.PeakMultiplierAt(evalAt)
+		peak := group.TimeRateMultiplierAt(evalAt)
 		defaultD := group.RateMultiplier * peak
 		minRate := group.RateMultiplier
 		for _, override := range in.UserOverrides {

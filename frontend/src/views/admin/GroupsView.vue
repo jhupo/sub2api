@@ -1047,6 +1047,8 @@
             </div>
           </div>
         </div>
+        <GroupNightCacheControls :model-value="createForm" />
+
 
         <!-- 分组利润控制（五个平台 token 请求） -->
         <div v-if="isProfitControlPlatform(createForm.platform)" class="border-t pt-4">
@@ -2782,6 +2784,8 @@
             </div>
           </div>
         </div>
+        <GroupNightCacheControls :model-value="editForm" />
+
 
         <!-- 分组利润控制（五个平台 token 请求） -->
         <div v-if="isProfitControlPlatform(editForm.platform)" class="border-t pt-4">
@@ -4327,6 +4331,7 @@
 </template>
 
 <script setup lang="ts">
+import GroupNightCacheControls from "@/components/admin/group/GroupNightCacheControls.vue";
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAppStore } from "@/stores/app";
@@ -4977,6 +4982,12 @@ const createForm = reactive({
   peak_start: "",
   peak_end: "",
   peak_rate_multiplier: 1.0,
+  night_rate_enabled: false,
+  night_start: "22:00",
+  night_end: "08:00",
+  night_rate_multiplier: 1,
+  cache_read_adjustment_mode: "inherit",
+  cache_read_adjustment_percent: 10,
   // 分组利润控制（五个 token 平台）；界面按百分比输入，提交时转小数
   profit_control_enabled: false,
   profit_min_margin_percent: 0,
@@ -5337,6 +5348,12 @@ const editForm = reactive({
   peak_start: "",
   peak_end: "",
   peak_rate_multiplier: 1.0,
+  night_rate_enabled: false,
+  night_start: "22:00",
+  night_end: "08:00",
+  night_rate_multiplier: 1,
+  cache_read_adjustment_mode: "inherit",
+  cache_read_adjustment_percent: 10,
   // 分组利润控制（五个 token 平台）；界面按百分比输入，提交时转小数
   profit_control_enabled: false,
   profit_min_margin_percent: 0,
@@ -5765,6 +5782,12 @@ const closeCreateModal = () => {
   createForm.peak_start = "";
   createForm.peak_end = "";
   createForm.peak_rate_multiplier = 1.0;
+  createForm.night_rate_enabled = false;
+  createForm.night_start = "22:00";
+  createForm.night_end = "08:00";
+  createForm.night_rate_multiplier = 1;
+  createForm.cache_read_adjustment_mode = "inherit";
+  createForm.cache_read_adjustment_percent = 10;
   createForm.profit_control_enabled = false;
   createForm.profit_min_margin_percent = 0;
   createForm.profit_safety_buffer_percent = 0;
@@ -5922,6 +5945,12 @@ const handleCreateGroup = async () => {
       requestData.web_search_price_per_call,
     );
     requestData.peak_rate_enabled = createForm.peak_rate_enabled;
+    requestData.night_rate_enabled = createForm.night_rate_enabled;
+    requestData.night_start = createForm.night_start;
+    requestData.night_end = createForm.night_end;
+    requestData.night_rate_multiplier = normalizeRateMultiplier(createForm.night_rate_multiplier);
+    requestData.cache_read_adjustment_mode = createForm.cache_read_adjustment_mode;
+    requestData.cache_read_adjustment_percent = createForm.cache_read_adjustment_percent;
     requestData.peak_start = createForm.peak_start;
     requestData.peak_end = createForm.peak_end;
     requestData.peak_rate_multiplier = normalizeRateMultiplier(
@@ -5987,6 +6016,12 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.peak_start = group.peak_start ?? "";
   editForm.peak_end = group.peak_end ?? "";
   editForm.peak_rate_multiplier = group.peak_rate_multiplier ?? 1.0;
+  editForm.night_rate_enabled = group.night_rate_enabled ?? false;
+  editForm.night_start = group.night_start ?? "22:00";
+  editForm.night_end = group.night_end ?? "08:00";
+  editForm.night_rate_multiplier = group.night_rate_multiplier ?? 1;
+  editForm.cache_read_adjustment_mode = group.cache_read_adjustment_mode ?? "inherit";
+  editForm.cache_read_adjustment_percent = group.cache_read_adjustment_percent ?? 10;
   editForm.profit_control_enabled = group.profit_control_enabled ?? false;
   editForm.profit_min_margin_percent = decimalToPercent(
     group.profit_min_margin ?? 0,
@@ -6058,6 +6093,12 @@ const closeEditModal = () => {
   editForm.peak_start = "";
   editForm.peak_end = "";
   editForm.peak_rate_multiplier = 1.0;
+  editForm.night_rate_enabled = false;
+  editForm.night_start = "22:00";
+  editForm.night_end = "08:00";
+  editForm.night_rate_multiplier = 1;
+  editForm.cache_read_adjustment_mode = "inherit";
+  editForm.cache_read_adjustment_percent = 10;
   editForm.profit_control_enabled = false;
   editForm.profit_min_margin_percent = 0;
   editForm.profit_safety_buffer_percent = 0;
@@ -6195,6 +6236,12 @@ const handleUpdateGroup = async () => {
       payload.web_search_price_per_call,
     );
     payload.peak_rate_enabled = editForm.peak_rate_enabled;
+    payload.night_rate_enabled = editForm.night_rate_enabled;
+    payload.night_start = editForm.night_start;
+    payload.night_end = editForm.night_end;
+    payload.night_rate_multiplier = normalizeRateMultiplier(editForm.night_rate_multiplier);
+    payload.cache_read_adjustment_mode = editForm.cache_read_adjustment_mode;
+    payload.cache_read_adjustment_percent = editForm.cache_read_adjustment_percent;
     payload.peak_start = editForm.peak_start;
     payload.peak_end = editForm.peak_end;
     payload.peak_rate_multiplier = normalizeRateMultiplier(

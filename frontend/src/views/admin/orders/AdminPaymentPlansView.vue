@@ -17,7 +17,10 @@
           </div>
         </template>
         <template #cell-allowances="{ row }">
-          <div class="space-y-0.5 text-xs text-gray-600 dark:text-gray-300">
+          <div v-if="row.card_mode" class="text-xs text-gray-600 dark:text-gray-300">
+            {{ t('quotaFeatures.totalLimit') }}: {{ formatAllowance(row.total_limit_usd) }}
+          </div>
+          <div v-else class="space-y-0.5 text-xs text-gray-600 dark:text-gray-300">
             <div>{{ t('payment.admin.dailyLimit') }}: {{ formatAllowance(row.daily_limit_usd) }}</div>
             <div>{{ t('payment.admin.weeklyLimit') }}: {{ formatAllowance(row.weekly_limit_usd) }}</div>
             <div>{{ t('payment.admin.monthlyLimit') }}: {{ formatAllowance(row.monthly_limit_usd) }}</div>
@@ -25,13 +28,15 @@
         </template>
         <template #cell-price="{ value, row }">
           <div class="text-sm">
-            <span class="font-medium text-gray-900 dark:text-white">{{ planCurrencySymbol(row.currency) }}{{ (value ?? 0).toFixed(2) }}</span>
+            <span class="font-medium text-gray-900 dark:text-white">{{ planCurrencySymbol(row.currency) }}{{ (row.current_price ?? value ?? 0).toFixed(2) }}</span>
+            <del v-if="row.current_price != null && row.current_price !== value" class="ml-1 text-xs text-gray-400">{{ planCurrencySymbol(row.currency) }}{{ value.toFixed(2) }}</del>
             <span v-if="row.currency" class="ml-1 text-xs text-gray-400">{{ row.currency }}</span>
             <span v-if="row.original_price" class="ml-1 text-xs text-gray-400 line-through">{{ planCurrencySymbol(row.currency) }}{{ row.original_price.toFixed(2) }}</span>
           </div>
         </template>
         <template #cell-validity_days="{ value, row }">
-          <span class="text-sm">{{ value }} {{ t('payment.admin.' + (row.validity_unit || 'days')) }}</span>
+          <span v-if="row.card_mode" class="text-sm">{{ planValiditySuffix(row, t) }}</span>
+          <span v-else class="text-sm">{{ value }} {{ t('payment.admin.' + (row.validity_unit || 'days')) }}</span>
         </template>
         <template #cell-for_sale="{ value, row }">
           <button
@@ -47,6 +52,8 @@
               value ? 'translate-x-4' : 'translate-x-0'
             ]" />
           </button>
+          <div v-if="value && row.sale_available === false" class="mt-1 text-xs text-rose-600">{{ t('quotaFeatures.offSale') }}</div>
+          <SaleCountdown v-if="row.sale_available && row.sale_ends_at" :ends-at="row.sale_ends_at" class="mt-1 min-w-[140px]" @expired="loadPlans" />
         </template>
         <template #cell-actions="{ row }">
           <div class="flex items-center gap-2">
@@ -78,12 +85,14 @@ import { adminPaymentAPI } from '@/api/admin/payment'
 import type { AdminPaymentConfig } from '@/api/admin/payment'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import type { SubscriptionPlan } from '@/types/payment'
+import { planValiditySuffix } from '@/components/payment/validity'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PlanEditDialog from './PlanEditDialog.vue'
+import SaleCountdown from '@/components/payment/SaleCountdown.vue'
 import { currencySymbol } from '@/components/payment/currency'
 
 const { t } = useI18n()

@@ -3,6 +3,8 @@ package schema
 import (
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/domain"
+
 	"entgo.io/ent"
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/entsql"
@@ -45,6 +47,7 @@ func (SubscriptionPlan) Fields() []ent.Field {
 			Default(""),
 		field.Bool("for_sale").
 			Default(true),
+		field.JSON("sale_schedule", domain.PlanSaleSchedule{}).Optional(),
 		field.Bool("is_historical").
 			Default(false).
 			Immutable(),

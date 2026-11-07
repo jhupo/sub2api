@@ -15,6 +15,8 @@ var (
 		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "deleted_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "subscription_priority", Type: field.TypeJSON, Nullable: true},
+		{Name: "allow_wallet_fallback", Type: field.TypeBool, Default: false},
 		{Name: "key", Type: field.TypeString, Unique: true, Size: 128},
 		{Name: "name", Type: field.TypeString, Size: 100},
 		{Name: "funding_source", Type: field.TypeString, Size: 20, Default: "wallet"},
@@ -46,19 +48,19 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "api_keys_groups_api_keys",
-				Columns:    []*schema.Column{APIKeysColumns[23]},
+				Columns:    []*schema.Column{APIKeysColumns[25]},
 				RefColumns: []*schema.Column{GroupsColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
 			{
 				Symbol:     "api_keys_users_api_keys",
-				Columns:    []*schema.Column{APIKeysColumns[24]},
+				Columns:    []*schema.Column{APIKeysColumns[26]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "api_keys_user_subscriptions_api_keys",
-				Columns:    []*schema.Column{APIKeysColumns[25]},
+				Columns:    []*schema.Column{APIKeysColumns[27]},
 				RefColumns: []*schema.Column{UserSubscriptionsColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -67,27 +69,27 @@ var (
 			{
 				Name:    "apikey_user_id",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[24]},
+				Columns: []*schema.Column{APIKeysColumns[26]},
 			},
 			{
 				Name:    "apikey_group_id",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[23]},
+				Columns: []*schema.Column{APIKeysColumns[25]},
 			},
 			{
 				Name:    "apikey_subscription_id",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[25]},
+				Columns: []*schema.Column{APIKeysColumns[27]},
 			},
 			{
 				Name:    "apikey_user_id_funding_source",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[24], APIKeysColumns[6]},
+				Columns: []*schema.Column{APIKeysColumns[26], APIKeysColumns[8]},
 			},
 			{
 				Name:    "apikey_status",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[7]},
+				Columns: []*schema.Column{APIKeysColumns[9]},
 			},
 			{
 				Name:    "apikey_deleted_at",
@@ -97,17 +99,17 @@ var (
 			{
 				Name:    "apikey_last_used_at",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[8]},
+				Columns: []*schema.Column{APIKeysColumns[10]},
 			},
 			{
 				Name:    "apikey_quota_quota_used",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[11], APIKeysColumns[12]},
+				Columns: []*schema.Column{APIKeysColumns[13], APIKeysColumns[14]},
 			},
 			{
 				Name:    "apikey_expires_at",
 				Unique:  false,
-				Columns: []*schema.Column{APIKeysColumns[13]},
+				Columns: []*schema.Column{APIKeysColumns[15]},
 			},
 		},
 	}
@@ -987,6 +989,12 @@ var (
 		{Name: "peak_start", Type: field.TypeString, Size: 5, Default: ""},
 		{Name: "peak_end", Type: field.TypeString, Size: 5, Default: ""},
 		{Name: "peak_rate_multiplier", Type: field.TypeFloat64, Default: 1, SchemaType: map[string]string{"postgres": "decimal(10,4)"}},
+		{Name: "night_rate_enabled", Type: field.TypeBool, Default: false},
+		{Name: "night_start", Type: field.TypeString, Size: 5, Default: ""},
+		{Name: "night_end", Type: field.TypeString, Size: 5, Default: ""},
+		{Name: "night_rate_multiplier", Type: field.TypeFloat64, Default: 1, SchemaType: map[string]string{"postgres": "decimal(10,4)"}},
+		{Name: "cache_read_adjustment_mode", Type: field.TypeString, Size: 16, Default: "inherit"},
+		{Name: "cache_read_adjustment_percent", Type: field.TypeInt, Default: 10},
 		{Name: "is_exclusive", Type: field.TypeBool, Default: false},
 		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
 		{Name: "duplicate_operation_id", Type: field.TypeString, Nullable: true, Size: 64},
@@ -1047,17 +1055,17 @@ var (
 			{
 				Name:    "group_status",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[12]},
+				Columns: []*schema.Column{GroupsColumns[18]},
 			},
 			{
 				Name:    "group_platform",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[14]},
+				Columns: []*schema.Column{GroupsColumns[20]},
 			},
 			{
 				Name:    "group_is_exclusive",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[11]},
+				Columns: []*schema.Column{GroupsColumns[17]},
 			},
 			{
 				Name:    "group_deleted_at",
@@ -1067,12 +1075,12 @@ var (
 			{
 				Name:    "group_sort_order",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[44]},
+				Columns: []*schema.Column{GroupsColumns[50]},
 			},
 			{
 				Name:    "idx_groups_duplicate_operation_id_active",
 				Unique:  true,
-				Columns: []*schema.Column{GroupsColumns[13]},
+				Columns: []*schema.Column{GroupsColumns[19]},
 				Annotation: &entsql.IndexAnnotation{
 					Where: "duplicate_operation_id IS NOT NULL AND deleted_at IS NULL",
 				},
@@ -1607,6 +1615,7 @@ var (
 		{Name: "features", Type: field.TypeString, Default: "", SchemaType: map[string]string{"postgres": "text"}},
 		{Name: "product_name", Type: field.TypeString, Size: 100, Default: ""},
 		{Name: "for_sale", Type: field.TypeBool, Default: true},
+		{Name: "sale_schedule", Type: field.TypeJSON, Nullable: true},
 		{Name: "is_historical", Type: field.TypeBool, Default: false},
 		{Name: "sort_order", Type: field.TypeInt, Default: 0},
 		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
@@ -1638,6 +1647,10 @@ var (
 		{Name: "original_price", Type: field.TypeFloat64, Nullable: true, SchemaType: map[string]string{"postgres": "decimal(20,3)"}},
 		{Name: "currency", Type: field.TypeString, Size: 3, Default: ""},
 		{Name: "validity_days", Type: field.TypeInt},
+		{Name: "card_mode", Type: field.TypeString, Size: 16, Default: ""},
+		{Name: "validity_hours", Type: field.TypeInt, Default: 0},
+		{Name: "deadline_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "total_limit_usd", Type: field.TypeFloat64, Nullable: true, SchemaType: map[string]string{"postgres": "decimal(20,10)"}},
 		{Name: "validity_unit", Type: field.TypeString, Size: 10, Default: "day"},
 		{Name: "daily_limit_usd", Type: field.TypeFloat64, Nullable: true, SchemaType: map[string]string{"postgres": "decimal(20,10)"}},
 		{Name: "weekly_limit_usd", Type: field.TypeFloat64, Nullable: true, SchemaType: map[string]string{"postgres": "decimal(20,10)"}},
@@ -1653,7 +1666,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "subscription_plan_versions_subscription_plans_versions",
-				Columns:    []*schema.Column{SubscriptionPlanVersionsColumns[11]},
+				Columns:    []*schema.Column{SubscriptionPlanVersionsColumns[15]},
 				RefColumns: []*schema.Column{SubscriptionPlansColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -1662,12 +1675,12 @@ var (
 			{
 				Name:    "subscriptionplanversion_plan_id_version",
 				Unique:  true,
-				Columns: []*schema.Column{SubscriptionPlanVersionsColumns[11], SubscriptionPlanVersionsColumns[1]},
+				Columns: []*schema.Column{SubscriptionPlanVersionsColumns[15], SubscriptionPlanVersionsColumns[1]},
 			},
 			{
 				Name:    "subscriptionplanversion_published_at",
 				Unique:  false,
-				Columns: []*schema.Column{SubscriptionPlanVersionsColumns[10]},
+				Columns: []*schema.Column{SubscriptionPlanVersionsColumns[14]},
 			},
 		},
 	}
@@ -2105,6 +2118,10 @@ var (
 		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "deleted_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "is_quota_card", Type: field.TypeBool, Default: false},
+		{Name: "renewal_count", Type: field.TypeInt, Default: 0},
+		{Name: "total_usage_usd", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,10)"}},
+		{Name: "total_reserved_usd", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,10)"}},
 		{Name: "starts_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "expires_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
@@ -2132,25 +2149,25 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "user_subscriptions_subscription_plans_subscriptions",
-				Columns:    []*schema.Column{UserSubscriptionsColumns[18]},
+				Columns:    []*schema.Column{UserSubscriptionsColumns[22]},
 				RefColumns: []*schema.Column{SubscriptionPlansColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "user_subscriptions_subscription_plan_versions_subscriptions",
-				Columns:    []*schema.Column{UserSubscriptionsColumns[19]},
+				Columns:    []*schema.Column{UserSubscriptionsColumns[23]},
 				RefColumns: []*schema.Column{SubscriptionPlanVersionsColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "user_subscriptions_users_subscriptions",
-				Columns:    []*schema.Column{UserSubscriptionsColumns[20]},
+				Columns:    []*schema.Column{UserSubscriptionsColumns[24]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "user_subscriptions_users_assigned_subscriptions",
-				Columns:    []*schema.Column{UserSubscriptionsColumns[21]},
+				Columns:    []*schema.Column{UserSubscriptionsColumns[25]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -2159,42 +2176,42 @@ var (
 			{
 				Name:    "usersubscription_user_id",
 				Unique:  false,
-				Columns: []*schema.Column{UserSubscriptionsColumns[20]},
+				Columns: []*schema.Column{UserSubscriptionsColumns[24]},
 			},
 			{
 				Name:    "usersubscription_plan_id",
 				Unique:  false,
-				Columns: []*schema.Column{UserSubscriptionsColumns[18]},
+				Columns: []*schema.Column{UserSubscriptionsColumns[22]},
 			},
 			{
 				Name:    "usersubscription_plan_version_id",
 				Unique:  false,
-				Columns: []*schema.Column{UserSubscriptionsColumns[19]},
+				Columns: []*schema.Column{UserSubscriptionsColumns[23]},
 			},
 			{
 				Name:    "usersubscription_status",
 				Unique:  false,
-				Columns: []*schema.Column{UserSubscriptionsColumns[6]},
+				Columns: []*schema.Column{UserSubscriptionsColumns[10]},
 			},
 			{
 				Name:    "usersubscription_expires_at",
 				Unique:  false,
-				Columns: []*schema.Column{UserSubscriptionsColumns[5]},
+				Columns: []*schema.Column{UserSubscriptionsColumns[9]},
 			},
 			{
 				Name:    "usersubscription_user_id_status_expires_at",
 				Unique:  false,
-				Columns: []*schema.Column{UserSubscriptionsColumns[20], UserSubscriptionsColumns[6], UserSubscriptionsColumns[5]},
+				Columns: []*schema.Column{UserSubscriptionsColumns[24], UserSubscriptionsColumns[10], UserSubscriptionsColumns[9]},
 			},
 			{
 				Name:    "usersubscription_assigned_by",
 				Unique:  false,
-				Columns: []*schema.Column{UserSubscriptionsColumns[21]},
+				Columns: []*schema.Column{UserSubscriptionsColumns[25]},
 			},
 			{
 				Name:    "usersubscription_user_id_plan_version_id",
 				Unique:  false,
-				Columns: []*schema.Column{UserSubscriptionsColumns[20], UserSubscriptionsColumns[19]},
+				Columns: []*schema.Column{UserSubscriptionsColumns[24], UserSubscriptionsColumns[23]},
 			},
 			{
 				Name:    "usersubscription_deleted_at",

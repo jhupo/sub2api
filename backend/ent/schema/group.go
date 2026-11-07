@@ -63,6 +63,12 @@ func (Group) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Default(1.0).
 			Comment("高峰时段叠加倍率，仅在 peak_rate_enabled 且处于 [peak_start, peak_end) 时乘入文本倍率"),
+		field.Bool("night_rate_enabled").Default(false),
+		field.String("night_start").MaxLen(5).Default(""),
+		field.String("night_end").MaxLen(5).Default(""),
+		field.Float("night_rate_multiplier").SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).Default(1),
+		field.String("cache_read_adjustment_mode").MaxLen(16).Default("inherit"),
+		field.Int("cache_read_adjustment_percent").Default(10),
 		field.Bool("is_exclusive").
 			Default(false),
 		field.String("status").

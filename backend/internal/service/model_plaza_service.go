@@ -37,16 +37,22 @@ type PlazaModel struct {
 // 支持模型（普通分组按分组平台隔离，Composite 分组展开关联渠道已配置的
 // 具体平台），与「可用渠道」页口径一致。
 type PlazaGroup struct {
-	ID                 int64
-	Name               string
-	Description        string
-	Platform           string
-	RateMultiplier     float64
-	PeakRateEnabled    bool
-	PeakStart          string
-	PeakEnd            string
-	PeakRateMultiplier float64
-	IsExclusive        bool
+	ID                         int64
+	Name                       string
+	Description                string
+	Platform                   string
+	RateMultiplier             float64
+	PeakRateEnabled            bool
+	PeakStart                  string
+	PeakEnd                    string
+	PeakRateMultiplier         float64
+	NightRateEnabled           bool
+	NightStart                 string
+	NightEnd                   string
+	NightRateMultiplier        float64
+	CacheReadAdjustmentMode    string
+	CacheReadAdjustmentPercent int
+	IsExclusive                bool
 	// 图片按次实付倍率：ImageRateIndependent 为 true 时，图片计费模型的实付
 	// = 档位价 × ImageRateMultiplier，不乘分组/用户专属倍率（与计费口径一致）。
 	ImageRateIndependent bool
@@ -118,19 +124,25 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 	for i := range groups {
 		g := &groups[i]
 		byGroup[g.ID] = &PlazaGroup{
-			ID:                        g.ID,
-			Name:                      g.Name,
-			Description:               g.Description,
-			Platform:                  g.Platform,
-			RateMultiplier:            g.RateMultiplier,
-			PeakRateEnabled:           g.PeakRateEnabled,
-			PeakStart:                 g.PeakStart,
-			PeakEnd:                   g.PeakEnd,
-			PeakRateMultiplier:        g.PeakRateMultiplier,
-			IsExclusive:               g.IsExclusive,
-			ImageRateIndependent:      g.ImageRateIndependent,
-			ImageRateMultiplier:       g.ImageRateMultiplier,
-			LongContextPricingEnabled: g.LongContextPricingEnabled,
+			ID:                         g.ID,
+			Name:                       g.Name,
+			Description:                g.Description,
+			Platform:                   g.Platform,
+			RateMultiplier:             g.RateMultiplier,
+			PeakRateEnabled:            g.PeakRateEnabled,
+			PeakStart:                  g.PeakStart,
+			PeakEnd:                    g.PeakEnd,
+			PeakRateMultiplier:         g.PeakRateMultiplier,
+			NightRateEnabled:           g.NightRateEnabled,
+			NightStart:                 g.NightStart,
+			NightEnd:                   g.NightEnd,
+			NightRateMultiplier:        g.NightRateMultiplier,
+			CacheReadAdjustmentMode:    g.CacheReadAdjustmentMode,
+			CacheReadAdjustmentPercent: g.CacheReadAdjustmentPercent,
+			IsExclusive:                g.IsExclusive,
+			ImageRateIndependent:       g.ImageRateIndependent,
+			ImageRateMultiplier:        g.ImageRateMultiplier,
+			LongContextPricingEnabled:  g.LongContextPricingEnabled,
 		}
 		groupEnt[g.ID] = g
 		order = append(order, g.ID)

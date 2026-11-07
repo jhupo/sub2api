@@ -75,6 +75,23 @@ func TestOpenAIWSTurnAdmissionRefreshesAuthorization(t *testing.T) {
 	require.NoError(t, err, "authorized exclusive groups must remain usable on later turns")
 }
 
+func TestOpenAIWSTurnAdmissionKeepsConfiguredPriorityAfterAutomaticSwitch(t *testing.T) {
+	first, second := int64(11), int64(12)
+	persisted := &service.APIKey{ID: 1, UserID: 2, Status: service.StatusActive, FundingSource: service.FundingSourceSubscription, SubscriptionID: &first,
+		SubscriptionPriority: []int64{first, second}, AllowWalletFallback: true, User: &service.User{ID: 2, Status: service.StatusActive}}
+	initial := *persisted
+	initial.SubscriptionID = &second
+	_, err := refreshOpenAIWSTurnKey(context.Background(), wsTurnKeyReader{key: persisted}, &initial, "127.0.0.1", false)
+	require.NoError(t, err)
+	initial.FundingSource = service.FundingSourceWallet
+	initial.SubscriptionID = nil
+	_, err = refreshOpenAIWSTurnKey(context.Background(), wsTurnKeyReader{key: persisted}, &initial, "127.0.0.1", false)
+	require.NoError(t, err, "wallet fallback must not be mistaken for a configuration change")
+	persisted.SubscriptionPriority = []int64{second, first}
+	_, err = refreshOpenAIWSTurnKey(context.Background(), wsTurnKeyReader{key: persisted}, &initial, "127.0.0.1", false)
+	require.Error(t, err, "an actual edit to payment priority requires reconnecting")
+}
+
 type wsTurnBalanceCache struct {
 	service.BillingCache
 	balance float64

@@ -32,6 +32,14 @@ type UserSubscription struct {
 	PlanID int64 `json:"plan_id,omitempty"`
 	// PlanVersionID holds the value of the "plan_version_id" field.
 	PlanVersionID int64 `json:"plan_version_id,omitempty"`
+	// IsQuotaCard holds the value of the "is_quota_card" field.
+	IsQuotaCard bool `json:"is_quota_card,omitempty"`
+	// RenewalCount holds the value of the "renewal_count" field.
+	RenewalCount int `json:"renewal_count,omitempty"`
+	// TotalUsageUsd holds the value of the "total_usage_usd" field.
+	TotalUsageUsd float64 `json:"total_usage_usd,omitempty"`
+	// TotalReservedUsd holds the value of the "total_reserved_usd" field.
+	TotalReservedUsd float64 `json:"total_reserved_usd,omitempty"`
 	// StartsAt holds the value of the "starts_at" field.
 	StartsAt time.Time `json:"starts_at,omitempty"`
 	// ExpiresAt holds the value of the "expires_at" field.
@@ -154,9 +162,11 @@ func (*UserSubscription) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd, usersubscription.FieldDailyReservedUsd, usersubscription.FieldWeeklyReservedUsd, usersubscription.FieldMonthlyReservedUsd:
+		case usersubscription.FieldIsQuotaCard:
+			values[i] = new(sql.NullBool)
+		case usersubscription.FieldTotalUsageUsd, usersubscription.FieldTotalReservedUsd, usersubscription.FieldDailyUsageUsd, usersubscription.FieldWeeklyUsageUsd, usersubscription.FieldMonthlyUsageUsd, usersubscription.FieldDailyReservedUsd, usersubscription.FieldWeeklyReservedUsd, usersubscription.FieldMonthlyReservedUsd:
 			values[i] = new(sql.NullFloat64)
-		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldPlanID, usersubscription.FieldPlanVersionID, usersubscription.FieldAssignedBy:
+		case usersubscription.FieldID, usersubscription.FieldUserID, usersubscription.FieldPlanID, usersubscription.FieldPlanVersionID, usersubscription.FieldRenewalCount, usersubscription.FieldAssignedBy:
 			values[i] = new(sql.NullInt64)
 		case usersubscription.FieldStatus, usersubscription.FieldNotes:
 			values[i] = new(sql.NullString)
@@ -219,6 +229,30 @@ func (_m *UserSubscription) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field plan_version_id", values[i])
 			} else if value.Valid {
 				_m.PlanVersionID = value.Int64
+			}
+		case usersubscription.FieldIsQuotaCard:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field is_quota_card", values[i])
+			} else if value.Valid {
+				_m.IsQuotaCard = value.Bool
+			}
+		case usersubscription.FieldRenewalCount:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field renewal_count", values[i])
+			} else if value.Valid {
+				_m.RenewalCount = int(value.Int64)
+			}
+		case usersubscription.FieldTotalUsageUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field total_usage_usd", values[i])
+			} else if value.Valid {
+				_m.TotalUsageUsd = value.Float64
+			}
+		case usersubscription.FieldTotalReservedUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field total_reserved_usd", values[i])
+			} else if value.Valid {
+				_m.TotalReservedUsd = value.Float64
 			}
 		case usersubscription.FieldStartsAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -400,6 +434,18 @@ func (_m *UserSubscription) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("plan_version_id=")
 	builder.WriteString(fmt.Sprintf("%v", _m.PlanVersionID))
+	builder.WriteString(", ")
+	builder.WriteString("is_quota_card=")
+	builder.WriteString(fmt.Sprintf("%v", _m.IsQuotaCard))
+	builder.WriteString(", ")
+	builder.WriteString("renewal_count=")
+	builder.WriteString(fmt.Sprintf("%v", _m.RenewalCount))
+	builder.WriteString(", ")
+	builder.WriteString("total_usage_usd=")
+	builder.WriteString(fmt.Sprintf("%v", _m.TotalUsageUsd))
+	builder.WriteString(", ")
+	builder.WriteString("total_reserved_usd=")
+	builder.WriteString(fmt.Sprintf("%v", _m.TotalReservedUsd))
 	builder.WriteString(", ")
 	builder.WriteString("starts_at=")
 	builder.WriteString(_m.StartsAt.Format(time.ANSIC))

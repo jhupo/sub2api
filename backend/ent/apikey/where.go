@@ -70,6 +70,11 @@ func DeletedAt(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldDeletedAt, v))
 }
 
+// AllowWalletFallback applies equality check predicate on the "allow_wallet_fallback" field. It's identical to AllowWalletFallbackEQ.
+func AllowWalletFallback(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldAllowWalletFallback, v))
+}
+
 // UserID applies equality check predicate on the "user_id" field. It's identical to UserIDEQ.
 func UserID(v int64) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldUserID, v))
@@ -298,6 +303,26 @@ func DeletedAtIsNil() predicate.APIKey {
 // DeletedAtNotNil applies the NotNil predicate on the "deleted_at" field.
 func DeletedAtNotNil() predicate.APIKey {
 	return predicate.APIKey(sql.FieldNotNull(FieldDeletedAt))
+}
+
+// SubscriptionPriorityIsNil applies the IsNil predicate on the "subscription_priority" field.
+func SubscriptionPriorityIsNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldIsNull(FieldSubscriptionPriority))
+}
+
+// SubscriptionPriorityNotNil applies the NotNil predicate on the "subscription_priority" field.
+func SubscriptionPriorityNotNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotNull(FieldSubscriptionPriority))
+}
+
+// AllowWalletFallbackEQ applies the EQ predicate on the "allow_wallet_fallback" field.
+func AllowWalletFallbackEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldAllowWalletFallback, v))
+}
+
+// AllowWalletFallbackNEQ applies the NEQ predicate on the "allow_wallet_fallback" field.
+func AllowWalletFallbackNEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldAllowWalletFallback, v))
 }
 
 // UserIDEQ applies the EQ predicate on the "user_id" field.

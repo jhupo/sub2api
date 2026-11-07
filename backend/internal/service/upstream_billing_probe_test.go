@@ -630,7 +630,7 @@ func TestUpstreamBillingProbeRejectsInvalidPeakConfiguration(t *testing.T) {
 		timezone string
 	}{
 		{name: "invalid start", start: "25:00", end: "18:00", timezone: "UTC"},
-		{name: "cross midnight", start: "22:00", end: "02:00", timezone: "UTC"},
+		{name: "equal endpoints", start: "22:00", end: "22:00", timezone: "UTC"},
 		{name: "invalid timezone", start: "09:00", end: "18:00", timezone: "Mars/Olympus"},
 	}
 

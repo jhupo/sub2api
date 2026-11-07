@@ -194,7 +194,18 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		usesSubscription := apiKey.UsesSubscription()
 
 		// 倍率自省不需要订阅数据；/v1/usage 仍保留原有订阅读取行为。
-		if usesSubscription && !billingInfoRequest {
+		if usesSubscription && !billingInfoRequest && (len(apiKey.SubscriptionPriority) > 0 || apiKey.AllowWalletFallback) {
+			resolved, sub, fundingErr := apiKeyService.ResolveGatewayFunding(c.Request.Context(), apiKey)
+			if fundingErr != nil {
+				if !skipBilling {
+					AbortWithError(c, 429, "FUNDING_UNAVAILABLE", fundingErr.Error())
+					return
+				}
+			} else {
+				apiKey, subscription = resolved, sub
+				usesSubscription = apiKey.UsesSubscription()
+			}
+		} else if usesSubscription && !billingInfoRequest {
 			if subscriptionService == nil || apiKey.SubscriptionID == nil {
 				if !skipBilling {
 					AbortWithError(c, 403, "SUBSCRIPTION_INVALID", "API key subscription payment is not configured")
@@ -258,7 +269,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 					status := 403
 					if errors.Is(validateErr, service.ErrDailyLimitExceeded) ||
 						errors.Is(validateErr, service.ErrWeeklyLimitExceeded) ||
-						errors.Is(validateErr, service.ErrMonthlyLimitExceeded) {
+						errors.Is(validateErr, service.ErrMonthlyLimitExceeded) || errors.Is(validateErr, service.ErrTotalLimitExceeded) {
 						code = "USAGE_LIMIT_EXCEEDED"
 						status = 429
 					}

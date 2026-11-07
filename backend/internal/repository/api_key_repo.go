@@ -56,6 +56,8 @@ func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) erro
 		SetNillableGroupID(key.GroupID).
 		SetFundingSource(fundingSource).
 		SetNillableSubscriptionID(key.SubscriptionID).
+		SetSubscriptionPriority(key.SubscriptionPriority).
+		SetAllowWalletFallback(key.AllowWalletFallback).
 		SetNillableLastUsedAt(key.LastUsedAt).
 		SetQuota(key.Quota).
 		SetQuotaUsed(key.QuotaUsed).
@@ -147,6 +149,8 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			apikey.FieldGroupID,
 			apikey.FieldFundingSource,
 			apikey.FieldSubscriptionID,
+			apikey.FieldSubscriptionPriority,
+			apikey.FieldAllowWalletFallback,
 			apikey.FieldName,
 			apikey.FieldStatus,
 			apikey.FieldIPWhitelist,
@@ -233,6 +237,12 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				group.FieldPeakStart,
 				group.FieldPeakEnd,
 				group.FieldPeakRateMultiplier,
+				group.FieldNightRateEnabled,
+				group.FieldNightStart,
+				group.FieldNightEnd,
+				group.FieldNightRateMultiplier,
+				group.FieldCacheReadAdjustmentMode,
+				group.FieldCacheReadAdjustmentPercent,
 				// 分组利润控制：认证快照是调度门 enable 判定的直接来源，
 				// 漏选会让门静默失效；新增快照分组字段时必须同步本投影，
 				// 集成测试对账兜底。
@@ -316,7 +326,7 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 		}
 	}
 	if fields.FundingSource {
-		builder.SetFundingSource(key.FundingSource)
+		builder.SetFundingSource(key.FundingSource).SetSubscriptionPriority(key.SubscriptionPriority).SetAllowWalletFallback(key.AllowWalletFallback)
 		if key.SubscriptionID != nil {
 			builder.SetSubscriptionID(*key.SubscriptionID)
 		} else {
@@ -890,31 +900,33 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 		return nil
 	}
 	out := &service.APIKey{
-		ID:             m.ID,
-		UserID:         m.UserID,
-		Key:            m.Key,
-		Name:           m.Name,
-		Status:         m.Status,
-		IPWhitelist:    m.IPWhitelist,
-		IPBlacklist:    m.IPBlacklist,
-		LastUsedAt:     m.LastUsedAt,
-		CreatedAt:      m.CreatedAt,
-		UpdatedAt:      m.UpdatedAt,
-		GroupID:        m.GroupID,
-		FundingSource:  m.FundingSource,
-		SubscriptionID: m.SubscriptionID,
-		Quota:          m.Quota,
-		QuotaUsed:      m.QuotaUsed,
-		ExpiresAt:      m.ExpiresAt,
-		RateLimit5h:    m.RateLimit5h,
-		RateLimit1d:    m.RateLimit1d,
-		RateLimit7d:    m.RateLimit7d,
-		Usage5h:        m.Usage5h,
-		Usage1d:        m.Usage1d,
-		Usage7d:        m.Usage7d,
-		Window5hStart:  m.Window5hStart,
-		Window1dStart:  m.Window1dStart,
-		Window7dStart:  m.Window7dStart,
+		ID:                   m.ID,
+		UserID:               m.UserID,
+		Key:                  m.Key,
+		Name:                 m.Name,
+		Status:               m.Status,
+		IPWhitelist:          m.IPWhitelist,
+		IPBlacklist:          m.IPBlacklist,
+		LastUsedAt:           m.LastUsedAt,
+		CreatedAt:            m.CreatedAt,
+		UpdatedAt:            m.UpdatedAt,
+		GroupID:              m.GroupID,
+		FundingSource:        m.FundingSource,
+		SubscriptionID:       m.SubscriptionID,
+		SubscriptionPriority: m.SubscriptionPriority,
+		AllowWalletFallback:  m.AllowWalletFallback,
+		Quota:                m.Quota,
+		QuotaUsed:            m.QuotaUsed,
+		ExpiresAt:            m.ExpiresAt,
+		RateLimit5h:          m.RateLimit5h,
+		RateLimit1d:          m.RateLimit1d,
+		RateLimit7d:          m.RateLimit7d,
+		Usage5h:              m.Usage5h,
+		Usage1d:              m.Usage1d,
+		Usage7d:              m.Usage7d,
+		Window5hStart:        m.Window5hStart,
+		Window1dStart:        m.Window1dStart,
+		Window7dStart:        m.Window7dStart,
 	}
 	if m.Edges.User != nil {
 		out.User = userEntityToService(m.Edges.User)
@@ -1041,6 +1053,12 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		PeakStart:                       g.PeakStart,
 		PeakEnd:                         g.PeakEnd,
 		PeakRateMultiplier:              g.PeakRateMultiplier,
+		NightRateEnabled:                g.NightRateEnabled,
+		NightStart:                      g.NightStart,
+		NightEnd:                        g.NightEnd,
+		NightRateMultiplier:             g.NightRateMultiplier,
+		CacheReadAdjustmentMode:         g.CacheReadAdjustmentMode,
+		CacheReadAdjustmentPercent:      g.CacheReadAdjustmentPercent,
 		ProfitControlEnabled:            g.ProfitControlEnabled,
 		ProfitMinMargin:                 g.ProfitMinMargin,
 		ProfitSafetyBuffer:              g.ProfitSafetyBuffer,

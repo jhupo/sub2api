@@ -29,6 +29,7 @@
             }}
           </p>
           <p>{{ t('admin.accounts.upstreamBilling.effectiveRate', { value: currentEffectiveRate ?? '-' }) }}</p>
+          <p v-if="data.night_rate_enabled">{{ t('quotaFeatures.nightEnabled') }}: {{ data.night_start }}-{{ data.night_end }} ×{{ data.night_rate_multiplier }} ({{ data.timezone }})</p>
           <p>{{ t('admin.accounts.upstreamBilling.updatedAt', { value: formatDate(snapshot?.received_at) }) }}</p>
         </template>
         <template v-else-if="stale && lastDetectedRate != null">
@@ -165,13 +166,18 @@ const currentEffectiveRate = computed(() => {
   const base = billing.resolved_rate_multiplier
   if (typeof base !== 'number' || !Number.isFinite(base) || base < 0) return null
   if (typeof billing.peak_rate_enabled !== 'boolean') return null
-  if (!billing.peak_rate_enabled) return base
-  const start = parseMinute(billing.peak_start)
-  const end = parseMinute(billing.peak_end)
   const minute = minuteInTimeZone(props.now, billing.timezone)
-  const peak = billing.peak_rate_multiplier
-  if (start == null || end == null || minute == null || start >= end || typeof peak !== 'number' || !Number.isFinite(peak) || peak < 0) return null
-  const value = minute >= start && minute < end ? base * peak : base
+  const factor = (enabled: boolean | undefined, from: string | undefined, to: string | undefined, multiplier: number | undefined) => {
+    if (!enabled) return 1
+    const start = parseMinute(from), end = parseMinute(to)
+    if (start == null || end == null || minute == null || start === end || typeof multiplier !== 'number' || !Number.isFinite(multiplier) || multiplier < 0) return null
+    const inside = start < end ? minute >= start && minute < end : minute >= start || minute < end
+    return inside ? multiplier : 1
+  }
+  const peak = factor(billing.peak_rate_enabled, billing.peak_start, billing.peak_end, billing.peak_rate_multiplier)
+  const night = factor(billing.night_rate_enabled, billing.night_start, billing.night_end, billing.night_rate_multiplier)
+  if (peak == null || night == null) return null
+  const value = base * peak * night
   return Number.isFinite(value) ? value : null
 })
 const lastDetectedRate = computed(() => {

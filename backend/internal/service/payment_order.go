@@ -13,6 +13,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
+	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/payment/provider"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -143,6 +144,13 @@ func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRe
 	if err != nil || !plan.ForSale || plan.IsHistorical {
 		return nil, infraerrors.NotFound("PLAN_NOT_AVAILABLE", "plan not found or not for sale")
 	}
+	if !plan.SaleAvailable {
+		return nil, infraerrors.BadRequest("PLAN_NOT_AVAILABLE", "plan is outside its sale period")
+	}
+	plan.Price = plan.CurrentPrice
+	if req.Amount > 0 && math.Abs(req.Amount-plan.Price) > 0.000001 {
+		return nil, infraerrors.Conflict("PLAN_PRICE_CHANGED", "plan price changed; refresh and confirm the new price")
+	}
 	return plan, nil
 }
 
@@ -152,6 +160,26 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if plan != nil {
+		catalog, err := tx.SubscriptionPlan.Query().Where(subscriptionplan.IDEQ(plan.ID)).ForUpdate().Only(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if catalog.PublishedVersionID == nil || *catalog.PublishedVersionID != plan.PublishedVersionID {
+			return nil, infraerrors.Conflict("PLAN_PRICE_CHANGED", "plan changed; refresh before purchasing")
+		}
+		version, err := tx.SubscriptionPlanVersion.Get(ctx, plan.PublishedVersionID)
+		if err != nil {
+			return nil, err
+		}
+		current := subscriptionPlanFromEntities(catalog, version)
+		if !current.SaleAvailable {
+			return nil, infraerrors.BadRequest("PLAN_NOT_AVAILABLE", "plan is outside its sale period")
+		}
+		if math.Abs(current.CurrentPrice-plan.Price) > 0.000001 {
+			return nil, infraerrors.Conflict("PLAN_PRICE_CHANGED", "plan price changed; refresh and confirm the new price")
+		}
+	}
 	if err := s.checkPendingLimit(ctx, tx, req.UserID, cfg.MaxPendingOrders); err != nil {
 		return nil, err
 	}
@@ -163,6 +191,9 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 		tm = defaultOrderTimeoutMin
 	}
 	exp := time.Now().Add(time.Duration(tm) * time.Minute)
+	if plan != nil && plan.CardMode == "deadline" && plan.DeadlineAt != nil && plan.DeadlineAt.Before(exp) {
+		exp = *plan.DeadlineAt
+	}
 	outTradeNo, err := s.allocateOutTradeNo(ctx, tx)
 	if err != nil {
 		return nil, err
@@ -324,6 +355,10 @@ func subscriptionEntitlementSnapshot(plan *SubscriptionPlan) map[string]any {
 		"daily_limit_usd":   plan.DailyLimitUSD,
 		"weekly_limit_usd":  plan.WeeklyLimitUSD,
 		"monthly_limit_usd": plan.MonthlyLimitUSD,
+		"card_mode":         plan.CardMode,
+		"validity_hours":    plan.ValidityHours,
+		"deadline_at":       plan.DeadlineAt,
+		"total_limit_usd":   plan.TotalLimitUSD,
 	}
 }
 

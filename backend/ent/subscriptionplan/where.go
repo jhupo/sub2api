@@ -425,6 +425,16 @@ func ForSaleNEQ(v bool) predicate.SubscriptionPlan {
 	return predicate.SubscriptionPlan(sql.FieldNEQ(FieldForSale, v))
 }
 
+// SaleScheduleIsNil applies the IsNil predicate on the "sale_schedule" field.
+func SaleScheduleIsNil() predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldIsNull(FieldSaleSchedule))
+}
+
+// SaleScheduleNotNil applies the NotNil predicate on the "sale_schedule" field.
+func SaleScheduleNotNil() predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldNotNull(FieldSaleSchedule))
+}
+
 // IsHistoricalEQ applies the EQ predicate on the "is_historical" field.
 func IsHistoricalEQ(v bool) predicate.SubscriptionPlan {
 	return predicate.SubscriptionPlan(sql.FieldEQ(FieldIsHistorical, v))

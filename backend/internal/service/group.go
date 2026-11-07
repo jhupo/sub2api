@@ -23,13 +23,19 @@ type Group struct {
 	RateMultiplier float64
 	// 高峰时段倍率：peak_rate_enabled 为 true 且当前时刻处于 [PeakStart, PeakEnd) 时，
 	// token 计费倍率额外乘以 PeakRateMultiplier。详见 PeakMultiplierAt。
-	PeakRateEnabled    bool
-	PeakStart          string
-	PeakEnd            string
-	PeakRateMultiplier float64
-	IsExclusive        bool
-	Status             string
-	Hydrated           bool // indicates the group was loaded from a trusted repository source
+	PeakRateEnabled            bool
+	PeakStart                  string
+	PeakEnd                    string
+	PeakRateMultiplier         float64
+	NightRateEnabled           bool
+	NightStart                 string
+	NightEnd                   string
+	NightRateMultiplier        float64
+	CacheReadAdjustmentMode    string
+	CacheReadAdjustmentPercent int
+	IsExclusive                bool
+	Status                     string
+	Hydrated                   bool // indicates the group was loaded from a trusted repository source
 	// DuplicateOperationID is internal persistence metadata used only to recover
 	// an already committed one-click copy. It must never be mapped to API DTOs.
 	DuplicateOperationID string
@@ -276,8 +282,8 @@ func parseMinutes(hhmm string) (int, bool) {
 }
 
 // PeakMultiplierAt 返回指定时刻 now 的高峰因子。
-//   - 未启用 / 未配置 / 配置非法（start>=end 或格式错误） / 非高峰时段 → 返回 1.0（安全降级）
-//   - 区间为左闭右开 [PeakStart, PeakEnd)，仅支持当日区间，不支持跨天（如 22:00-次日02:00）
+//   - 未启用、配置非法或不在时段内时返回 1。
+//   - 区间左闭右开，开始晚于结束表示跨午夜。
 //   - 时刻基于全局系统时区（timezone.Location）判定
 //
 // 该方法是纯函数，不读取任何外部状态，便于单测。
@@ -287,19 +293,19 @@ func (g *Group) PeakMultiplierAt(now time.Time) float64 {
 	}
 	start, ok1 := parseMinutes(g.PeakStart)
 	end, ok2 := parseMinutes(g.PeakEnd)
-	if !ok1 || !ok2 || start >= end {
+	if !ok1 || !ok2 || start == end {
 		return 1.0
 	}
 	t := now.In(timezone.Location())
 	cur := t.Hour()*60 + t.Minute()
-	if cur >= start && cur < end {
+	if minuteInRateWindow(cur, start, end) {
 		return g.PeakRateMultiplier
 	}
 	return 1.0
 }
 
 // ValidatePeakRateConfig 是高峰倍率配置的唯一校验来源，供 handler 与 service 层共用。
-// enabled=true 时要求 start/end 合法且 end>start（不支持跨天），multiplier>=0。
+// enabled=true 时要求 start/end 合法且不相同，开始晚于结束表示跨午夜，multiplier>=0。
 // multiplier=0 是允许的，表示高峰 token 请求按 0 倍计费，可用于折扣/免费策略。
 // enabled=false 时放行。
 func ValidatePeakRateConfig(enabled bool, start, end string, multiplier float64) error {
@@ -317,10 +323,10 @@ func ValidatePeakRateConfig(enabled bool, start, end string, multiplier float64)
 	if !okEnd {
 		return fmt.Errorf("peak_end 格式应为 HH:MM，got %q", end)
 	}
-	if st >= en {
-		return errors.New("peak_end 必须大于 peak_start（不支持跨天区间，如 22:00-02:00）")
+	if st == en {
+		return errors.New("时段开始与结束不能相同")
 	}
-	if multiplier < 0 {
+	if multiplier < 0 || math.IsNaN(multiplier) || math.IsInf(multiplier, 0) {
 		return errors.New("peak_rate_multiplier 不能为负")
 	}
 	return nil
@@ -355,10 +361,63 @@ func computePeakAwareMultipliers(apiKey *APIKey, base float64, now time.Time) (t
 	image = resolveImageRateMultiplier(apiKey, base)
 	peak := 1.0
 	if apiKey != nil && apiKey.Group != nil {
-		peak = apiKey.Group.PeakMultiplierAt(now)
+		peak = apiKey.Group.TimeRateMultiplierAt(now)
 	}
 	text = base * peak
 	return
+}
+
+func minuteInRateWindow(minute, start, end int) bool {
+	if start < end {
+		return minute >= start && minute < end
+	}
+	return minute >= start || minute < end
+}
+
+func (g *Group) NightMultiplierAt(now time.Time) float64 {
+	if g == nil || !g.NightRateEnabled {
+		return 1
+	}
+	start, okStart := parseMinutes(g.NightStart)
+	end, okEnd := parseMinutes(g.NightEnd)
+	local := now.In(timezone.Location())
+	if !okStart || !okEnd || start == end || !minuteInRateWindow(local.Hour()*60+local.Minute(), start, end) {
+		return 1
+	}
+	return g.NightRateMultiplier
+}
+
+func (g *Group) TimeRateMultiplierAt(now time.Time) float64 {
+	return g.PeakMultiplierAt(now) * g.NightMultiplierAt(now)
+}
+
+func ValidateGroupTimeRates(g *Group) error {
+	if err := ValidatePeakRateConfig(g.PeakRateEnabled, g.PeakStart, g.PeakEnd, g.PeakRateMultiplier); err != nil {
+		return err
+	}
+	if err := ValidatePeakRateConfig(g.NightRateEnabled, g.NightStart, g.NightEnd, g.NightRateMultiplier); err != nil {
+		return fmt.Errorf("夜间倍率: %w", err)
+	}
+	if g.PeakRateEnabled && g.NightRateEnabled {
+		ps, _ := parseMinutes(g.PeakStart)
+		pe, _ := parseMinutes(g.PeakEnd)
+		ns, _ := parseMinutes(g.NightStart)
+		ne, _ := parseMinutes(g.NightEnd)
+		for minute := 0; minute < 24*60; minute++ {
+			if minuteInRateWindow(minute, ps, pe) && minuteInRateWindow(minute, ns, ne) {
+				return errors.New("高峰时段与夜间时段不能重叠")
+			}
+		}
+	}
+	switch g.CacheReadAdjustmentMode {
+	case "", "inherit", "custom", "disabled":
+	default:
+		return errors.New("缓存调整模式必须为 inherit、custom 或 disabled")
+	}
+	if g.CacheReadAdjustmentPercent < 0 || g.CacheReadAdjustmentPercent > 100 {
+		return errors.New("缓存调整比例必须在 0 到 100 之间")
+	}
+	return nil
 }
 
 // validProfitControlRatio 判定 margin/buffer 是否为可落库的合法小数：[0,1) 且非 NaN/Inf。

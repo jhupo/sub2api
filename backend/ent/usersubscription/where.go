@@ -85,6 +85,26 @@ func PlanVersionID(v int64) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldEQ(FieldPlanVersionID, v))
 }
 
+// IsQuotaCard applies equality check predicate on the "is_quota_card" field. It's identical to IsQuotaCardEQ.
+func IsQuotaCard(v bool) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldIsQuotaCard, v))
+}
+
+// RenewalCount applies equality check predicate on the "renewal_count" field. It's identical to RenewalCountEQ.
+func RenewalCount(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldRenewalCount, v))
+}
+
+// TotalUsageUsd applies equality check predicate on the "total_usage_usd" field. It's identical to TotalUsageUsdEQ.
+func TotalUsageUsd(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldTotalUsageUsd, v))
+}
+
+// TotalReservedUsd applies equality check predicate on the "total_reserved_usd" field. It's identical to TotalReservedUsdEQ.
+func TotalReservedUsd(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldTotalReservedUsd, v))
+}
+
 // StartsAt applies equality check predicate on the "starts_at" field. It's identical to StartsAtEQ.
 func StartsAt(v time.Time) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldEQ(FieldStartsAt, v))
@@ -348,6 +368,136 @@ func PlanVersionIDIn(vs ...int64) predicate.UserSubscription {
 // PlanVersionIDNotIn applies the NotIn predicate on the "plan_version_id" field.
 func PlanVersionIDNotIn(vs ...int64) predicate.UserSubscription {
 	return predicate.UserSubscription(sql.FieldNotIn(FieldPlanVersionID, vs...))
+}
+
+// IsQuotaCardEQ applies the EQ predicate on the "is_quota_card" field.
+func IsQuotaCardEQ(v bool) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldIsQuotaCard, v))
+}
+
+// IsQuotaCardNEQ applies the NEQ predicate on the "is_quota_card" field.
+func IsQuotaCardNEQ(v bool) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNEQ(FieldIsQuotaCard, v))
+}
+
+// RenewalCountEQ applies the EQ predicate on the "renewal_count" field.
+func RenewalCountEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldRenewalCount, v))
+}
+
+// RenewalCountNEQ applies the NEQ predicate on the "renewal_count" field.
+func RenewalCountNEQ(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNEQ(FieldRenewalCount, v))
+}
+
+// RenewalCountIn applies the In predicate on the "renewal_count" field.
+func RenewalCountIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldIn(FieldRenewalCount, vs...))
+}
+
+// RenewalCountNotIn applies the NotIn predicate on the "renewal_count" field.
+func RenewalCountNotIn(vs ...int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNotIn(FieldRenewalCount, vs...))
+}
+
+// RenewalCountGT applies the GT predicate on the "renewal_count" field.
+func RenewalCountGT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGT(FieldRenewalCount, v))
+}
+
+// RenewalCountGTE applies the GTE predicate on the "renewal_count" field.
+func RenewalCountGTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGTE(FieldRenewalCount, v))
+}
+
+// RenewalCountLT applies the LT predicate on the "renewal_count" field.
+func RenewalCountLT(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLT(FieldRenewalCount, v))
+}
+
+// RenewalCountLTE applies the LTE predicate on the "renewal_count" field.
+func RenewalCountLTE(v int) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLTE(FieldRenewalCount, v))
+}
+
+// TotalUsageUsdEQ applies the EQ predicate on the "total_usage_usd" field.
+func TotalUsageUsdEQ(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldTotalUsageUsd, v))
+}
+
+// TotalUsageUsdNEQ applies the NEQ predicate on the "total_usage_usd" field.
+func TotalUsageUsdNEQ(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNEQ(FieldTotalUsageUsd, v))
+}
+
+// TotalUsageUsdIn applies the In predicate on the "total_usage_usd" field.
+func TotalUsageUsdIn(vs ...float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldIn(FieldTotalUsageUsd, vs...))
+}
+
+// TotalUsageUsdNotIn applies the NotIn predicate on the "total_usage_usd" field.
+func TotalUsageUsdNotIn(vs ...float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNotIn(FieldTotalUsageUsd, vs...))
+}
+
+// TotalUsageUsdGT applies the GT predicate on the "total_usage_usd" field.
+func TotalUsageUsdGT(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGT(FieldTotalUsageUsd, v))
+}
+
+// TotalUsageUsdGTE applies the GTE predicate on the "total_usage_usd" field.
+func TotalUsageUsdGTE(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGTE(FieldTotalUsageUsd, v))
+}
+
+// TotalUsageUsdLT applies the LT predicate on the "total_usage_usd" field.
+func TotalUsageUsdLT(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLT(FieldTotalUsageUsd, v))
+}
+
+// TotalUsageUsdLTE applies the LTE predicate on the "total_usage_usd" field.
+func TotalUsageUsdLTE(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLTE(FieldTotalUsageUsd, v))
+}
+
+// TotalReservedUsdEQ applies the EQ predicate on the "total_reserved_usd" field.
+func TotalReservedUsdEQ(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldEQ(FieldTotalReservedUsd, v))
+}
+
+// TotalReservedUsdNEQ applies the NEQ predicate on the "total_reserved_usd" field.
+func TotalReservedUsdNEQ(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNEQ(FieldTotalReservedUsd, v))
+}
+
+// TotalReservedUsdIn applies the In predicate on the "total_reserved_usd" field.
+func TotalReservedUsdIn(vs ...float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldIn(FieldTotalReservedUsd, vs...))
+}
+
+// TotalReservedUsdNotIn applies the NotIn predicate on the "total_reserved_usd" field.
+func TotalReservedUsdNotIn(vs ...float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldNotIn(FieldTotalReservedUsd, vs...))
+}
+
+// TotalReservedUsdGT applies the GT predicate on the "total_reserved_usd" field.
+func TotalReservedUsdGT(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGT(FieldTotalReservedUsd, v))
+}
+
+// TotalReservedUsdGTE applies the GTE predicate on the "total_reserved_usd" field.
+func TotalReservedUsdGTE(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldGTE(FieldTotalReservedUsd, v))
+}
+
+// TotalReservedUsdLT applies the LT predicate on the "total_reserved_usd" field.
+func TotalReservedUsdLT(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLT(FieldTotalReservedUsd, v))
+}
+
+// TotalReservedUsdLTE applies the LTE predicate on the "total_reserved_usd" field.
+func TotalReservedUsdLTE(v float64) predicate.UserSubscription {
+	return predicate.UserSubscription(sql.FieldLTE(FieldTotalReservedUsd, v))
 }
 
 // StartsAtEQ applies the EQ predicate on the "starts_at" field.

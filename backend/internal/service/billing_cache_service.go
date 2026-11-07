@@ -838,6 +838,9 @@ func (s *BillingCacheService) checkSubscriptionEligibility(subscription *UserSub
 	if subscription == nil || subscription.Plan == nil || !subscription.IsActive() {
 		return ErrSubscriptionInvalid
 	}
+	if subscription.Plan.TotalLimitUSD != nil && subscription.TotalUsageUSD+subscription.TotalReservedUSD >= *subscription.Plan.TotalLimitUSD {
+		return ErrTotalLimitExceeded
+	}
 	if !subscription.CheckDailyLimit(0) {
 		return ErrDailyLimitExceeded
 	}

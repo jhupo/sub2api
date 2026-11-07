@@ -61,6 +61,13 @@
                 {{ t(`userSubscriptions.status.${subscription.status}`) }}
               </span>
               <button
+                v-if="subscription.can_self_revoke"
+                type="button"
+                class="btn btn-secondary text-xs"
+                :disabled="revoking"
+                @click="revokeTarget = subscription"
+              >{{ t('quotaFeatures.relinquish') }}</button>
+              <button
                 v-if="subscription.status === 'active'"
                 class="rounded px-3 py-1.5 text-xs font-semibold text-white transition-colors bg-primary-600 hover:bg-primary-700"
                 @click="router.push({ path: '/purchase', query: { tab: 'subscription', plan: String(subscription.plan_id) } })"
@@ -88,6 +95,15 @@
               <span class="text-gray-700 dark:text-gray-300">{{
                 t('userSubscriptions.noExpiration')
               }}</span>
+            </div>
+
+            <div v-if="subscription.plan?.total_limit_usd != null" class="space-y-2">
+              <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span>{{ t('quotaFeatures.totalLimit') }}</span>
+                <span>${{ allowanceConsumed(subscription.total_usage_usd ?? 0, subscription.total_reserved_usd ?? 0).toFixed(2) }} / ${{ subscription.plan.total_limit_usd.toFixed(2) }}</span>
+              </div>
+              <div class="h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600"><div class="h-full bg-primary-500" :style="{ width: getProgressWidth(allowanceConsumed(subscription.total_usage_usd ?? 0, subscription.total_reserved_usd ?? 0), subscription.plan.total_limit_usd) }" /></div>
+              <p v-if="subscription.total_reserved_usd" class="text-xs text-gray-500">{{ t('userSubscriptions.reserved', { amount: subscription.total_reserved_usd.toFixed(2) }) }}</p>
             </div>
 
             <!-- Daily Usage -->
@@ -223,7 +239,8 @@
               v-if="
                 subscription.plan?.daily_limit_usd == null &&
                 subscription.plan?.weekly_limit_usd == null &&
-                subscription.plan?.monthly_limit_usd == null
+                subscription.plan?.monthly_limit_usd == null &&
+                subscription.plan?.total_limit_usd == null
               "
               class="flex items-center justify-center rounded-lg bg-emerald-50 py-6 dark:bg-emerald-900/20"
             >
@@ -243,6 +260,7 @@
         </div>
       </div>
     </div>
+    <ConfirmDialog :show="!!revokeTarget" :title="t('quotaFeatures.relinquishTitle')" :message="t('quotaFeatures.relinquishConfirm')" danger @confirm="relinquish" @cancel="revokeTarget = null" />
   </AppLayout>
 </template>
 
@@ -255,6 +273,8 @@ import subscriptionsAPI from '@/api/subscriptions'
 import type { UserSubscription } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatDateTimeToMinute } from '@/utils/format'
 import {
   getExpirationDateRelation,
@@ -269,6 +289,21 @@ const appStore = useAppStore()
 
 const subscriptions = ref<UserSubscription[]>([])
 const loading = ref(true)
+const revokeTarget = ref<UserSubscription | null>(null)
+const revoking = ref(false)
+
+async function relinquish() {
+  if (!revokeTarget.value || revoking.value) return
+  revoking.value = true
+  try {
+    await subscriptionsAPI.selfRevoke(revokeTarget.value.id)
+    revokeTarget.value = null
+    appStore.showSuccess(t('quotaFeatures.relinquished'))
+    await loadSubscriptions()
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, t('common.error')))
+  } finally { revoking.value = false }
+}
 
 async function loadSubscriptions() {
   try {

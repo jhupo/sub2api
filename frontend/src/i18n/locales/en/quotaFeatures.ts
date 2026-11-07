@@ -1,0 +1,16 @@
+export default {
+  saleSchedule: 'Sale Schedule', saleEnd: 'Sale Ends At', defaultSaleEnd: 'Defaults to the card deadline',
+  priceSteps: 'Scheduled Prices', effectiveAt: 'Effective At', dailySaleWindows: 'Daily Sale Windows',
+  saleCountdown: 'Sale Ends In', offSale: 'No longer on sale', countdownDays: '{days}d', priceChanged: 'The plan price has changed. Please confirm the updated price.',
+  nightRate: 'Night',
+  nightEnabled: 'Enable night multiplier',
+  start: 'Start time', end: 'End time', nextDay: 'next day', multiplier: 'Multiplier',
+  cacheMode: 'Cache read usage adjustment', cacheInherit: 'Use account rules', cacheCustom: 'Use group percentage', cacheDisabled: 'Disable for this group', cachePercent: 'Cache read to regular input (%)',
+  cardMode: 'Allowance type', recurringPlan: 'Recurring subscription', hoursCard: 'Hourly quota card', deadlineCard: 'Fixed deadline quota card',
+  totalLimit: 'Total allowance', validityHours: 'Valid hours', hours: ' hours', deadline: 'Deadline',
+  priority: 'Payment priority', addCard: 'Add quota card or subscription', remove: 'Remove', moveUp: 'Move up', moveDown: 'Move down',
+  walletFallback: 'Allow wallet payment when all selected cards are unavailable',
+  relinquish: 'Relinquish remaining term', relinquishTitle: 'Relinquish subscription',
+  relinquishConfirm: 'The remaining term and allowance will be permanently forfeited without a refund. API keys using this subscription will be paused until you choose a new payment source and enable them. Continue?',
+  relinquished: 'Subscription relinquished. You can purchase again.',
+}

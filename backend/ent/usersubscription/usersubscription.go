@@ -27,6 +27,14 @@ const (
 	FieldPlanID = "plan_id"
 	// FieldPlanVersionID holds the string denoting the plan_version_id field in the database.
 	FieldPlanVersionID = "plan_version_id"
+	// FieldIsQuotaCard holds the string denoting the is_quota_card field in the database.
+	FieldIsQuotaCard = "is_quota_card"
+	// FieldRenewalCount holds the string denoting the renewal_count field in the database.
+	FieldRenewalCount = "renewal_count"
+	// FieldTotalUsageUsd holds the string denoting the total_usage_usd field in the database.
+	FieldTotalUsageUsd = "total_usage_usd"
+	// FieldTotalReservedUsd holds the string denoting the total_reserved_usd field in the database.
+	FieldTotalReservedUsd = "total_reserved_usd"
 	// FieldStartsAt holds the string denoting the starts_at field in the database.
 	FieldStartsAt = "starts_at"
 	// FieldExpiresAt holds the string denoting the expires_at field in the database.
@@ -124,6 +132,10 @@ var Columns = []string{
 	FieldUserID,
 	FieldPlanID,
 	FieldPlanVersionID,
+	FieldIsQuotaCard,
+	FieldRenewalCount,
+	FieldTotalUsageUsd,
+	FieldTotalReservedUsd,
 	FieldStartsAt,
 	FieldExpiresAt,
 	FieldStatus,
@@ -165,6 +177,14 @@ var (
 	DefaultUpdatedAt func() time.Time
 	// UpdateDefaultUpdatedAt holds the default value on update for the "updated_at" field.
 	UpdateDefaultUpdatedAt func() time.Time
+	// DefaultIsQuotaCard holds the default value on creation for the "is_quota_card" field.
+	DefaultIsQuotaCard bool
+	// DefaultRenewalCount holds the default value on creation for the "renewal_count" field.
+	DefaultRenewalCount int
+	// DefaultTotalUsageUsd holds the default value on creation for the "total_usage_usd" field.
+	DefaultTotalUsageUsd float64
+	// DefaultTotalReservedUsd holds the default value on creation for the "total_reserved_usd" field.
+	DefaultTotalReservedUsd float64
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
 	// StatusValidator is a validator for the "status" field. It is called by the builders before save.
@@ -221,6 +241,26 @@ func ByPlanID(opts ...sql.OrderTermOption) OrderOption {
 // ByPlanVersionID orders the results by the plan_version_id field.
 func ByPlanVersionID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPlanVersionID, opts...).ToFunc()
+}
+
+// ByIsQuotaCard orders the results by the is_quota_card field.
+func ByIsQuotaCard(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldIsQuotaCard, opts...).ToFunc()
+}
+
+// ByRenewalCount orders the results by the renewal_count field.
+func ByRenewalCount(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRenewalCount, opts...).ToFunc()
+}
+
+// ByTotalUsageUsd orders the results by the total_usage_usd field.
+func ByTotalUsageUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTotalUsageUsd, opts...).ToFunc()
+}
+
+// ByTotalReservedUsd orders the results by the total_reserved_usd field.
+func ByTotalReservedUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTotalReservedUsd, opts...).ToFunc()
 }
 
 // ByStartsAt orders the results by the starts_at field.

@@ -101,6 +101,83 @@ func (_u *UserSubscriptionUpdate) SetNillablePlanVersionID(v *int64) *UserSubscr
 	return _u
 }
 
+// SetIsQuotaCard sets the "is_quota_card" field.
+func (_u *UserSubscriptionUpdate) SetIsQuotaCard(v bool) *UserSubscriptionUpdate {
+	_u.mutation.SetIsQuotaCard(v)
+	return _u
+}
+
+// SetNillableIsQuotaCard sets the "is_quota_card" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableIsQuotaCard(v *bool) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetIsQuotaCard(*v)
+	}
+	return _u
+}
+
+// SetRenewalCount sets the "renewal_count" field.
+func (_u *UserSubscriptionUpdate) SetRenewalCount(v int) *UserSubscriptionUpdate {
+	_u.mutation.ResetRenewalCount()
+	_u.mutation.SetRenewalCount(v)
+	return _u
+}
+
+// SetNillableRenewalCount sets the "renewal_count" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableRenewalCount(v *int) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetRenewalCount(*v)
+	}
+	return _u
+}
+
+// AddRenewalCount adds value to the "renewal_count" field.
+func (_u *UserSubscriptionUpdate) AddRenewalCount(v int) *UserSubscriptionUpdate {
+	_u.mutation.AddRenewalCount(v)
+	return _u
+}
+
+// SetTotalUsageUsd sets the "total_usage_usd" field.
+func (_u *UserSubscriptionUpdate) SetTotalUsageUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.ResetTotalUsageUsd()
+	_u.mutation.SetTotalUsageUsd(v)
+	return _u
+}
+
+// SetNillableTotalUsageUsd sets the "total_usage_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableTotalUsageUsd(v *float64) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetTotalUsageUsd(*v)
+	}
+	return _u
+}
+
+// AddTotalUsageUsd adds value to the "total_usage_usd" field.
+func (_u *UserSubscriptionUpdate) AddTotalUsageUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.AddTotalUsageUsd(v)
+	return _u
+}
+
+// SetTotalReservedUsd sets the "total_reserved_usd" field.
+func (_u *UserSubscriptionUpdate) SetTotalReservedUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.ResetTotalReservedUsd()
+	_u.mutation.SetTotalReservedUsd(v)
+	return _u
+}
+
+// SetNillableTotalReservedUsd sets the "total_reserved_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdate) SetNillableTotalReservedUsd(v *float64) *UserSubscriptionUpdate {
+	if v != nil {
+		_u.SetTotalReservedUsd(*v)
+	}
+	return _u
+}
+
+// AddTotalReservedUsd adds value to the "total_reserved_usd" field.
+func (_u *UserSubscriptionUpdate) AddTotalReservedUsd(v float64) *UserSubscriptionUpdate {
+	_u.mutation.AddTotalReservedUsd(v)
+	return _u
+}
+
 // SetStartsAt sets the "starts_at" field.
 func (_u *UserSubscriptionUpdate) SetStartsAt(v time.Time) *UserSubscriptionUpdate {
 	_u.mutation.SetStartsAt(v)
@@ -600,6 +677,27 @@ func (_u *UserSubscriptionUpdate) sqlSave(ctx context.Context) (_node int, err e
 	if _u.mutation.DeletedAtCleared() {
 		_spec.ClearField(usersubscription.FieldDeletedAt, field.TypeTime)
 	}
+	if value, ok := _u.mutation.IsQuotaCard(); ok {
+		_spec.SetField(usersubscription.FieldIsQuotaCard, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.RenewalCount(); ok {
+		_spec.SetField(usersubscription.FieldRenewalCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedRenewalCount(); ok {
+		_spec.AddField(usersubscription.FieldRenewalCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.TotalUsageUsd(); ok {
+		_spec.SetField(usersubscription.FieldTotalUsageUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedTotalUsageUsd(); ok {
+		_spec.AddField(usersubscription.FieldTotalUsageUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.TotalReservedUsd(); ok {
+		_spec.SetField(usersubscription.FieldTotalReservedUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedTotalReservedUsd(); ok {
+		_spec.AddField(usersubscription.FieldTotalReservedUsd, field.TypeFloat64, value)
+	}
 	if value, ok := _u.mutation.StartsAt(); ok {
 		_spec.SetField(usersubscription.FieldStartsAt, field.TypeTime, value)
 	}
@@ -963,6 +1061,83 @@ func (_u *UserSubscriptionUpdateOne) SetNillablePlanVersionID(v *int64) *UserSub
 	if v != nil {
 		_u.SetPlanVersionID(*v)
 	}
+	return _u
+}
+
+// SetIsQuotaCard sets the "is_quota_card" field.
+func (_u *UserSubscriptionUpdateOne) SetIsQuotaCard(v bool) *UserSubscriptionUpdateOne {
+	_u.mutation.SetIsQuotaCard(v)
+	return _u
+}
+
+// SetNillableIsQuotaCard sets the "is_quota_card" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableIsQuotaCard(v *bool) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetIsQuotaCard(*v)
+	}
+	return _u
+}
+
+// SetRenewalCount sets the "renewal_count" field.
+func (_u *UserSubscriptionUpdateOne) SetRenewalCount(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetRenewalCount()
+	_u.mutation.SetRenewalCount(v)
+	return _u
+}
+
+// SetNillableRenewalCount sets the "renewal_count" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableRenewalCount(v *int) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetRenewalCount(*v)
+	}
+	return _u
+}
+
+// AddRenewalCount adds value to the "renewal_count" field.
+func (_u *UserSubscriptionUpdateOne) AddRenewalCount(v int) *UserSubscriptionUpdateOne {
+	_u.mutation.AddRenewalCount(v)
+	return _u
+}
+
+// SetTotalUsageUsd sets the "total_usage_usd" field.
+func (_u *UserSubscriptionUpdateOne) SetTotalUsageUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetTotalUsageUsd()
+	_u.mutation.SetTotalUsageUsd(v)
+	return _u
+}
+
+// SetNillableTotalUsageUsd sets the "total_usage_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableTotalUsageUsd(v *float64) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetTotalUsageUsd(*v)
+	}
+	return _u
+}
+
+// AddTotalUsageUsd adds value to the "total_usage_usd" field.
+func (_u *UserSubscriptionUpdateOne) AddTotalUsageUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.AddTotalUsageUsd(v)
+	return _u
+}
+
+// SetTotalReservedUsd sets the "total_reserved_usd" field.
+func (_u *UserSubscriptionUpdateOne) SetTotalReservedUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.ResetTotalReservedUsd()
+	_u.mutation.SetTotalReservedUsd(v)
+	return _u
+}
+
+// SetNillableTotalReservedUsd sets the "total_reserved_usd" field if the given value is not nil.
+func (_u *UserSubscriptionUpdateOne) SetNillableTotalReservedUsd(v *float64) *UserSubscriptionUpdateOne {
+	if v != nil {
+		_u.SetTotalReservedUsd(*v)
+	}
+	return _u
+}
+
+// AddTotalReservedUsd adds value to the "total_reserved_usd" field.
+func (_u *UserSubscriptionUpdateOne) AddTotalReservedUsd(v float64) *UserSubscriptionUpdateOne {
+	_u.mutation.AddTotalReservedUsd(v)
 	return _u
 }
 
@@ -1494,6 +1669,27 @@ func (_u *UserSubscriptionUpdateOne) sqlSave(ctx context.Context) (_node *UserSu
 	}
 	if _u.mutation.DeletedAtCleared() {
 		_spec.ClearField(usersubscription.FieldDeletedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.IsQuotaCard(); ok {
+		_spec.SetField(usersubscription.FieldIsQuotaCard, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.RenewalCount(); ok {
+		_spec.SetField(usersubscription.FieldRenewalCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedRenewalCount(); ok {
+		_spec.AddField(usersubscription.FieldRenewalCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.TotalUsageUsd(); ok {
+		_spec.SetField(usersubscription.FieldTotalUsageUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedTotalUsageUsd(); ok {
+		_spec.AddField(usersubscription.FieldTotalUsageUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.TotalReservedUsd(); ok {
+		_spec.SetField(usersubscription.FieldTotalReservedUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedTotalReservedUsd(); ok {
+		_spec.AddField(usersubscription.FieldTotalReservedUsd, field.TypeFloat64, value)
 	}
 	if value, ok := _u.mutation.StartsAt(); ok {
 		_spec.SetField(usersubscription.FieldStartsAt, field.TypeTime, value)

@@ -151,6 +151,10 @@
                   :peak-start="row.group.peak_start"
                   :peak-end="row.group.peak_end"
                   :peak-rate-multiplier="row.group.peak_rate_multiplier"
+                  :night-rate-enabled="row.group.night_rate_enabled"
+                  :night-start="row.group.night_start"
+                  :night-end="row.group.night_end"
+                  :night-rate-multiplier="row.group.night_rate_multiplier"
                 />
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
                   t('keys.noGroup')
@@ -495,6 +499,10 @@
                 :peak-start="(option as unknown as GroupOption).peakStart"
                 :peak-end="(option as unknown as GroupOption).peakEnd"
                 :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
+                :night-rate-enabled="(option as unknown as GroupOption).nightRateEnabled"
+                :night-start="(option as unknown as GroupOption).nightStart"
+                :night-end="(option as unknown as GroupOption).nightEnd"
+                :night-rate-multiplier="(option as unknown as GroupOption).nightRateMultiplier"
               />
               <span v-else class="text-gray-400">{{ t('keys.selectGroup') }}</span>
             </template>
@@ -508,6 +516,10 @@
                 :peak-start="(option as unknown as GroupOption).peakStart"
                 :peak-end="(option as unknown as GroupOption).peakEnd"
                 :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
+                :night-rate-enabled="(option as unknown as GroupOption).nightRateEnabled"
+                :night-start="(option as unknown as GroupOption).nightStart"
+                :night-end="(option as unknown as GroupOption).nightEnd"
+                :night-rate-multiplier="(option as unknown as GroupOption).nightRateMultiplier"
                 :description="(option as unknown as GroupOption).description"
                 :selected="selected"
               />
@@ -522,6 +534,11 @@
             :options="fundingOptions"
             :placeholder="t('keys.selectPayment')"
           />
+        </div>
+
+        <div v-if="formData.funding_source === 'subscription'" class="space-y-3">
+          <FundingPriorityEditor :model-value="formData.subscription_priority" :subscriptions="subscriptionStore.activeSubscriptions" @update:model-value="setFundingPriority" />
+          <label class="flex items-center gap-2 text-sm"><input v-model="formData.allow_wallet_fallback" type="checkbox" class="rounded" />{{ t('quotaFeatures.walletFallback') }}</label>
         </div>
 
         <!-- Custom Key Section (only for create) -->
@@ -1115,6 +1132,10 @@
               :peak-start="option.peakStart"
               :peak-end="option.peakEnd"
               :peak-rate-multiplier="option.peakRateMultiplier"
+              :night-rate-enabled="option.nightRateEnabled"
+              :night-start="option.nightStart"
+              :night-end="option.nightEnd"
+              :night-rate-multiplier="option.nightRateMultiplier"
               :description="option.description"
               :selected="
                 selectedKeyForGroup?.group_id === option.value ||
@@ -1133,6 +1154,7 @@
 </template>
 
 <script setup lang="ts">
+import FundingPriorityEditor from '@/components/keys/FundingPriorityEditor.vue'
 	import { ref, reactive, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
@@ -1180,6 +1202,10 @@ interface GroupOption {
   description: string | null
   rate: number
   userRate: number | null
+  nightRateEnabled?: boolean
+  nightStart?: string
+  nightEnd?: string
+  nightRateMultiplier?: number
   peakRateEnabled: boolean
   peakStart: string
   peakEnd: string
@@ -1350,6 +1376,8 @@ const formData = ref({
   group_id: null as number | null,
   funding_source: 'wallet' as 'wallet' | 'subscription',
   subscription_id: null as number | null,
+  subscription_priority: [] as number[],
+  allow_wallet_fallback: false,
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
   custom_key: '',
@@ -1423,12 +1451,20 @@ const paymentSelection = computed({
     if (normalized.startsWith('subscription:')) {
       formData.value.funding_source = 'subscription'
       formData.value.subscription_id = Number(normalized.slice('subscription:'.length))
+      formData.value.subscription_priority = [formData.value.subscription_id]
       return
     }
     formData.value.funding_source = 'wallet'
     formData.value.subscription_id = null
+    formData.value.subscription_priority = []
+    formData.value.allow_wallet_fallback = false
   }
 })
+
+function setFundingPriority(ids: number[]) {
+  formData.value.subscription_priority = ids
+  formData.value.subscription_id = ids[0] ?? null
+}
 
 const shouldSubmitEditStatus = (key: ApiKey, status: 'active' | 'inactive') => {
   if (key.status === 'quota_exhausted' || key.status === 'expired') {
@@ -1475,6 +1511,10 @@ const groupOptions = computed(() =>
     description: group.description,
     rate: group.rate_multiplier,
     userRate: userGroupRates.value[group.id] ?? null,
+    nightRateEnabled: group.night_rate_enabled,
+    nightStart: group.night_start,
+    nightEnd: group.night_end,
+    nightRateMultiplier: group.night_rate_multiplier,
     peakRateEnabled: group.peak_rate_enabled,
     peakStart: group.peak_start,
     peakEnd: group.peak_end,
@@ -1625,6 +1665,8 @@ const editKey = (key: ApiKey) => {
     group_id: key.group_id,
     funding_source: key.funding_source,
     subscription_id: key.subscription_id,
+    subscription_priority: key.subscription_priority?.length ? [...key.subscription_priority] : key.subscription_id ? [key.subscription_id] : [],
+    allow_wallet_fallback: key.allow_wallet_fallback ?? false,
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
     custom_key: '',
@@ -1804,6 +1846,8 @@ const handleSubmit = async () => {
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
       }
+      updates.subscription_priority = formData.value.subscription_priority
+      updates.allow_wallet_fallback = formData.value.allow_wallet_fallback
       await keysAPI.update(selectedKey.value.id, updates)
       appStore.showSuccess(t('keys.keyUpdatedSuccess'))
     } else {
@@ -1818,7 +1862,8 @@ const handleSubmit = async () => {
         ipBlacklist,
         quota,
         expiresInDays,
-        rateLimitData
+        rateLimitData,
+        { subscription_priority: formData.value.subscription_priority, allow_wallet_fallback: formData.value.allow_wallet_fallback }
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -1866,6 +1911,8 @@ const closeModals = () => {
     group_id: null,
     funding_source: 'wallet',
     subscription_id: null,
+    subscription_priority: [],
+    allow_wallet_fallback: false,
     status: 'active',
     use_custom_key: false,
     custom_key: '',

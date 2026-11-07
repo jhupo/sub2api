@@ -22,6 +22,8 @@ var MaxExpiresAt = time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC)
 
 const MaxValidityDays = 36500
 
+var ErrTotalLimitExceeded = infraerrors.TooManyRequests("TOTAL_LIMIT_EXCEEDED", "quota card total allowance exhausted")
+
 var (
 	ErrSubscriptionNotFound        = infraerrors.NotFound("SUBSCRIPTION_NOT_FOUND", "subscription not found")
 	ErrSubscriptionExpired         = infraerrors.Forbidden("SUBSCRIPTION_EXPIRED", "subscription has expired")
@@ -125,6 +127,18 @@ func normalizedSubscriptionTerm(input *AssignSubscriptionInput, plan *Subscripti
 		}
 		return startsAt, *input.ExpiresAt, nil
 	}
+	if plan.CardMode == "hours" {
+		if plan.ValidityHours < 1 || plan.ValidityHours > 87600 {
+			return time.Time{}, time.Time{}, infraerrors.BadRequest("INVALID_CARD_HOURS", "invalid quota card duration")
+		}
+		return startsAt, startsAt.Add(time.Duration(plan.ValidityHours) * time.Hour), nil
+	}
+	if plan.CardMode == "deadline" {
+		if plan.DeadlineAt == nil || !plan.DeadlineAt.After(startsAt) {
+			return time.Time{}, time.Time{}, infraerrors.BadRequest("CARD_EXPIRED", "quota card deadline has passed")
+		}
+		return startsAt, *plan.DeadlineAt, nil
+	}
 	days := input.ValidityDays
 	if days <= 0 {
 		days = psComputeValidityDays(plan.ValidityDays, plan.ValidityUnit)
@@ -197,14 +211,18 @@ func (s *SubscriptionService) assignOrExtendSubscriptionInTx(ctx context.Context
 	if err != nil {
 		return nil, false, err
 	}
-	existing, err := s.userSubRepo.GetByUserIDAndPlanVersionID(ctx, input.UserID, plan.PublishedVersionID)
+	var existing *UserSubscription
+	if plan.CardMode == "" {
+		existing, err = s.userSubRepo.GetByUserIDAndPlanVersionID(ctx, input.UserID, plan.PublishedVersionID)
+	}
 	if err != nil && !errors.Is(err, ErrSubscriptionNotFound) {
 		return nil, false, err
 	}
 	if existing == nil || errors.Is(err, ErrSubscriptionNotFound) {
 		sub := &UserSubscription{
 			UserID: input.UserID, PlanID: plan.ID, PlanVersionID: plan.PublishedVersionID,
-			StartsAt: startsAt, ExpiresAt: expiresAt, Status: SubscriptionStatusActive,
+			IsQuotaCard: plan.CardMode != "",
+			StartsAt:    startsAt, ExpiresAt: expiresAt, Status: SubscriptionStatusActive,
 			AssignedBy: input.AssignedBy, AssignedAt: now, Notes: input.Notes, Plan: plan,
 		}
 		if err := s.userSubRepo.Create(ctx, sub); err != nil {
@@ -220,16 +238,19 @@ func (s *SubscriptionService) assignOrExtendSubscriptionInTx(ctx context.Context
 	// version creates a separate subscription and leaves prior usage untouched.
 	existing.Plan = plan
 	if existing.ExpiresAt.After(now) {
+		existing.RenewalCount++
 		duration := expiresAt.Sub(startsAt)
 		existing.ExpiresAt = existing.ExpiresAt.Add(duration)
 	} else {
 		existing.StartsAt = startsAt
+		existing.RenewalCount = 0
 		existing.ExpiresAt = expiresAt
 		existing.DailyWindowStart = nil
 		existing.WeeklyWindowStart = nil
 		existing.MonthlyWindowStart = nil
 		existing.DailyUsageUSD, existing.WeeklyUsageUSD, existing.MonthlyUsageUSD = 0, 0, 0
 		existing.DailyReservedUSD, existing.WeeklyReservedUSD, existing.MonthlyReservedUSD = 0, 0, 0
+		existing.TotalUsageUSD, existing.TotalReservedUSD = 0, 0
 	}
 	existing.Status = SubscriptionStatusActive
 	if strings.TrimSpace(input.Notes) != "" {
@@ -337,12 +358,36 @@ func (s *SubscriptionService) RestoreSubscription(ctx context.Context, id int64)
 }
 
 func (s *SubscriptionService) ExtendSubscription(ctx context.Context, id int64, days int) (*UserSubscription, error) {
+	if s.entClient != nil && dbent.TxFromContext(ctx) == nil {
+		tx, err := s.entClient.Tx(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = tx.Rollback() }()
+		sub, err := s.ExtendSubscription(dbent.NewTxContext(ctx, tx), id, days)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return sub, nil
+	}
 	if days == 0 || math.Abs(float64(days)) > MaxValidityDays {
 		return nil, infraerrors.BadRequest("INVALID_VALIDITY", "extension days are out of range")
 	}
 	sub, err := s.userSubRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if err := lockSubscriptionAssignment(ctx, sub.UserID, sub.PlanVersionID); err != nil {
+		return nil, err
+	}
+	if dbent.TxFromContext(ctx) != nil {
+		sub, err = s.userSubRepo.GetByIDForUpdate(ctx, id)
+		if err != nil {
+			return nil, err
+		}
 	}
 	base := sub.ExpiresAt
 	if days > 0 && base.Before(s.currentTime()) {
@@ -356,6 +401,9 @@ func (s *SubscriptionService) ExtendSubscription(ctx context.Context, id int64, 
 		return nil, ErrAdjustWouldExpire
 	}
 	sub.ExpiresAt = expiresAt
+	if days > 0 {
+		sub.RenewalCount++
+	}
 	if expiresAt.After(s.currentTime()) && sub.Status == SubscriptionStatusExpired {
 		sub.Status = SubscriptionStatusActive
 	}
@@ -507,6 +555,9 @@ func (s *SubscriptionService) CheckUsageLimits(_ context.Context, sub *UserSubsc
 		return ErrSubscriptionNotFound
 	}
 	additional := decimal.NewFromFloat(additionalCost)
+	if !subscriptionWindowAllows(sub.TotalUsageUSD, sub.TotalReservedUSD, sub.Plan.TotalLimitUSD, additional) {
+		return ErrTotalLimitExceeded
+	}
 	if !subscriptionWindowAllows(sub.DailyUsageUSD, sub.DailyReservedUSD, sub.Plan.DailyLimitUSD, additional) {
 		return ErrDailyLimitExceeded
 	}
@@ -524,6 +575,9 @@ func subscriptionWindowAllows(committed, reserved float64, limit *float64, addit
 		return true
 	}
 	used := decimal.NewFromFloat(committed).Add(decimal.NewFromFloat(reserved)).Add(additional)
+	if additional.IsZero() {
+		return used.LessThan(decimal.NewFromFloat(*limit))
+	}
 	return used.LessThanOrEqual(decimal.NewFromFloat(*limit))
 }
 
@@ -543,6 +597,7 @@ func (s *SubscriptionService) ValidateAndCheckLimits(sub *UserSubscription) (boo
 }
 
 type SubscriptionProgress struct {
+	Total         *UsageWindowProgress `json:"total,omitempty"`
 	ID            int64                `json:"id"`
 	PlanName      string               `json:"plan_name"`
 	ExpiresAt     time.Time            `json:"expires_at"`
@@ -587,6 +642,7 @@ func calculateSubscriptionProgressAt(sub *UserSubscription, now time.Time) *Subs
 		return progress
 	}
 	progress.PlanName = sub.Plan.Name
+	progress.Total = buildWindowProgress(sub.Plan.TotalLimitUSD, sub.TotalUsageUSD, sub.TotalReservedUSD, &sub.StartsAt, &sub.ExpiresAt, now)
 	progress.Daily = buildWindowProgress(sub.Plan.DailyLimitUSD, sub.DailyUsageUSD, sub.DailyReservedUSD, sub.DailyWindowStart, sub.DailyResetTime(), now)
 	progress.Weekly = buildWindowProgress(sub.Plan.WeeklyLimitUSD, sub.WeeklyUsageUSD, sub.WeeklyReservedUSD, sub.WeeklyWindowStart, sub.WeeklyResetTime(), now)
 	progress.Monthly = buildWindowProgress(sub.Plan.MonthlyLimitUSD, sub.MonthlyUsageUSD, sub.MonthlyReservedUSD, sub.MonthlyWindowStart, sub.MonthlyResetTime(), now)

@@ -59,6 +59,38 @@ func (_u *APIKeyUpdate) ClearDeletedAt() *APIKeyUpdate {
 	return _u
 }
 
+// SetSubscriptionPriority sets the "subscription_priority" field.
+func (_u *APIKeyUpdate) SetSubscriptionPriority(v []int64) *APIKeyUpdate {
+	_u.mutation.SetSubscriptionPriority(v)
+	return _u
+}
+
+// AppendSubscriptionPriority appends value to the "subscription_priority" field.
+func (_u *APIKeyUpdate) AppendSubscriptionPriority(v []int64) *APIKeyUpdate {
+	_u.mutation.AppendSubscriptionPriority(v)
+	return _u
+}
+
+// ClearSubscriptionPriority clears the value of the "subscription_priority" field.
+func (_u *APIKeyUpdate) ClearSubscriptionPriority() *APIKeyUpdate {
+	_u.mutation.ClearSubscriptionPriority()
+	return _u
+}
+
+// SetAllowWalletFallback sets the "allow_wallet_fallback" field.
+func (_u *APIKeyUpdate) SetAllowWalletFallback(v bool) *APIKeyUpdate {
+	_u.mutation.SetAllowWalletFallback(v)
+	return _u
+}
+
+// SetNillableAllowWalletFallback sets the "allow_wallet_fallback" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableAllowWalletFallback(v *bool) *APIKeyUpdate {
+	if v != nil {
+		_u.SetAllowWalletFallback(*v)
+	}
+	return _u
+}
+
 // SetUserID sets the "user_id" field.
 func (_u *APIKeyUpdate) SetUserID(v int64) *APIKeyUpdate {
 	_u.mutation.SetUserID(v)
@@ -638,6 +670,20 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.DeletedAtCleared() {
 		_spec.ClearField(apikey.FieldDeletedAt, field.TypeTime)
 	}
+	if value, ok := _u.mutation.SubscriptionPriority(); ok {
+		_spec.SetField(apikey.FieldSubscriptionPriority, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedSubscriptionPriority(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, apikey.FieldSubscriptionPriority, value)
+		})
+	}
+	if _u.mutation.SubscriptionPriorityCleared() {
+		_spec.ClearField(apikey.FieldSubscriptionPriority, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.AllowWalletFallback(); ok {
+		_spec.SetField(apikey.FieldAllowWalletFallback, field.TypeBool, value)
+	}
 	if value, ok := _u.mutation.Key(); ok {
 		_spec.SetField(apikey.FieldKey, field.TypeString, value)
 	}
@@ -925,6 +971,38 @@ func (_u *APIKeyUpdateOne) SetNillableDeletedAt(v *time.Time) *APIKeyUpdateOne {
 // ClearDeletedAt clears the value of the "deleted_at" field.
 func (_u *APIKeyUpdateOne) ClearDeletedAt() *APIKeyUpdateOne {
 	_u.mutation.ClearDeletedAt()
+	return _u
+}
+
+// SetSubscriptionPriority sets the "subscription_priority" field.
+func (_u *APIKeyUpdateOne) SetSubscriptionPriority(v []int64) *APIKeyUpdateOne {
+	_u.mutation.SetSubscriptionPriority(v)
+	return _u
+}
+
+// AppendSubscriptionPriority appends value to the "subscription_priority" field.
+func (_u *APIKeyUpdateOne) AppendSubscriptionPriority(v []int64) *APIKeyUpdateOne {
+	_u.mutation.AppendSubscriptionPriority(v)
+	return _u
+}
+
+// ClearSubscriptionPriority clears the value of the "subscription_priority" field.
+func (_u *APIKeyUpdateOne) ClearSubscriptionPriority() *APIKeyUpdateOne {
+	_u.mutation.ClearSubscriptionPriority()
+	return _u
+}
+
+// SetAllowWalletFallback sets the "allow_wallet_fallback" field.
+func (_u *APIKeyUpdateOne) SetAllowWalletFallback(v bool) *APIKeyUpdateOne {
+	_u.mutation.SetAllowWalletFallback(v)
+	return _u
+}
+
+// SetNillableAllowWalletFallback sets the "allow_wallet_fallback" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableAllowWalletFallback(v *bool) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetAllowWalletFallback(*v)
+	}
 	return _u
 }
 
@@ -1536,6 +1614,20 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 	}
 	if _u.mutation.DeletedAtCleared() {
 		_spec.ClearField(apikey.FieldDeletedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.SubscriptionPriority(); ok {
+		_spec.SetField(apikey.FieldSubscriptionPriority, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedSubscriptionPriority(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, apikey.FieldSubscriptionPriority, value)
+		})
+	}
+	if _u.mutation.SubscriptionPriorityCleared() {
+		_spec.ClearField(apikey.FieldSubscriptionPriority, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.AllowWalletFallback(); ok {
+		_spec.SetField(apikey.FieldAllowWalletFallback, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.Key(); ok {
 		_spec.SetField(apikey.FieldKey, field.TypeString, value)

@@ -202,6 +202,23 @@
 
           <template #cell-usage="{ row }">
             <div class="min-w-[280px] space-y-2">
+              <div v-if="row.plan?.total_limit_usd != null" class="usage-row">
+                <div class="flex items-center gap-2">
+                  <span class="usage-label">{{ t('quotaFeatures.totalLimit') }}</span>
+                  <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
+                    <div
+                      class="h-1.5 rounded-full transition-all"
+                      :class="getProgressClass(allowanceConsumed(row.total_usage_usd ?? 0, row.total_reserved_usd ?? 0), row.plan.total_limit_usd)"
+                      :style="{ width: getProgressWidth(allowanceConsumed(row.total_usage_usd ?? 0, row.total_reserved_usd ?? 0), row.plan.total_limit_usd) }"
+                    ></div>
+                  </div>
+                  <span class="usage-amount">
+                    ${{ allowanceConsumed(row.total_usage_usd ?? 0, row.total_reserved_usd ?? 0).toFixed(2) }}
+                    <span class="text-gray-400">/</span>
+                    ${{ row.plan.total_limit_usd.toFixed(2) }}
+                  </span>
+                </div>
+              </div>
               <!-- Daily Usage -->
               <div v-if="row.plan?.daily_limit_usd != null" class="usage-row">
                 <div class="flex items-center gap-2">
@@ -318,7 +335,8 @@
                 v-if="
                   row.plan?.daily_limit_usd == null &&
                   row.plan?.weekly_limit_usd == null &&
-                  row.plan?.monthly_limit_usd == null
+                  row.plan?.monthly_limit_usd == null &&
+                  row.plan?.total_limit_usd == null
                 "
                 class="flex items-center gap-2 rounded-lg bg-gradient-to-r from-emerald-50 to-teal-50 px-3 py-2 dark:from-emerald-900/20 dark:to-teal-900/20"
               >

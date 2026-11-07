@@ -221,6 +221,8 @@ func StreamOutputHoldTopUpFailureDetails(err error) (code, message string, ok bo
 		return "WEEKLY_LIMIT_EXCEEDED", "Weekly subscription usage limit exceeded", true
 	case errors.Is(err, ErrMonthlyLimitExceeded):
 		return "MONTHLY_LIMIT_EXCEEDED", "Monthly subscription usage limit exceeded", true
+	case errors.Is(err, ErrTotalLimitExceeded):
+		return "TOTAL_LIMIT_EXCEEDED", "Quota card total allowance exhausted", true
 	case errors.Is(err, ErrBalanceWithholdingFailed):
 		return "INSUFFICIENT_BALANCE", "Insufficient balance to continue the response", true
 	default:

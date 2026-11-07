@@ -162,6 +162,9 @@ func validateRedeemPlanVersion(ctx context.Context, client *dbent.Client, codeTy
 	if plan.IsHistorical {
 		return infraerrors.BadRequest("REDEEM_CODE_PLAN_HISTORICAL", "historical subscription plans cannot be used for new redeem codes")
 	}
+	if version.CardMode == "deadline" && (version.DeadlineAt == nil || !version.DeadlineAt.After(time.Now())) {
+		return infraerrors.BadRequest("CARD_EXPIRED", "quota card deadline has passed")
+	}
 	return nil
 }
 

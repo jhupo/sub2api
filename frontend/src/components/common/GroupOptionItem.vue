@@ -41,6 +41,7 @@
         >
           {{ peakRateText }}
         </span>
+        <span v-if="nightRateText" class="text-xs text-teal-700 dark:text-teal-300" :title="nightRateText">{{ t('quotaFeatures.nightRate') }} {{ nightRateText }}</span>
       </div>
       <!-- Checkmark -->
       <svg
@@ -72,6 +73,10 @@ interface Props {
   platform: GroupPlatform
   rateMultiplier?: number
   userRateMultiplier?: number | null
+  nightRateEnabled?: boolean
+  nightStart?: string
+  nightEnd?: string
+  nightRateMultiplier?: number
   peakRateEnabled?: boolean
   peakStart?: string
   peakEnd?: string
@@ -115,6 +120,16 @@ const peakRateText = computed(() => {
     serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
   )
 })
+
+const nightRateText = computed(() => formatPeakRateWindow(
+  {
+    peak_rate_enabled: props.nightRateEnabled,
+    peak_start: props.nightStart,
+    peak_end: props.nightEnd,
+    peak_rate_multiplier: props.nightRateMultiplier
+  },
+  serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
+))
 
 const peakRateTitle = computed(() => {
   return t('common.peakRateTooltip', { window: peakRateText.value })

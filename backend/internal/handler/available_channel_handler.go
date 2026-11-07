@@ -51,15 +51,21 @@ func (h *AvailableChannelHandler) featureEnabled(c *gin.Context) bool {
 // 前端据此区分专属 vs 公开分组，并展示默认倍率与高峰倍率规则；用户专属倍率前端走
 // /groups/rates，和 API 密钥页面保持一致。
 type userAvailableGroup struct {
-	ID                 int64   `json:"id"`
-	Name               string  `json:"name"`
-	Platform           string  `json:"platform"`
-	RateMultiplier     float64 `json:"rate_multiplier"`
-	PeakRateEnabled    bool    `json:"peak_rate_enabled"`
-	PeakStart          string  `json:"peak_start"`
-	PeakEnd            string  `json:"peak_end"`
-	PeakRateMultiplier float64 `json:"peak_rate_multiplier"`
-	IsExclusive        bool    `json:"is_exclusive"`
+	ID                         int64   `json:"id"`
+	Name                       string  `json:"name"`
+	Platform                   string  `json:"platform"`
+	RateMultiplier             float64 `json:"rate_multiplier"`
+	PeakRateEnabled            bool    `json:"peak_rate_enabled"`
+	PeakStart                  string  `json:"peak_start"`
+	PeakEnd                    string  `json:"peak_end"`
+	PeakRateMultiplier         float64 `json:"peak_rate_multiplier"`
+	NightRateEnabled           bool    `json:"night_rate_enabled"`
+	NightStart                 string  `json:"night_start"`
+	NightEnd                   string  `json:"night_end"`
+	NightRateMultiplier        float64 `json:"night_rate_multiplier"`
+	CacheReadAdjustmentMode    string  `json:"cache_read_adjustment_mode"`
+	CacheReadAdjustmentPercent int     `json:"cache_read_adjustment_percent"`
+	IsExclusive                bool    `json:"is_exclusive"`
 }
 
 // userSupportedModelPricing 用户可见的定价字段白名单。
@@ -245,15 +251,21 @@ func filterUserVisibleGroups(
 			continue
 		}
 		visible = append(visible, userAvailableGroup{
-			ID:                 g.ID,
-			Name:               g.Name,
-			Platform:           g.Platform,
-			RateMultiplier:     g.RateMultiplier,
-			PeakRateEnabled:    g.PeakRateEnabled,
-			PeakStart:          g.PeakStart,
-			PeakEnd:            g.PeakEnd,
-			PeakRateMultiplier: g.PeakRateMultiplier,
-			IsExclusive:        g.IsExclusive,
+			ID:                         g.ID,
+			Name:                       g.Name,
+			Platform:                   g.Platform,
+			RateMultiplier:             g.RateMultiplier,
+			PeakRateEnabled:            g.PeakRateEnabled,
+			PeakStart:                  g.PeakStart,
+			PeakEnd:                    g.PeakEnd,
+			PeakRateMultiplier:         g.PeakRateMultiplier,
+			NightRateEnabled:           g.NightRateEnabled,
+			NightStart:                 g.NightStart,
+			NightEnd:                   g.NightEnd,
+			NightRateMultiplier:        g.NightRateMultiplier,
+			CacheReadAdjustmentMode:    g.CacheReadAdjustmentMode,
+			CacheReadAdjustmentPercent: g.CacheReadAdjustmentPercent,
+			IsExclusive:                g.IsExclusive,
 		})
 	}
 	return visible

@@ -440,6 +440,12 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		PeakStart:                       peakStart,
 		PeakEnd:                         peakEnd,
 		PeakRateMultiplier:              peakRateMultiplier,
+		NightRateEnabled:                input.NightRateEnabled,
+		NightStart:                      input.NightStart,
+		NightEnd:                        input.NightEnd,
+		NightRateMultiplier:             1,
+		CacheReadAdjustmentMode:         input.CacheReadAdjustmentMode,
+		CacheReadAdjustmentPercent:      input.CacheReadAdjustmentPercent,
 		ProfitControlEnabled:            profitControlEnabled,
 		ProfitMinMargin:                 profitMinMargin,
 		ProfitSafetyBuffer:              profitSafetyBuffer,
@@ -474,6 +480,15 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		MaxReasoningEffort:              maxReasoningEffort,
 		MaxReasoningEffortOverLimit:     maxReasoningEffortOverLimit,
 		ReasoningEffortMappings:         reasoningEffortMappings,
+	}
+	if input.NightRateMultiplier != nil {
+		group.NightRateMultiplier = *input.NightRateMultiplier
+	}
+	if group.CacheReadAdjustmentMode == "" {
+		group.CacheReadAdjustmentMode = "inherit"
+	}
+	if err := ValidateGroupTimeRates(group); err != nil {
+		return nil, err
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
@@ -683,6 +698,27 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.PeakRateMultiplier != nil {
 		group.PeakRateMultiplier = *input.PeakRateMultiplier
+	}
+	if input.NightRateEnabled != nil {
+		group.NightRateEnabled = *input.NightRateEnabled
+	}
+	if input.NightStart != nil {
+		group.NightStart = *input.NightStart
+	}
+	if input.NightEnd != nil {
+		group.NightEnd = *input.NightEnd
+	}
+	if input.NightRateMultiplier != nil {
+		group.NightRateMultiplier = *input.NightRateMultiplier
+	}
+	if input.CacheReadAdjustmentMode != nil {
+		group.CacheReadAdjustmentMode = *input.CacheReadAdjustmentMode
+	}
+	if input.CacheReadAdjustmentPercent != nil {
+		group.CacheReadAdjustmentPercent = *input.CacheReadAdjustmentPercent
+	}
+	if err := ValidateGroupTimeRates(group); err != nil {
+		return nil, err
 	}
 	// 先归一化停用状态下的脏字段，再收敛校验。Update 可能只传部分 peak 字段，需对合并后的最终配置统一校验，
 	// 防止单独修改 start/end 导致最终 start>=end 等非法配置入库。与 CreateGroup 同一收口。

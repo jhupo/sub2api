@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -30,7 +31,11 @@ func refreshOpenAIWSTurnKey(ctx context.Context, reader openAIWSTurnKeyReader, i
 	if key == nil || key.User == nil || key.ID != initial.ID || key.UserID != initial.UserID || key.User.ID != key.UserID || !key.User.IsActive() || !key.IsActive() {
 		return deny("API key or user is no longer active")
 	}
-	if !sameOpenAIWSOptionalID(key.GroupID, initial.GroupID) || key.FundingSource != initial.FundingSource || !sameOpenAIWSOptionalID(key.SubscriptionID, initial.SubscriptionID) {
+	fundingChanged := key.FundingSource != initial.FundingSource || !sameOpenAIWSOptionalID(key.SubscriptionID, initial.SubscriptionID)
+	if len(initial.SubscriptionPriority) > 0 {
+		fundingChanged = key.FundingSource != service.FundingSourceSubscription || !slices.Equal(key.SubscriptionPriority, initial.SubscriptionPriority) || key.AllowWalletFallback != initial.AllowWalletFallback
+	}
+	if !sameOpenAIWSOptionalID(key.GroupID, initial.GroupID) || fundingChanged {
 		return deny("API key routing or payment changed; please reconnect")
 	}
 	if key.GroupID != nil && (key.Group == nil || key.Group.ID != *key.GroupID || !key.Group.IsActive() || !key.User.CanBindGroup(key.Group.ID, key.Group.IsExclusive)) {

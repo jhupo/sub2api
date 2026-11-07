@@ -27,6 +27,10 @@ type APIKey struct {
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	// DeletedAt holds the value of the "deleted_at" field.
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// SubscriptionPriority holds the value of the "subscription_priority" field.
+	SubscriptionPriority []int64 `json:"subscription_priority,omitempty"`
+	// AllowWalletFallback holds the value of the "allow_wallet_fallback" field.
+	AllowWalletFallback bool `json:"allow_wallet_fallback,omitempty"`
 	// UserID holds the value of the "user_id" field.
 	UserID int64 `json:"user_id,omitempty"`
 	// Key holds the value of the "key" field.
@@ -139,8 +143,10 @@ func (*APIKey) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case apikey.FieldIPWhitelist, apikey.FieldIPBlacklist:
+		case apikey.FieldSubscriptionPriority, apikey.FieldIPWhitelist, apikey.FieldIPBlacklist:
 			values[i] = new([]byte)
+		case apikey.FieldAllowWalletFallback:
+			values[i] = new(sql.NullBool)
 		case apikey.FieldQuota, apikey.FieldQuotaUsed, apikey.FieldRateLimit5h, apikey.FieldRateLimit1d, apikey.FieldRateLimit7d, apikey.FieldUsage5h, apikey.FieldUsage1d, apikey.FieldUsage7d:
 			values[i] = new(sql.NullFloat64)
 		case apikey.FieldID, apikey.FieldUserID, apikey.FieldGroupID, apikey.FieldSubscriptionID:
@@ -188,6 +194,20 @@ func (_m *APIKey) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.DeletedAt = new(time.Time)
 				*_m.DeletedAt = value.Time
+			}
+		case apikey.FieldSubscriptionPriority:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field subscription_priority", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.SubscriptionPriority); err != nil {
+					return fmt.Errorf("unmarshal field subscription_priority: %w", err)
+				}
+			}
+		case apikey.FieldAllowWalletFallback:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field allow_wallet_fallback", values[i])
+			} else if value.Valid {
+				_m.AllowWalletFallback = value.Bool
 			}
 		case apikey.FieldUserID:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -398,6 +418,12 @@ func (_m *APIKey) String() string {
 		builder.WriteString("deleted_at=")
 		builder.WriteString(v.Format(time.ANSIC))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("subscription_priority=")
+	builder.WriteString(fmt.Sprintf("%v", _m.SubscriptionPriority))
+	builder.WriteString(", ")
+	builder.WriteString("allow_wallet_fallback=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AllowWalletFallback))
 	builder.WriteString(", ")
 	builder.WriteString("user_id=")
 	builder.WriteString(fmt.Sprintf("%v", _m.UserID))

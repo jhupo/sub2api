@@ -9,9 +9,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
@@ -165,37 +167,57 @@ type UpdateProviderInstanceRequest struct {
 	AllowUserRefund *bool             `json:"allow_user_refund"`
 }
 type CreatePlanRequest struct {
-	Name            string   `json:"name"`
-	Description     string   `json:"description"`
-	Price           float64  `json:"price"`
-	OriginalPrice   *float64 `json:"original_price"`
-	Currency        string   `json:"currency"`
-	ValidityDays    int      `json:"validity_days"`
-	ValidityUnit    string   `json:"validity_unit"`
-	DailyLimitUSD   *float64 `json:"daily_limit_usd"`
-	WeeklyLimitUSD  *float64 `json:"weekly_limit_usd"`
-	MonthlyLimitUSD *float64 `json:"monthly_limit_usd"`
-	Features        string   `json:"features"`
-	ProductName     string   `json:"product_name"`
-	ForSale         bool     `json:"for_sale"`
-	SortOrder       int      `json:"sort_order"`
+	SaleSchedule    *domain.PlanSaleSchedule `json:"sale_schedule"`
+	CardMode        string                   `json:"card_mode"`
+	ValidityHours   int                      `json:"validity_hours"`
+	DeadlineAt      *time.Time               `json:"deadline_at"`
+	TotalLimitUSD   *float64                 `json:"total_limit_usd"`
+	Name            string                   `json:"name"`
+	Description     string                   `json:"description"`
+	Price           float64                  `json:"price"`
+	OriginalPrice   *float64                 `json:"original_price"`
+	Currency        string                   `json:"currency"`
+	ValidityDays    int                      `json:"validity_days"`
+	ValidityUnit    string                   `json:"validity_unit"`
+	DailyLimitUSD   *float64                 `json:"daily_limit_usd"`
+	WeeklyLimitUSD  *float64                 `json:"weekly_limit_usd"`
+	MonthlyLimitUSD *float64                 `json:"monthly_limit_usd"`
+	Features        string                   `json:"features"`
+	ProductName     string                   `json:"product_name"`
+	ForSale         bool                     `json:"for_sale"`
+	SortOrder       int                      `json:"sort_order"`
 }
 
 type UpdatePlanRequest struct {
-	Name            *string               `json:"name"`
-	Description     *string               `json:"description"`
-	Price           *float64              `json:"price"`
-	OriginalPrice   OptionalNullableFloat `json:"original_price"`
-	Currency        *string               `json:"currency"`
-	ValidityDays    *int                  `json:"validity_days"`
-	ValidityUnit    *string               `json:"validity_unit"`
-	DailyLimitUSD   OptionalNullableFloat `json:"daily_limit_usd"`
-	WeeklyLimitUSD  OptionalNullableFloat `json:"weekly_limit_usd"`
-	MonthlyLimitUSD OptionalNullableFloat `json:"monthly_limit_usd"`
-	Features        *string               `json:"features"`
-	ProductName     *string               `json:"product_name"`
-	ForSale         *bool                 `json:"for_sale"`
-	SortOrder       *int                  `json:"sort_order"`
+	SaleSchedule    *domain.PlanSaleSchedule `json:"sale_schedule"`
+	CardMode        *string                  `json:"card_mode"`
+	ValidityHours   *int                     `json:"validity_hours"`
+	DeadlineAt      OptionalNullableTime     `json:"deadline_at"`
+	TotalLimitUSD   OptionalNullableFloat    `json:"total_limit_usd"`
+	Name            *string                  `json:"name"`
+	Description     *string                  `json:"description"`
+	Price           *float64                 `json:"price"`
+	OriginalPrice   OptionalNullableFloat    `json:"original_price"`
+	Currency        *string                  `json:"currency"`
+	ValidityDays    *int                     `json:"validity_days"`
+	ValidityUnit    *string                  `json:"validity_unit"`
+	DailyLimitUSD   OptionalNullableFloat    `json:"daily_limit_usd"`
+	WeeklyLimitUSD  OptionalNullableFloat    `json:"weekly_limit_usd"`
+	MonthlyLimitUSD OptionalNullableFloat    `json:"monthly_limit_usd"`
+	Features        *string                  `json:"features"`
+	ProductName     *string                  `json:"product_name"`
+	ForSale         *bool                    `json:"for_sale"`
+	SortOrder       *int                     `json:"sort_order"`
+}
+
+type OptionalNullableTime struct {
+	Set   bool
+	Value *time.Time
+}
+
+func (v *OptionalNullableTime) UnmarshalJSON(data []byte) error {
+	v.Set = true
+	return json.Unmarshal(data, &v.Value)
 }
 
 // OptionalNullableFloat preserves all three PATCH states: omitted, numeric,

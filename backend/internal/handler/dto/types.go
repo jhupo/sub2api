@@ -54,23 +54,25 @@ type AdminUser struct {
 }
 
 type APIKey struct {
-	ID             int64      `json:"id"`
-	UserID         int64      `json:"user_id"`
-	Key            string     `json:"key"`
-	Name           string     `json:"name"`
-	GroupID        *int64     `json:"group_id"`
-	FundingSource  string     `json:"funding_source"`
-	SubscriptionID *int64     `json:"subscription_id"`
-	Status         string     `json:"status"`
-	IPWhitelist    []string   `json:"ip_whitelist"`
-	IPBlacklist    []string   `json:"ip_blacklist"`
-	LastUsedAt     *time.Time `json:"last_used_at"`
-	LastUsedIP     *string    `json:"last_used_ip"`
-	Quota          float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
-	QuotaUsed      float64    `json:"quota_used"` // Used quota amount in USD
-	ExpiresAt      *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID                   int64      `json:"id"`
+	UserID               int64      `json:"user_id"`
+	Key                  string     `json:"key"`
+	Name                 string     `json:"name"`
+	GroupID              *int64     `json:"group_id"`
+	FundingSource        string     `json:"funding_source"`
+	SubscriptionID       *int64     `json:"subscription_id"`
+	SubscriptionPriority []int64    `json:"subscription_priority"`
+	AllowWalletFallback  bool       `json:"allow_wallet_fallback"`
+	Status               string     `json:"status"`
+	IPWhitelist          []string   `json:"ip_whitelist"`
+	IPBlacklist          []string   `json:"ip_blacklist"`
+	LastUsedAt           *time.Time `json:"last_used_at"`
+	LastUsedIP           *string    `json:"last_used_ip"`
+	Quota                float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
+	QuotaUsed            float64    `json:"quota_used"` // Used quota amount in USD
+	ExpiresAt            *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 	// CurrentConcurrency is the real-time active request count for this API key.
 	CurrentConcurrency int `json:"current_concurrency"`
 
@@ -113,16 +115,22 @@ type Group struct {
 	VideoRateIndependent         bool    `json:"video_rate_independent"`
 	VideoRateMultiplier          float64 `json:"video_rate_multiplier"`
 	// 高峰时段倍率配置
-	PeakRateEnabled    bool     `json:"peak_rate_enabled"`
-	PeakStart          string   `json:"peak_start"`
-	PeakEnd            string   `json:"peak_end"`
-	PeakRateMultiplier float64  `json:"peak_rate_multiplier"`
-	ImagePrice1K       *float64 `json:"image_price_1k"`
-	ImagePrice2K       *float64 `json:"image_price_2k"`
-	ImagePrice4K       *float64 `json:"image_price_4k"`
-	VideoPrice480P     *float64 `json:"video_price_480p"`
-	VideoPrice720P     *float64 `json:"video_price_720p"`
-	VideoPrice1080P    *float64 `json:"video_price_1080p"`
+	PeakRateEnabled            bool     `json:"peak_rate_enabled"`
+	PeakStart                  string   `json:"peak_start"`
+	PeakEnd                    string   `json:"peak_end"`
+	PeakRateMultiplier         float64  `json:"peak_rate_multiplier"`
+	NightRateEnabled           bool     `json:"night_rate_enabled"`
+	NightStart                 string   `json:"night_start"`
+	NightEnd                   string   `json:"night_end"`
+	NightRateMultiplier        float64  `json:"night_rate_multiplier"`
+	CacheReadAdjustmentMode    string   `json:"cache_read_adjustment_mode"`
+	CacheReadAdjustmentPercent int      `json:"cache_read_adjustment_percent"`
+	ImagePrice1K               *float64 `json:"image_price_1k"`
+	ImagePrice2K               *float64 `json:"image_price_2k"`
+	ImagePrice4K               *float64 `json:"image_price_4k"`
+	VideoPrice480P             *float64 `json:"video_price_480p"`
+	VideoPrice720P             *float64 `json:"video_price_720p"`
+	VideoPrice1080P            *float64 `json:"video_price_1080p"`
 	// VideoModelPrices 可选按模型族×分辨率覆盖视频每秒单价 (USD/s)。
 	VideoModelPrices map[string]map[string]float64 `json:"video_model_prices,omitempty"`
 	// Codex alpha/search 网页搜索单次价格（USD/次）；null 表示使用默认价 0.01
@@ -646,10 +654,15 @@ type Setting struct {
 }
 
 type UserSubscription struct {
-	ID            int64 `json:"id"`
-	UserID        int64 `json:"user_id"`
-	PlanID        int64 `json:"plan_id"`
-	PlanVersionID int64 `json:"plan_version_id"`
+	ID               int64   `json:"id"`
+	UserID           int64   `json:"user_id"`
+	PlanID           int64   `json:"plan_id"`
+	PlanVersionID    int64   `json:"plan_version_id"`
+	IsQuotaCard      bool    `json:"is_quota_card"`
+	RenewalCount     int     `json:"renewal_count"`
+	TotalUsageUSD    float64 `json:"total_usage_usd"`
+	TotalReservedUSD float64 `json:"total_reserved_usd"`
+	CanSelfRevoke    bool    `json:"can_self_revoke"`
 
 	StartsAt  time.Time `json:"starts_at"`
 	ExpiresAt time.Time `json:"expires_at"`

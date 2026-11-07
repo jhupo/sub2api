@@ -1329,31 +1329,34 @@ func upstreamBillingRateSortExpression(extra string) string {
 	resolvedJSON := extra + " #> '{upstream_billing_probe,data,resolved_rate_multiplier}'"
 	resolved := extra + " #>> '{upstream_billing_probe,data,resolved_rate_multiplier}'"
 	peakEnabledJSON := extra + " #> '{upstream_billing_probe,data,peak_rate_enabled}'"
-	peakEnabled := extra + " #>> '{upstream_billing_probe,data,peak_rate_enabled}'"
-	peakStart := extra + " #>> '{upstream_billing_probe,data,peak_start}'"
-	peakEnd := extra + " #>> '{upstream_billing_probe,data,peak_end}'"
-	peakMultiplierJSON := extra + " #> '{upstream_billing_probe,data,peak_rate_multiplier}'"
-	peakMultiplier := extra + " #>> '{upstream_billing_probe,data,peak_rate_multiplier}'"
-	peakMultiplierValue := "(CASE WHEN jsonb_typeof(" + peakMultiplierJSON + ") = 'number' THEN (" + peakMultiplier + ")::numeric END)"
 	billingScope := extra + " #>> '{upstream_billing_probe,data,billing_scope}'"
-	timezone := extra + " #>> '{upstream_billing_probe,data,timezone}'"
-	validClock := "'^([01][0-9]|2[0-3]):[0-5][0-9]$'"
-	startMinute := "(CASE WHEN " + peakStart + " ~ " + validClock + " THEN split_part(" + peakStart + ", ':', 1)::numeric * 60 + split_part(" + peakStart + ", ':', 2)::numeric END)"
-	endMinute := "(CASE WHEN " + peakEnd + " ~ " + validClock + " THEN split_part(" + peakEnd + ", ':', 1)::numeric * 60 + split_part(" + peakEnd + ", ':', 2)::numeric END)"
-	localMinute := "(EXTRACT(HOUR FROM (CURRENT_TIMESTAMP AT TIME ZONE (" + timezone + "))) * 60 + EXTRACT(MINUTE FROM (CURRENT_TIMESTAMP AT TIME ZONE (" + timezone + "))))"
-	validPeakWindow := peakStart + " ~ " + validClock + " AND " +
-		peakEnd + " ~ " + validClock + " AND " +
-		startMinute + " < " + endMinute
-	validPeakConfig := validPeakWindow + " AND " + peakMultiplierValue + " >= 0 AND " +
-		"EXISTS (SELECT 1 FROM pg_timezone_names WHERE name = " + timezone + ")"
-	dynamicRate := "CASE WHEN " + peakEnabled + " = 'false' THEN (" + resolved + ")::numeric WHEN " + peakEnabled + " = 'true' AND " + validPeakConfig +
-		" THEN (" + resolved + ")::numeric * CASE WHEN " + localMinute + " >= " + startMinute + " AND " + localMinute + " < " + endMinute +
-		" THEN " + peakMultiplierValue + " ELSE 1 END ELSE NULL END"
+	dynamicRate := "(" + resolved + ")::numeric * " + upstreamTimeRateSortFactor(extra, "peak", false) + " * " + upstreamTimeRateSortFactor(extra, "night", true)
 	legacySnapshot := "jsonb_typeof(" + resolvedJSON + ") IS NULL AND jsonb_typeof(" + peakEnabledJSON + ") IS NULL"
 
 	return "CASE WHEN " + status + " IN ('ok', 'failed') AND (jsonb_typeof(" + resolvedJSON + ") = 'number' OR jsonb_typeof(" + effectiveJSON + ") = 'number') THEN CASE WHEN jsonb_typeof(" +
 		resolvedJSON + ") = 'number' AND jsonb_typeof(" + peakEnabledJSON + ") = 'boolean' THEN CASE WHEN " + billingScope + " = 'token' THEN " + dynamicRate + " ELSE NULL END WHEN " + legacySnapshot +
 		" AND jsonb_typeof(" + effectiveJSON + ") = 'number' THEN (" + effective + ")::numeric END END"
+}
+
+func upstreamTimeRateSortFactor(extra, prefix string, optional bool) string {
+	field := func(name string) string { return extra + " #>> '{upstream_billing_probe,data," + name + "}'" }
+	enabled, start, end := field(prefix+"_rate_enabled"), field(prefix+"_start"), field(prefix+"_end")
+	multiplierJSON := extra + " #> '{upstream_billing_probe,data," + prefix + "_rate_multiplier}'"
+	multiplier := "(CASE WHEN jsonb_typeof(" + multiplierJSON + ") = 'number' THEN (" + field(prefix+"_rate_multiplier") + ")::numeric END)"
+	tz := field("timezone")
+	safeTimezone := "(SELECT name FROM pg_timezone_names WHERE name = " + tz + " LIMIT 1)"
+	clock := "'^([01][0-9]|2[0-3]):[0-5][0-9]$'"
+	minute := func(value string) string {
+		return "(CASE WHEN " + value + " ~ " + clock + " THEN split_part(" + value + ", ':', 1)::numeric * 60 + split_part(" + value + ", ':', 2)::numeric END)"
+	}
+	st, en := minute(start), minute(end)
+	cur := "(EXTRACT(HOUR FROM (CURRENT_TIMESTAMP AT TIME ZONE (" + safeTimezone + "))) * 60 + EXTRACT(MINUTE FROM (CURRENT_TIMESTAMP AT TIME ZONE (" + safeTimezone + "))))"
+	inside := "((" + st + " < " + en + " AND " + cur + " >= " + st + " AND " + cur + " < " + en + ") OR (" + st + " > " + en + " AND (" + cur + " >= " + st + " OR " + cur + " < " + en + ")))"
+	disabled := enabled + " = 'false'"
+	if optional {
+		disabled += " OR " + enabled + " IS NULL"
+	}
+	return "(CASE WHEN " + disabled + " THEN 1 WHEN " + enabled + " = 'true' AND " + start + " ~ " + clock + " AND " + end + " ~ " + clock + " AND " + st + " <> " + en + " AND " + multiplier + " >= 0 AND EXISTS (SELECT 1 FROM pg_timezone_names WHERE name = " + tz + ") THEN CASE WHEN " + inside + " THEN " + multiplier + " ELSE 1 END ELSE NULL END)"
 }
 
 func (r *accountRepository) ListByGroup(ctx context.Context, groupID int64) ([]service.Account, error) {

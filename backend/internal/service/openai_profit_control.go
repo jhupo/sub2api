@@ -13,7 +13,7 @@ package service
 //     最终扣费共用同一 D（RecordUsage 的高峰因子同样取 pricingAt），一个请求
 //     不会中途变价。D 与计费完全同源：按请求真实计费分组（ctxkey.Group，即
 //     apiKey 自身分组；composite 请求为父分组）做 ResolveUserGroupRateMultiplier
-//     （用户-分组覆盖 ?? 分组默认）× Group.PeakMultiplierAt(pricingAt)，绝不在
+//     （用户-分组覆盖 ?? 分组默认）× Group.TimeRateMultiplierAt(pricingAt)，绝不在
 //     用户有覆盖时退回分组默认；开关与 margin/buffer 则始终取被调度
 //     openai/grok 分组。
 //   - U（上游成本倍率）取 accounts.rate_multiplier。倍率可以由运营者手工维护，
@@ -257,7 +257,7 @@ func (s *OpenAIGatewayService) resolveOpenAIProfitControlGate(ctx context.Contex
 	if userID, _ := ctx.Value(ctxkey.UserID).(int64); userID > 0 {
 		downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
 	}
-	downstream *= billingGroup.PeakMultiplierAt(pricingAt)
+	downstream *= billingGroup.TimeRateMultiplierAt(pricingAt)
 
 	deduction := group.ProfitMinMargin + group.ProfitSafetyBuffer
 	threshold := clampProfitControlThreshold(downstream * (1 - deduction))

@@ -5,6 +5,8 @@ import { PAYMENT_RECOVERY_STORAGE_KEY } from '@/components/payment/paymentFlow'
 import { formatPaymentAmount } from '@/components/payment/currency'
 import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
 import type { CheckoutInfoResponse, MethodLimit, SubscriptionPlan } from '@/types/payment'
+import type { UserSubscription } from '@/types'
+import { formatDateTimeToMinute } from '@/utils/format'
 
 const routeState = vi.hoisted(() => ({
   path: '/purchase',
@@ -17,6 +19,7 @@ const routerResolve = vi.hoisted(() => vi.fn(() => ({ href: '/payment/stripe?moc
 const createOrder = vi.hoisted(() => vi.fn())
 const refreshUser = vi.hoisted(() => vi.fn())
 const fetchActiveSubscriptions = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
+const subscriptionState = vi.hoisted(() => ({ activeSubscriptions: [] as UserSubscription[] }))
 const showError = vi.hoisted(() => vi.fn())
 const showInfo = vi.hoisted(() => vi.fn())
 const showWarning = vi.hoisted(() => vi.fn())
@@ -64,7 +67,7 @@ vi.mock('@/stores/payment', () => ({
 
 vi.mock('@/stores/subscriptions', () => ({
   useSubscriptionStore: () => ({
-    activeSubscriptions: [],
+    activeSubscriptions: subscriptionState.activeSubscriptions,
     fetchActiveSubscriptions,
   }),
 }))
@@ -201,6 +204,7 @@ function oauthOrderFixture() {
 }
 
 async function mountSubscriptionConfirm(options: Parameters<typeof checkoutInfoWithPlansFixture>[0] = {}) {
+  subscriptionState.activeSubscriptions = []
   vi.useRealTimers()
   routeState.path = '/purchase'
   routeState.query = {
@@ -242,8 +246,10 @@ async function mountSubscriptionPlanList(
   options: {
     checkout?: Partial<CheckoutInfoResponse>
     query?: Record<string, unknown>
+    subscriptions?: UserSubscription[]
   } = {},
 ) {
+  subscriptionState.activeSubscriptions = options.subscriptions ?? []
   vi.useRealTimers()
   routeState.path = '/purchase'
   routeState.query = options.query ?? { tab: 'subscription' }
@@ -321,6 +327,28 @@ describe('PaymentView subscription plan grid', () => {
 })
 
 describe('PaymentView subscription confirmation amounts', () => {
+  it('retains a fixed deadline and lifetime allowance on the purchase confirmation', async () => {
+    const deadline = new Date(2027, 0, 2, 18, 30).toISOString()
+    const wrapper = await mountSubscriptionConfirm({plan:{card_mode:'deadline',deadline_at:deadline,total_limit_usd:300,validity_days:1}})
+    expect(wrapper.get('time').attributes('datetime')).toBe(deadline)
+    expect(wrapper.get('time').text()).toBe(formatDateTimeToMinute(deadline))
+    expect(wrapper.text()).toContain('quotaFeatures.totalLimit')
+    expect(wrapper.text()).toContain('$300')
+    expect(wrapper.text()).not.toContain('payment.planCard.unlimited')
+    expect(wrapper.text()).not.toContain('/ 1payment.days')
+  })
+
+  it('shows the owned quota card allowance and its actual expiration in the summary', async () => {
+    const deadline = new Date(2027, 0, 2, 18, 30).toISOString()
+    const wrapper = await mountSubscriptionPlanList(0, {subscriptions:[{
+      id:1,plan_id:7,status:'active',is_quota_card:true,expires_at:deadline,
+      plan:{id:7,name:'Deadline card',card_mode:'deadline',total_limit_usd:300}
+    } as UserSubscription]})
+    expect(wrapper.text()).toContain('$300')
+    expect(wrapper.get('time').attributes('datetime')).toBe(deadline)
+    expect(wrapper.text()).not.toContain('payment.planCard.unlimited')
+  })
+
   it('shows converted CNY pay amount using the subscription rate, not the balance multiplier', async () => {
     const wrapper = await mountSubscriptionConfirm({
       checkout: {

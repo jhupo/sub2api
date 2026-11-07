@@ -210,13 +210,15 @@ type APIKeyAuthCacheInvalidator interface {
 
 // CreateAPIKeyRequest 创建API Key请求
 type CreateAPIKeyRequest struct {
-	Name           string   `json:"name"`
-	GroupID        *int64   `json:"group_id"`
-	FundingSource  string   `json:"funding_source"`
-	SubscriptionID *int64   `json:"subscription_id"`
-	CustomKey      *string  `json:"custom_key"`   // 可选的自定义key
-	IPWhitelist    []string `json:"ip_whitelist"` // IP 白名单
-	IPBlacklist    []string `json:"ip_blacklist"` // IP 黑名单
+	Name                 string   `json:"name"`
+	GroupID              *int64   `json:"group_id"`
+	FundingSource        string   `json:"funding_source"`
+	SubscriptionID       *int64   `json:"subscription_id"`
+	SubscriptionPriority []int64  `json:"subscription_priority"`
+	AllowWalletFallback  bool     `json:"allow_wallet_fallback"`
+	CustomKey            *string  `json:"custom_key"`   // 可选的自定义key
+	IPWhitelist          []string `json:"ip_whitelist"` // IP 白名单
+	IPBlacklist          []string `json:"ip_blacklist"` // IP 黑名单
 
 	// Quota fields
 	Quota         float64 `json:"quota"`           // Quota limit in USD (0 = unlimited)
@@ -230,13 +232,15 @@ type CreateAPIKeyRequest struct {
 
 // UpdateAPIKeyRequest 更新API Key请求
 type UpdateAPIKeyRequest struct {
-	Name           *string   `json:"name"`
-	GroupID        *int64    `json:"group_id"`
-	FundingSource  *string   `json:"funding_source"`
-	SubscriptionID *int64    `json:"subscription_id"`
-	Status         *string   `json:"status"`
-	IPWhitelist    *[]string `json:"ip_whitelist"` // IP 白名单（nil 不修改，空数组清空）
-	IPBlacklist    *[]string `json:"ip_blacklist"` // IP 黑名单（nil 不修改，空数组清空）
+	Name                 *string   `json:"name"`
+	GroupID              *int64    `json:"group_id"`
+	FundingSource        *string   `json:"funding_source"`
+	SubscriptionID       *int64    `json:"subscription_id"`
+	SubscriptionPriority *[]int64  `json:"subscription_priority"`
+	AllowWalletFallback  *bool     `json:"allow_wallet_fallback"`
+	Status               *string   `json:"status"`
+	IPWhitelist          *[]string `json:"ip_whitelist"` // IP 白名单（nil 不修改，空数组清空）
+	IPBlacklist          *[]string `json:"ip_blacklist"` // IP 黑名单（nil 不修改，空数组清空）
 
 	// Quota fields
 	Quota           *float64   `json:"quota"`       // Quota limit in USD (nil = no change, 0 = unlimited)
@@ -488,7 +492,7 @@ func (s *APIKeyService) canUserBindGroup(_ context.Context, user *User, group *G
 	return user.CanBindGroup(group.ID, group.IsExclusive)
 }
 
-func (s *APIKeyService) validateSubscriptionFunding(ctx context.Context, userID int64, source string, subscriptionID *int64) (*UserSubscription, error) {
+func (s *APIKeyService) validateSubscriptionFunding(ctx context.Context, userID int64, source string, subscriptionID *int64, allowInactive ...bool) (*UserSubscription, error) {
 	if source == "" || source == FundingSourceWallet {
 		return nil, nil
 	}
@@ -496,10 +500,10 @@ func (s *APIKeyService) validateSubscriptionFunding(ctx context.Context, userID 
 		return nil, infraerrors.BadRequest("SUBSCRIPTION_REQUIRED", "subscription payment requires a subscription")
 	}
 	sub, err := s.userSubRepo.GetByID(ctx, *subscriptionID)
-	if err != nil || sub.UserID != userID {
+	if err != nil || sub == nil || sub.UserID != userID {
 		return nil, infraerrors.Forbidden("SUBSCRIPTION_NOT_ALLOWED", "subscription does not belong to this user")
 	}
-	if !sub.IsActive() {
+	if !sub.IsActive() && (len(allowInactive) == 0 || !allowInactive[0]) {
 		return nil, infraerrors.Forbidden("SUBSCRIPTION_INACTIVE", "subscription is not active")
 	}
 	return sub, nil
@@ -507,6 +511,9 @@ func (s *APIKeyService) validateSubscriptionFunding(ctx context.Context, userID 
 
 // Create 创建API Key
 func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIKeyRequest) (*APIKey, error) {
+	if len(req.SubscriptionPriority) > 0 {
+		req.SubscriptionID = &req.SubscriptionPriority[0]
+	}
 	if err := validateCreateAPIKeyRequest(req); err != nil {
 		return nil, err
 	}
@@ -516,7 +523,13 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		return nil, fmt.Errorf("get user: %w", err)
 	}
 	fundingSource := normalizeFundingSource(req.FundingSource)
-	subscription, err := s.validateSubscriptionFunding(ctx, userID, fundingSource, req.SubscriptionID)
+	if fundingSource == FundingSourceSubscription && req.AllowWalletFallback && len(req.SubscriptionPriority) == 0 && req.SubscriptionID != nil {
+		req.SubscriptionPriority = []int64{*req.SubscriptionID}
+	}
+	if err := s.validateFundingPriority(ctx, userID, fundingSource, req.SubscriptionID, req.SubscriptionPriority, req.AllowWalletFallback); err != nil {
+		return nil, err
+	}
+	subscription, err := s.validateSubscriptionFunding(ctx, userID, fundingSource, req.SubscriptionID, len(req.SubscriptionPriority) > 0)
 	if err != nil {
 		return nil, err
 	}
@@ -585,21 +598,23 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 
 	// 创建API Key记录
 	apiKey := &APIKey{
-		UserID:         userID,
-		Key:            key,
-		Name:           html.EscapeString(req.Name),
-		GroupID:        req.GroupID,
-		FundingSource:  fundingSource,
-		SubscriptionID: req.SubscriptionID,
-		Subscription:   subscription,
-		Status:         StatusActive,
-		IPWhitelist:    req.IPWhitelist,
-		IPBlacklist:    req.IPBlacklist,
-		Quota:          req.Quota,
-		QuotaUsed:      0,
-		RateLimit5h:    req.RateLimit5h,
-		RateLimit1d:    req.RateLimit1d,
-		RateLimit7d:    req.RateLimit7d,
+		UserID:               userID,
+		Key:                  key,
+		Name:                 html.EscapeString(req.Name),
+		GroupID:              req.GroupID,
+		FundingSource:        fundingSource,
+		SubscriptionID:       req.SubscriptionID,
+		SubscriptionPriority: append([]int64{}, req.SubscriptionPriority...),
+		AllowWalletFallback:  req.AllowWalletFallback,
+		Subscription:         subscription,
+		Status:               StatusActive,
+		IPWhitelist:          req.IPWhitelist,
+		IPBlacklist:          req.IPBlacklist,
+		Quota:                req.Quota,
+		QuotaUsed:            0,
+		RateLimit5h:          req.RateLimit5h,
+		RateLimit1d:          req.RateLimit1d,
+		RateLimit7d:          req.RateLimit7d,
 	}
 
 	// Set expiration time if specified
@@ -751,13 +766,12 @@ func (s *APIKeyService) GetGatewaySubscription(ctx context.Context, key *APIKey)
 	if s.userSubRepo == nil {
 		return nil, ErrSubscriptionInvalid
 	}
-	sub, err := s.validateSubscriptionFunding(ctx, key.UserID, key.FundingSource, key.SubscriptionID)
+	resolved, sub, err := s.ResolveGatewayFunding(ctx, key)
 	if err != nil {
 		return nil, err
 	}
-	// Window maintenance is also used by HTTP authentication. Long-lived WS
-	// connections must observe day/week/month rollover without reconnecting.
-	return NewSubscriptionService(s.userSubRepo, nil).EnsureWindowMaintenance(ctx, sub)
+	*key = *resolved
+	return sub, nil
 }
 
 // GetByID 根据ID获取API Key
@@ -830,6 +844,9 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 
 // Update 更新API Key
 func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req UpdateAPIKeyRequest) (*APIKey, error) {
+	if req.FundingSource != nil && req.SubscriptionPriority != nil && len(*req.SubscriptionPriority) > 0 {
+		req.SubscriptionID = &(*req.SubscriptionPriority)[0]
+	}
 	if err := validateUpdateAPIKeyRequest(req); err != nil {
 		return nil, err
 	}
@@ -890,14 +907,40 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		fields.GroupID = true
 	}
 
-	if req.FundingSource != nil {
-		fundingSource := normalizeFundingSource(*req.FundingSource)
-		subscription, err := s.validateSubscriptionFunding(ctx, userID, fundingSource, req.SubscriptionID)
+	if req.FundingSource != nil || req.SubscriptionPriority != nil || req.AllowWalletFallback != nil {
+		fundingSource := apiKey.FundingSource
+		if req.FundingSource != nil {
+			fundingSource = normalizeFundingSource(*req.FundingSource)
+			apiKey.SubscriptionID = req.SubscriptionID
+			if req.SubscriptionPriority == nil {
+				apiKey.SubscriptionPriority = []int64{}
+			}
+		}
+		if req.SubscriptionPriority != nil {
+			apiKey.SubscriptionPriority = append([]int64{}, (*req.SubscriptionPriority)...)
+		}
+		if len(apiKey.SubscriptionPriority) > 0 {
+			id := apiKey.SubscriptionPriority[0]
+			apiKey.SubscriptionID = &id
+		}
+		if req.AllowWalletFallback != nil {
+			apiKey.AllowWalletFallback = *req.AllowWalletFallback
+		}
+		if fundingSource == FundingSourceSubscription && apiKey.AllowWalletFallback && len(apiKey.SubscriptionPriority) == 0 && apiKey.SubscriptionID != nil {
+			apiKey.SubscriptionPriority = []int64{*apiKey.SubscriptionID}
+		}
+		if fundingSource == FundingSourceWallet {
+			apiKey.SubscriptionID, apiKey.SubscriptionPriority = nil, []int64{}
+			apiKey.AllowWalletFallback = false
+		}
+		if err := s.validateFundingPriority(ctx, userID, fundingSource, apiKey.SubscriptionID, apiKey.SubscriptionPriority, apiKey.AllowWalletFallback); err != nil {
+			return nil, err
+		}
+		subscription, err := s.validateSubscriptionFunding(ctx, userID, fundingSource, apiKey.SubscriptionID, len(apiKey.SubscriptionPriority) > 0)
 		if err != nil {
 			return nil, err
 		}
 		apiKey.FundingSource = fundingSource
-		apiKey.SubscriptionID = req.SubscriptionID
 		apiKey.Subscription = subscription
 		fields.FundingSource = true
 	}

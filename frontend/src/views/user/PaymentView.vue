@@ -128,14 +128,17 @@
                     <div class="mt-4 flex flex-wrap items-baseline gap-2">
                       <span v-if="selectedPlan.original_price" class="text-sm text-gray-500 line-through dark:text-primary-200">{{ formatSelectedSubscriptionPaymentAmount(selectedPlan.original_price) }}</span>
                       <span class="break-all text-4xl font-bold">{{ formatSelectedSubscriptionPaymentAmount(selectedPlan.price) }}</span>
-                      <span class="text-sm text-gray-600 dark:text-primary-100">/ {{ planValiditySuffix }}</span>
+                      <span v-if="selectedPlan.card_mode !== 'deadline'" class="text-sm text-gray-600 dark:text-primary-100">/ {{ planValiditySuffix }}</span>
                     </div>
                     <p v-if="selectedPlan.description" class="mt-4 break-words text-sm leading-6 text-gray-600 dark:text-primary-100">{{ selectedPlan.description }}</p>
+                    <SaleCountdown :ends-at="selectedPlan.sale_ends_at" class="mt-4" />
                     <div class="mt-8 grid grid-cols-2 gap-3">
+                      <div v-if="selectedPlan.card_mode === 'deadline' && selectedPlan.deadline_at" class="selected-plan-limit col-span-2"><span>{{ t('quotaFeatures.deadline') }}</span><div><time :datetime="selectedPlan.deadline_at">{{ formatDateTimeToMinute(selectedPlan.deadline_at) }}</time></div></div>
+                      <div v-if="selectedPlan.total_limit_usd != null" class="selected-plan-limit"><span>{{ t('quotaFeatures.totalLimit') }}</span><div>${{ selectedPlan.total_limit_usd }}</div></div>
                       <div v-if="selectedPlan.daily_limit_usd != null" class="selected-plan-limit"><span>{{ t('payment.planCard.dailyLimit') }}</span><div>${{ selectedPlan.daily_limit_usd }}</div></div>
                       <div v-if="selectedPlan.weekly_limit_usd != null" class="selected-plan-limit"><span>{{ t('payment.planCard.weeklyLimit') }}</span><div>${{ selectedPlan.weekly_limit_usd }}</div></div>
                       <div v-if="selectedPlan.monthly_limit_usd != null" class="selected-plan-limit"><span>{{ t('payment.planCard.monthlyLimit') }}</span><div>${{ selectedPlan.monthly_limit_usd }}</div></div>
-                      <div v-if="selectedPlan.daily_limit_usd == null && selectedPlan.weekly_limit_usd == null && selectedPlan.monthly_limit_usd == null" class="selected-plan-limit"><span>{{ t('payment.planCard.quota') }}</span><div>{{ t('payment.planCard.unlimited') }}</div></div>
+                      <div v-if="selectedPlan.total_limit_usd == null && selectedPlan.daily_limit_usd == null && selectedPlan.weekly_limit_usd == null && selectedPlan.monthly_limit_usd == null" class="selected-plan-limit"><span>{{ t('payment.planCard.quota') }}</span><div>{{ t('payment.planCard.unlimited') }}</div></div>
                     </div>
                   </div>
                 </section>
@@ -155,7 +158,24 @@
               </div>
               <div v-if="checkout.plans.length === 0" class="card py-16 text-center"><Icon name="gift" size="xl" class="mx-auto mb-3 text-gray-300 dark:text-dark-600" /><p class="text-gray-500 dark:text-gray-400">{{ t('payment.noPlans') }}</p></div>
               <div v-else :class="planGridClass"><SubscriptionPlanCard v-for="plan in checkout.plans" :key="plan.id" :plan="plan" :active-subscriptions="activeSubscriptions" @select="selectPlan" /></div>
-              <div v-if="activeSubscriptions.length > 0" class="card p-5"><div class="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white"><Icon name="checkCircle" size="sm" class="text-emerald-500" />{{ t('payment.activeSubscription') }}</div><div class="space-y-2"><div v-for="sub in activeSubscriptions" :key="sub.id" class="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-3 dark:border-dark-700 dark:bg-dark-900/50"><div class="h-8 w-1 shrink-0 rounded-full bg-primary-500"></div><div class="min-w-0 flex-1"><div class="truncate text-sm font-semibold text-gray-900 dark:text-white">{{ sub.plan?.name || `Plan #${sub.plan_id}` }}</div><div class="mt-1 flex flex-wrap gap-x-3 text-xs text-gray-400 dark:text-gray-500"><span v-if="sub.plan?.daily_limit_usd == null && sub.plan?.weekly_limit_usd == null && sub.plan?.monthly_limit_usd == null">{{ t('payment.planCard.quota') }}: {{ t('payment.planCard.unlimited') }}</span><span>{{ t('userSubscriptions.daysRemaining', { days: getDaysRemaining(sub.expires_at) }) }}</span></div></div><span class="badge badge-success shrink-0 text-[10px]">{{ t('userSubscriptions.status.active') }}</span></div></div></div>
+              <div v-if="activeSubscriptions.length > 0" class="card p-5">
+                <div class="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white"><Icon name="checkCircle" size="sm" class="text-emerald-500" />{{ t('payment.activeSubscription') }}</div>
+                <div class="space-y-2">
+                  <div v-for="sub in activeSubscriptions" :key="sub.id" class="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-3 dark:border-dark-700 dark:bg-dark-900/50">
+                    <div class="h-8 w-1 shrink-0 rounded-full bg-primary-500"></div>
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate text-sm font-semibold text-gray-900 dark:text-white">{{ sub.plan?.name || `Plan #${sub.plan_id}` }}</div>
+                      <div class="mt-1 flex flex-wrap gap-x-3 text-xs text-gray-400 dark:text-gray-500">
+                        <span v-if="sub.plan?.total_limit_usd != null">{{ t('quotaFeatures.totalLimit') }}: ${{ sub.plan.total_limit_usd }}</span>
+                        <span v-if="sub.plan?.total_limit_usd == null && sub.plan?.daily_limit_usd == null && sub.plan?.weekly_limit_usd == null && sub.plan?.monthly_limit_usd == null">{{ t('payment.planCard.quota') }}: {{ t('payment.planCard.unlimited') }}</span>
+                        <span v-if="sub.is_quota_card">{{ t('quotaFeatures.deadline') }}: <time :datetime="sub.expires_at">{{ formatDateTimeToMinute(sub.expires_at) }}</time></span>
+                        <span v-else>{{ t('userSubscriptions.daysRemaining', { days: getDaysRemaining(sub.expires_at) }) }}</span>
+                      </div>
+                    </div>
+                    <span class="badge badge-success shrink-0 text-[10px]">{{ t('userSubscriptions.status.active') }}</span>
+                  </div>
+                </div>
+              </div>
             </template>
           </template>
         </template>
@@ -168,7 +188,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -195,10 +215,12 @@ import {
   writePaymentRecoverySnapshot,
 } from '@/components/payment/paymentFlow'
 import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
+import SaleCountdown from '@/components/payment/SaleCountdown.vue'
 import PaymentStatusPanel from '@/components/payment/PaymentStatusPanel.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { DEFAULT_PAYMENT_CURRENCY, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
 import { planValiditySuffix as validitySuffixOf } from '@/components/payment/validity'
+import { formatDateTimeToMinute } from '@/utils/format'
 import type { PaymentMethodOption } from '@/components/payment/PaymentMethodSelector.vue'
 import { buildPaymentErrorToastMessage, describePaymentScenarioError } from './paymentUx'
 import { hasWechatResumeQuery, parseWechatResumeRoute, stripWechatResumeQuery } from './paymentWechatResume'
@@ -785,6 +807,12 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
     }
   } catch (err: unknown) {
     const apiErr = err as Record<string, unknown>
+    if (apiErr.reason === 'PLAN_PRICE_CHANGED' || apiErr.reason === 'PLAN_NOT_AVAILABLE') {
+      submitting.value = false
+      await refreshSaleCatalog()
+      appStore.showError(t(`payment.errors.${apiErr.reason}`))
+      return
+    }
     if (apiErr.reason === 'TOO_MANY_PENDING') {
       const metadata = apiErr.metadata as Record<string, unknown> | undefined
       errorMessage.value = t('payment.errors.tooManyPending', { max: metadata?.max || '' })
@@ -964,6 +992,27 @@ async function resumeWechatPaymentFromQuery() {
   }
 }
 
+let saleTimer: ReturnType<typeof setInterval> | undefined
+let saleDisposed = false
+let saleRefreshPending = false
+let lastSaleRefresh = Date.now()
+async function refreshSaleCatalog() {
+  if (saleDisposed || saleRefreshPending || submitting.value || loading.value || paymentPhase.value !== 'select') return
+  saleRefreshPending = true
+  try {
+    const { data } = await paymentAPI.getCheckoutInfo()
+    if (saleDisposed) return
+    checkout.value = data
+    if (selectedPlan.value) {
+      const previous = selectedPlan.value
+      selectedPlan.value = data.plans.find(plan => plan.id === previous.id) ?? null
+      if (!selectedPlan.value) appStore.showError(t('quotaFeatures.offSale'))
+      else if (selectedPlan.value.price !== previous.price) appStore.showError(t('quotaFeatures.priceChanged'))
+    }
+  } catch { /* Keep the last catalog on transient network failures; orders are validated server-side. */ }
+  finally { saleRefreshPending = false; lastSaleRefresh = Date.now() }
+}
+onBeforeUnmount(() => { saleDisposed = true; if (saleTimer) clearInterval(saleTimer) })
 onMounted(async () => {
   try {
     const res = await paymentAPI.getCheckoutInfo()
@@ -1018,6 +1067,15 @@ onMounted(async () => {
   finally { loading.value = false }
   // Fetch active subscriptions (uses cache, non-blocking)
   subscriptionStore.fetchActiveSubscriptions().catch(() => {})
+  if (saleDisposed) return
+  lastSaleRefresh = Date.now()
+  saleTimer = setInterval(() => {
+    const now = Date.now()
+    const boundaryReached = checkout.value.plans.some(plan =>
+      (plan.sale_ends_at && new Date(plan.sale_ends_at).getTime() <= now && new Date(plan.sale_ends_at).getTime() > lastSaleRefresh) ||
+      plan.sale_schedule?.price_steps?.some(step => new Date(step.at).getTime() > lastSaleRefresh && new Date(step.at).getTime() <= now))
+    if (boundaryReached || now - lastSaleRefresh >= 30000) void refreshSaleCatalog()
+  }, 1000)
 })
 </script>
 

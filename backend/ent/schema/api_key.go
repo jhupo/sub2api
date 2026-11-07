@@ -33,6 +33,8 @@ func (APIKey) Mixin() []ent.Mixin {
 
 func (APIKey) Fields() []ent.Field {
 	return []ent.Field{
+		field.JSON("subscription_priority", []int64{}).Optional(),
+		field.Bool("allow_wallet_fallback").Default(false),
 		field.Int64("user_id"),
 		field.String("key").
 			MaxLen(128).

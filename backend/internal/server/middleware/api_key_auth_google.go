@@ -166,6 +166,18 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 		}
 
 		usesSubscription := apiKey.UsesSubscription()
+		if usesSubscription && (len(apiKey.SubscriptionPriority) > 0 || apiKey.AllowWalletFallback) {
+			resolved, sub, fundingErr := apiKeyService.ResolveGatewayFunding(c.Request.Context(), apiKey)
+			if fundingErr != nil {
+				abortWithGoogleError(c, 429, fundingErr.Error())
+				return
+			}
+			apiKey = resolved
+			usesSubscription = apiKey.UsesSubscription()
+			if sub != nil {
+				c.Set(string(ContextKeySubscription), sub)
+			}
+		}
 		if usesSubscription {
 			if subscriptionService == nil || apiKey.SubscriptionID == nil {
 				abortWithGoogleError(c, 403, "API key subscription payment is not configured")
@@ -195,7 +207,7 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 				status := 403
 				if errors.Is(err, service.ErrDailyLimitExceeded) ||
 					errors.Is(err, service.ErrWeeklyLimitExceeded) ||
-					errors.Is(err, service.ErrMonthlyLimitExceeded) {
+					errors.Is(err, service.ErrMonthlyLimitExceeded) || errors.Is(err, service.ErrTotalLimitExceeded) {
 					status = 429
 				}
 				abortWithGoogleError(c, status, err.Error())

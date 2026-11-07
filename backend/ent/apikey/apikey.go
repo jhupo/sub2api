@@ -21,6 +21,10 @@ const (
 	FieldUpdatedAt = "updated_at"
 	// FieldDeletedAt holds the string denoting the deleted_at field in the database.
 	FieldDeletedAt = "deleted_at"
+	// FieldSubscriptionPriority holds the string denoting the subscription_priority field in the database.
+	FieldSubscriptionPriority = "subscription_priority"
+	// FieldAllowWalletFallback holds the string denoting the allow_wallet_fallback field in the database.
+	FieldAllowWalletFallback = "allow_wallet_fallback"
 	// FieldUserID holds the string denoting the user_id field in the database.
 	FieldUserID = "user_id"
 	// FieldKey holds the string denoting the key field in the database.
@@ -111,6 +115,8 @@ var Columns = []string{
 	FieldCreatedAt,
 	FieldUpdatedAt,
 	FieldDeletedAt,
+	FieldSubscriptionPriority,
+	FieldAllowWalletFallback,
 	FieldUserID,
 	FieldKey,
 	FieldName,
@@ -159,6 +165,8 @@ var (
 	DefaultUpdatedAt func() time.Time
 	// UpdateDefaultUpdatedAt holds the default value on update for the "updated_at" field.
 	UpdateDefaultUpdatedAt func() time.Time
+	// DefaultAllowWalletFallback holds the default value on creation for the "allow_wallet_fallback" field.
+	DefaultAllowWalletFallback bool
 	// KeyValidator is a validator for the "key" field. It is called by the builders before save.
 	KeyValidator func(string) error
 	// NameValidator is a validator for the "name" field. It is called by the builders before save.
@@ -210,6 +218,11 @@ func ByUpdatedAt(opts ...sql.OrderTermOption) OrderOption {
 // ByDeletedAt orders the results by the deleted_at field.
 func ByDeletedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldDeletedAt, opts...).ToFunc()
+}
+
+// ByAllowWalletFallback orders the results by the allow_wallet_fallback field.
+func ByAllowWalletFallback(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAllowWalletFallback, opts...).ToFunc()
 }
 
 // ByUserID orders the results by the user_id field.

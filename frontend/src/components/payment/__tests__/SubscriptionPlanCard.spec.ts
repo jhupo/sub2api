@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import type { SubscriptionPlan } from "@/types/payment";
+import type { UserSubscription } from "@/types";
+import { formatDateTimeToMinute } from "@/utils/format";
 import SubscriptionPlanCard from "../SubscriptionPlanCard.vue";
 
 const i18n = createI18n({
@@ -49,6 +51,31 @@ const mountPlanCard = (overrides: Partial<SubscriptionPlan> = {}) =>
   });
 
 describe("SubscriptionPlanCard", () => {
+  it("shows the exact deadline and lifetime quota instead of one day and unlimited", () => {
+    const deadline = new Date(2027, 0, 2, 18, 30).toISOString();
+    const wrapper = mountPlanCard({card_mode: "deadline", deadline_at: deadline, total_limit_usd: 300, validity_days: 1});
+
+    expect(wrapper.get("time").attributes("datetime")).toBe(deadline);
+    expect(wrapper.get("time").text()).toBe(formatDateTimeToMinute(deadline));
+    expect(wrapper.get(".plan-card__limits").text()).toContain("$300");
+    expect(wrapper.find(".plan-card__period").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("payment.planCard.unlimited");
+  });
+
+  it("shows an hourly card's duration and total allowance", () => {
+    const wrapper = mountPlanCard({card_mode: "hours", validity_hours: 12, total_limit_usd: 300, validity_days: 1});
+    expect(wrapper.get(".plan-card__period").text()).toContain("12quotaFeatures.hours");
+    expect(wrapper.get(".plan-card__limits").text()).toContain("$300");
+    expect(wrapper.text()).not.toContain("payment.planCard.unlimited");
+  });
+
+  it("keeps repeated quota card purchases separate from subscription renewals", async () => {
+    const wrapper = mountPlanCard({card_mode: "hours", validity_hours: 12, total_limit_usd: 300});
+    await wrapper.setProps({activeSubscriptions: [{plan_id: 1, status: "active"} as UserSubscription]});
+    expect(wrapper.get("button").text()).toBe("payment.subscribeNow");
+    expect(wrapper.classes()).not.toContain("plan-card--owned");
+  });
+
   it("renders plan features without deriving vendor-specific model scopes", () => {
     const text = mountPlanCard({ features: ["Shared usage", "Priority support"] }).text();
 

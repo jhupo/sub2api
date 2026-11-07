@@ -453,6 +453,7 @@ export default {
       INVALID_AMOUNT: '金额无效',
       INVALID_INPUT: '参数有误',
       PLAN_NOT_AVAILABLE: '套餐不存在或已下架',
+      PLAN_PRICE_CHANGED: '套餐价格已变化，请刷新并确认新价格',
       GROUP_NOT_FOUND: '订阅分组不可用',
       GROUP_TYPE_MISMATCH: '分组类型不是订阅类型',
       TOO_MANY_PENDING: '待支付订单过多（最多 {max} 个），请先完成或取消现有订单',
