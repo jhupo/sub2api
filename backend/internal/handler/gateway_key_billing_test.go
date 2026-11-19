@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,6 +31,17 @@ func (r *keyBillingUserGroupRateRepo) GetByUserAndGroup(_ context.Context, userI
 	r.gotGroupID = groupID
 	r.lookupCalls++
 	return r.rate, r.err
+}
+
+type keyBillingInviteeGroupRateRepo struct {
+	*keyBillingUserGroupRateRepo
+	factor float64
+}
+
+func (r *keyBillingInviteeGroupRateRepo) GetUserGroupRate(ctx context.Context, userID, groupID int64, groupDefault float64) (service.UserGroupRate, error) {
+	personal, err := r.GetByUserAndGroup(ctx, userID, groupID)
+	factor := r.factor
+	return service.UserGroupRate{GroupRateMultiplier: groupDefault, UserRateMultiplier: personal, InviteeDiscountFactor: &factor}, err
 }
 
 func newKeyBillingHandler(repo service.UserGroupRateRepository) *GatewayHandler {
@@ -101,6 +113,7 @@ func TestGatewayHandlerKeyBillingInfoUsesGroupRate(t *testing.T) {
 	var fields map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fields))
 	require.NotContains(t, fields, "user_rate_multiplier")
+	require.NotContains(t, fields, "user_group_rate")
 	require.NotContains(t, fields, "peak_start")
 	require.NotContains(t, fields, "peak_end")
 	require.NotContains(t, fields, "peak_rate_multiplier")
@@ -207,6 +220,88 @@ func TestKeyBillingInfoJSONKeepsZeroPeakMultiplierWhenEnabled(t *testing.T) {
 	require.NoError(t, json.Unmarshal(encoded, &fields))
 	require.JSONEq(t, "0", string(fields["peak_rate_multiplier"]))
 	require.JSONEq(t, "0", string(fields["applied_peak_multiplier"]))
+}
+
+func TestBuildKeyBillingInfoInviteeDiscountIgnoresPersonalAndTimeRates(t *testing.T) {
+	personal, invitee := 0.8, 0.9
+	rate := service.UserGroupRate{GroupRateMultiplier: 1, UserRateMultiplier: &personal, InviteeDiscountFactor: &invitee}
+	apiKey := &service.APIKey{Group: &service.Group{
+		RateMultiplier:  1,
+		PeakRateEnabled: true, PeakStart: "14:00", PeakEnd: "18:00", PeakRateMultiplier: 2,
+		NightRateEnabled: true, NightStart: "22:00", NightEnd: "08:00", NightRateMultiplier: 0.5,
+	}}
+	for _, tc := range []struct {
+		hour int
+		want float64
+	}{
+		{hour: 12, want: 0.9},
+		{hour: 23, want: 0.9},
+		{hour: 15, want: 0.9},
+	} {
+		t.Run(fmt.Sprintf("hour_%d", tc.hour), func(t *testing.T) {
+			now := time.Date(2026, time.July, 12, tc.hour, 0, 0, 0, timezone.Location())
+			got := buildKeyBillingInfoWithUserGroupRate(apiKey, rate, now)
+			require.Equal(t, 1, got.SchemaVersion)
+			require.Equal(t, 0.9, got.ResolvedRateMultiplier)
+			require.InDelta(t, tc.want, got.EffectiveRateMultiplier, 1e-12)
+			require.Equal(t, &rate, got.UserGroupRate)
+			require.False(t, got.PeakRateEnabled)
+			require.False(t, got.NightRateEnabled)
+			require.Equal(t, 1.0, *got.AppliedPeakMultiplier)
+			require.Equal(t, 1.0, got.AppliedNightMultiplier)
+			require.Equal(t, 1.0, got.NightRateMultiplier)
+			require.Nil(t, got.Timezone)
+			encoded, err := json.Marshal(got)
+			require.NoError(t, err)
+			var fields map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(encoded, &fields))
+			require.JSONEq(t, `{"group_rate_multiplier":1,"user_rate_multiplier":0.8,"invitee_discount_factor":0.9}`, string(fields["user_group_rate"]))
+			for _, field := range []string{"peak_start", "peak_end", "peak_rate_multiplier", "night_start", "night_end", "timezone"} {
+				require.NotContains(t, fields, field)
+			}
+		})
+	}
+}
+
+func TestGatewayHandlerKeyBillingInfoIncludesInviteePricingByPlatform(t *testing.T) {
+	for _, platform := range []string{service.PlatformAnthropic, service.PlatformOpenAI, service.PlatformGrok} {
+		t.Run(platform, func(t *testing.T) {
+			groupID := int64(7)
+			personal := 0.8
+			repo := &keyBillingInviteeGroupRateRepo{keyBillingUserGroupRateRepo: &keyBillingUserGroupRateRepo{rate: &personal}, factor: 0.9}
+			apiKey := &service.APIKey{
+				UserID: 11, GroupID: &groupID,
+				Group: &service.Group{ID: groupID, Platform: platform, RateMultiplier: 1.2},
+			}
+			h := newKeyBillingHandler(repo)
+			for _, groupRate := range []float64{1.2, 2} {
+				apiKey.Group.RateMultiplier = groupRate
+				c, w := newKeyBillingContext(apiKey)
+				h.KeyBillingInfo(c)
+				require.Equal(t, http.StatusOK, w.Code)
+				var got keyBillingInfoResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+				require.InDelta(t, groupRate*0.9, got.ResolvedRateMultiplier, 1e-12)
+				require.InDelta(t, groupRate*0.9, got.EffectiveRateMultiplier, 1e-12)
+				require.NotNil(t, got.UserGroupRate)
+				require.Equal(t, groupRate, got.UserGroupRate.GroupRateMultiplier)
+				require.Equal(t, 0.8, *got.UserGroupRate.UserRateMultiplier)
+				require.Equal(t, 0.9, *got.UserGroupRate.InviteeDiscountFactor)
+			}
+			require.Equal(t, 1, repo.lookupCalls, "cached invitation settings must follow the current group default")
+		})
+	}
+}
+
+func TestBuildKeyBillingInfoInviteePreservesOriginalPersonalRate(t *testing.T) {
+	personal, invitee := 1.2, 0.9
+	rate := service.UserGroupRate{GroupRateMultiplier: 1, UserRateMultiplier: &personal, InviteeDiscountFactor: &invitee}
+	apiKey := &service.APIKey{Group: &service.Group{RateMultiplier: 1}}
+	got := buildKeyBillingInfoWithUserGroupRate(apiKey, rate, time.Now())
+
+	require.Equal(t, 0.9, got.ResolvedRateMultiplier)
+	require.Equal(t, 0.9, *got.UserRateMultiplier)
+	require.Equal(t, 1.2, *got.UserGroupRate.UserRateMultiplier)
 }
 
 func TestGatewayHandlerKeyBillingInfoErrorsAreSafe(t *testing.T) {

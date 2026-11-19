@@ -6,6 +6,7 @@
 
 import { apiClient } from './client'
 import type { UserPricingInterval, UserSupportedModelPricing } from './channels'
+import type { UserGroupRate } from './groups'
 
 /** 官方参考价（USD per token，与计费目录同源；字段缺失 = 目录未覆盖）。 */
 export interface PlazaOfficialPricing {
@@ -27,7 +28,7 @@ export interface PlazaOfficialPricing {
  */
 export type PlazaLongContextBasis = 'whole_request' | 'marginal'
 
-/** 分时倍率时段：配置时区当天 [start_time, end_time) 内整单实付乘 multiplier。 */
+/** 配置时区当天 [start_time, end_time) 内的渠道时段因子；邀请倍率不使用时段因子。 */
 export interface PlazaTimePricingPeriod {
   start_time: string
   end_time: string
@@ -61,8 +62,9 @@ export interface ModelPlazaGroup {
   description: string
   platform: string
   rate_multiplier: number
-  /** 登录且管理员为该用户配了专属倍率时返回；生效倍率 = user_rate ?? rate_multiplier。 */
+  /** 用户生效倍率；存在邀请折扣时为当前分组倍率乘邀请折扣。 */
   user_rate_multiplier?: number
+  user_group_rate?: UserGroupRate
   peak_rate_enabled: boolean
   peak_start: string
   peak_end: string

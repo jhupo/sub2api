@@ -14,7 +14,7 @@
       <template v-if="hasCustomRate">
         <!-- 原倍率删除线 + 专属倍率高亮 -->
         <span class="line-through opacity-50 mr-0.5">{{ rateMultiplier }}x</span>
-        <span class="font-bold">{{ userRateMultiplier }}x</span>
+        <span class="font-bold">{{ effectiveRate }}x</span>
       </template>
       <template v-else>
         {{ labelText }}
@@ -31,8 +31,10 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { GroupPlatform } from '@/types'
+import type { UserGroupRate } from '@/api/groups'
 import { useAppStore } from '@/stores/app'
-import { formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
+import { serverTimezoneLabel } from '@/utils/peak-rate'
+import { formatUserGroupRateWindow, hasInviteeDiscount, resolveUserGroupRate } from '@/utils/userGroupRate'
 import PlatformIcon from './PlatformIcon.vue'
 
 interface Props {
@@ -40,6 +42,7 @@ interface Props {
   platform?: GroupPlatform
   rateMultiplier?: number
   userRateMultiplier?: number | null // 用户专属倍率
+  userGroupRate?: UserGroupRate
   nightRateEnabled?: boolean
   nightStart?: string
   nightEnd?: string
@@ -59,41 +62,44 @@ const props = withDefaults(defineProps<Props>(), {
 
 const { t } = useI18n()
 
+const effectiveRate = computed(() => props.userGroupRate ? resolveUserGroupRate(props.userGroupRate) : (props.userRateMultiplier ?? props.rateMultiplier))
+
 // 是否有专属倍率（且与默认倍率不同）
 const hasCustomRate = computed(() => {
   return (
-    props.userRateMultiplier !== null &&
-    props.userRateMultiplier !== undefined &&
+    effectiveRate.value !== undefined &&
     props.rateMultiplier !== undefined &&
-    props.userRateMultiplier !== props.rateMultiplier
+    effectiveRate.value !== props.rateMultiplier
   )
 })
 
 const appStore = useAppStore()
 
 const hasPeakRate = computed(() => {
-  return Boolean(props.showRate && props.peakRateEnabled && props.peakStart && props.peakEnd)
+  return Boolean(!hasInviteeDiscount(props.userGroupRate) && props.showRate && props.peakRateEnabled && props.peakStart && props.peakEnd)
 })
 
 const peakRateText = computed(() => {
-  return formatPeakRateWindow(
+  return formatUserGroupRateWindow(
     {
       peak_rate_enabled: props.peakRateEnabled,
       peak_start: props.peakStart,
       peak_end: props.peakEnd,
       peak_rate_multiplier: props.peakRateMultiplier
     },
+    props.userGroupRate,
     serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
   )
 })
 
-const nightRateText = computed(() => formatPeakRateWindow(
+const nightRateText = computed(() => formatUserGroupRateWindow(
   {
     peak_rate_enabled: props.nightRateEnabled,
     peak_start: props.nightStart,
     peak_end: props.nightEnd,
     peak_rate_multiplier: props.nightRateMultiplier
   },
+  props.userGroupRate,
   serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
 ))
 

@@ -100,6 +100,7 @@
                     :platform="g.platform as GroupPlatform"
                     :rate-multiplier="g.rate_multiplier"
                     :user-rate-multiplier="userGroupRates[g.id] ?? null"
+                    :user-group-rate="userGroupRateDetails?.[g.id]"
                   />
                   <span
                     v-if="hasPeakRate(g)"
@@ -132,6 +133,7 @@
                     :platform="g.platform as GroupPlatform"
                     :rate-multiplier="g.rate_multiplier"
                     :user-rate-multiplier="userGroupRates[g.id] ?? null"
+                    :user-group-rate="userGroupRateDetails?.[g.id]"
                   />
                   <span
                     v-if="hasPeakRate(g)"
@@ -235,6 +237,7 @@
                         :platform="g.platform as GroupPlatform"
                         :rate-multiplier="g.rate_multiplier"
                         :user-rate-multiplier="userGroupRates[g.id] ?? null"
+                        :user-group-rate="userGroupRateDetails?.[g.id]"
                       />
                       <span
                         v-if="hasPeakRate(g)"
@@ -268,6 +271,7 @@
                         :platform="g.platform as GroupPlatform"
                         :rate-multiplier="g.rate_multiplier"
                         :user-rate-multiplier="userGroupRates[g.id] ?? null"
+                        :user-group-rate="userGroupRateDetails?.[g.id]"
                       />
                       <span
                         v-if="hasPeakRate(g)"
@@ -319,9 +323,11 @@ import GroupBadge from '@/components/common/GroupBadge.vue'
 import SupportedModelChip from './SupportedModelChip.vue'
 import type { UserAvailableChannel, UserAvailableGroup, UserChannelPlatformSection } from '@/api/channels'
 import type { GroupPlatform } from '@/types'
+import type { UserGroupRate } from '@/api/groups'
 import { platformBadgeClass } from '@/utils/platformColors'
 import { useAppStore } from '@/stores/app'
-import { hasPeakRate as groupHasPeakRate, formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
+import { hasPeakRate as groupHasPeakRate, serverTimezoneLabel } from '@/utils/peak-rate'
+import { formatUserGroupRateWindow, hasInviteeDiscount } from '@/utils/userGroupRate'
 
 const props = defineProps<{
   columns: {
@@ -339,6 +345,7 @@ const props = defineProps<{
   emptyLabel: string
   /** 用户专属倍率（group_id → multiplier）；无专属时由 GroupBadge 仅显示默认倍率。 */
   userGroupRates: Record<number, number>
+  userGroupRateDetails?: Record<number, UserGroupRate>
 }>()
 
 // Suppress unused warning — props is accessed via template automatically but
@@ -358,11 +365,11 @@ function publicGroups(section: UserChannelPlatformSection): UserAvailableGroup[]
 const appStore = useAppStore()
 
 function hasPeakRate(group: UserAvailableGroup): boolean {
-  return groupHasPeakRate(group)
+  return !hasInviteeDiscount(props.userGroupRateDetails?.[group.id]) && groupHasPeakRate(group)
 }
 
 function peakRateLabel(group: UserAvailableGroup): string {
-  return formatPeakRateWindow(group, serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset))
+  return formatUserGroupRateWindow(group, props.userGroupRateDetails?.[group.id], serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset))
 }
 
 function peakRateTitle(group: UserAvailableGroup): string {

@@ -151,6 +151,80 @@ func (r *userGroupRateRepository) GetByUserAndGroup(ctx context.Context, userID,
 	return &v, nil
 }
 
+// GetEffectiveByUserAndGroup applies an invitation factor to the current group rate.
+func (r *userGroupRateRepository) GetEffectiveByUserAndGroup(ctx context.Context, userID, groupID int64, groupDefaultMultiplier float64) (float64, error) {
+	rate, err := r.GetUserGroupRate(ctx, userID, groupID, groupDefaultMultiplier)
+	return rate.BaseRate(), err
+}
+
+func (r *userGroupRateRepository) GetUserGroupRate(ctx context.Context, userID, groupID int64, groupDefaultMultiplier float64) (service.UserGroupRate, error) {
+	var userRate, factor sql.NullFloat64
+	err := scanSingleRow(ctx, r.sql, `
+SELECT ugr.rate_multiplier,
+       (inviter.invitee_group_discount_factors ->> ($2::bigint)::text)::double precision
+FROM (SELECT $1::bigint AS user_id) subject
+LEFT JOIN user_group_rate_multipliers ugr ON ugr.user_id = subject.user_id AND ugr.group_id = $2
+LEFT JOIN user_affiliates invitee ON invitee.user_id = subject.user_id
+LEFT JOIN user_affiliates inviter ON inviter.user_id = invitee.inviter_id`, []any{userID, groupID}, &userRate, &factor)
+	return userGroupRateFromSQL(groupDefaultMultiplier, userRate, factor), err
+}
+
+func (r *userGroupRateRepository) GetEffectiveByUserID(ctx context.Context, userID int64) (map[int64]float64, error) {
+	details, err := r.GetUserGroupRates(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	rates := make(map[int64]float64, len(details))
+	for groupID, rate := range details {
+		rates[groupID] = rate.BaseRate()
+	}
+	return rates, nil
+}
+
+func userGroupRateFromSQL(groupDefault float64, userRate, factor sql.NullFloat64) service.UserGroupRate {
+	rate := service.UserGroupRate{GroupRateMultiplier: groupDefault}
+	if userRate.Valid {
+		rate.UserRateMultiplier = &userRate.Float64
+	}
+	if factor.Valid {
+		rate.InviteeDiscountFactor = &factor.Float64
+	}
+	return rate
+}
+
+func (r *userGroupRateRepository) GetUserGroupRates(ctx context.Context, userID int64) (map[int64]service.UserGroupRate, error) {
+	rows, err := r.sql.QueryContext(ctx, `
+SELECT g.id, g.rate_multiplier, ugr.rate_multiplier,
+       (inviter.invitee_group_discount_factors ->> g.id::text)::double precision
+FROM groups g
+LEFT JOIN user_group_rate_multipliers ugr ON ugr.user_id = $1 AND ugr.group_id = g.id
+LEFT JOIN user_affiliates invitee ON invitee.user_id = $1
+LEFT JOIN user_affiliates inviter ON inviter.user_id = invitee.inviter_id
+WHERE g.deleted_at IS NULL
+  AND (ugr.rate_multiplier IS NOT NULL
+       OR COALESCE(inviter.invitee_group_discount_factors ? g.id::text, false))
+`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	rates := make(map[int64]service.UserGroupRate)
+	for rows.Next() {
+		var groupID int64
+		var groupRate float64
+		var userRate, factor sql.NullFloat64
+		if err := rows.Scan(&groupID, &groupRate, &userRate, &factor); err != nil {
+			return nil, err
+		}
+		rates[groupID] = userGroupRateFromSQL(groupRate, userRate, factor)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return rates, nil
+}
+
 // GetRPMOverrideByUserAndGroup 获取用户在特定分组的 rpm_override（NULL 返回 nil）
 func (r *userGroupRateRepository) GetRPMOverrideByUserAndGroup(ctx context.Context, userID, groupID int64) (*int, error) {
 	query := `SELECT rpm_override FROM user_group_rate_multipliers WHERE user_id = $1 AND group_id = $2`

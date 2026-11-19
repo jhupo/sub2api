@@ -1192,17 +1192,41 @@ func (s *APIKeyService) GetUserGroupVisibility(ctx context.Context, userID int64
 	return allowed, user.RestrictPublicGroups, nil
 }
 
-// GetUserGroupRates 获取用户的专属分组倍率配置
+// GetUserGroupRates returns group rates before time-window adjustments.
 // 返回 map[groupID]rateMultiplier
 func (s *APIKeyService) GetUserGroupRates(ctx context.Context, userID int64) (map[int64]float64, error) {
 	if s.userGroupRateRepo == nil {
 		return nil, nil
+	}
+	if effectiveRepo, ok := s.userGroupRateRepo.(interface {
+		GetEffectiveByUserID(context.Context, int64) (map[int64]float64, error)
+	}); ok {
+		rates, err := effectiveRepo.GetEffectiveByUserID(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("get effective user group rates: %w", err)
+		}
+		return rates, nil
 	}
 	rates, err := s.userGroupRateRepo.GetByUserID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user group rates: %w", err)
 	}
 	return rates, nil
+}
+
+// GetUserGroupRateDetails exposes the current group rate and invitation factor
+// so clients can calculate group-relative invitation prices.
+func (s *APIKeyService) GetUserGroupRateDetails(ctx context.Context, userID int64) (map[int64]UserGroupRate, error) {
+	if repo, ok := s.userGroupRateRepo.(interface {
+		GetUserGroupRates(context.Context, int64) (map[int64]UserGroupRate, error)
+	}); ok {
+		rates, err := repo.GetUserGroupRates(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("get user group rate details: %w", err)
+		}
+		return rates, nil
+	}
+	return nil, nil
 }
 
 // CheckAPIKeyQuotaAndExpiry checks if the API key is valid for use (not expired, quota not exhausted)

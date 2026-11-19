@@ -432,6 +432,160 @@ func TestBatchImagePublicService_Submit(t *testing.T) {
 	})
 }
 
+func TestBatchImagePublicService_SubmitInviteeGroupDiscount(t *testing.T) {
+	userRate := 0.8
+	higherUserRate := 1.4
+	for _, tc := range []struct {
+		name                 string
+		userRate             *float64
+		inviteeFactor        float64
+		batchFactor          float64
+		holdFactor           float64
+		imageRateIndependent bool
+		rateErr              error
+		wantMultiplier       float64
+		wantBatchFactor      float64
+		wantHoldFactor       float64
+		wantEstimatedCost    float64
+		wantHoldAmount       float64
+	}{
+		{
+			name:              "uses the fixed invitation rate",
+			userRate:          &higherUserRate,
+			inviteeFactor:     0.4,
+			batchFactor:       0.5,
+			holdFactor:        0.6,
+			wantMultiplier:    0.8,
+			wantBatchFactor:   1,
+			wantHoldFactor:    1,
+			wantEstimatedCost: 0.4,
+			wantHoldAmount:    0.4,
+		},
+		{
+			name:              "ignores cheaper personal and batch pricing",
+			userRate:          &userRate,
+			inviteeFactor:     0.9,
+			batchFactor:       0.5,
+			holdFactor:        0.6,
+			wantMultiplier:    1.8,
+			wantBatchFactor:   1,
+			wantHoldFactor:    1,
+			wantEstimatedCost: 0.9,
+			wantHoldAmount:    0.9,
+		},
+		{
+			name:              "preserves hold budgets above the invitation price",
+			userRate:          &higherUserRate,
+			inviteeFactor:     0.9,
+			batchFactor:       0.5,
+			holdFactor:        1.2,
+			wantMultiplier:    1.8,
+			wantBatchFactor:   1,
+			wantHoldFactor:    1.2,
+			wantEstimatedCost: 0.9,
+			wantHoldAmount:    1.08,
+		},
+		{
+			name:              "holds the full invitation price when configured hold is lower",
+			userRate:          &higherUserRate,
+			inviteeFactor:     0.9,
+			batchFactor:       0.5,
+			holdFactor:        0.4,
+			wantMultiplier:    1.8,
+			wantBatchFactor:   1,
+			wantHoldFactor:    1,
+			wantEstimatedCost: 0.9,
+			wantHoldAmount:    0.9,
+		},
+		{
+			name:              "ignores zero batch discount for invited users",
+			inviteeFactor:     0.9,
+			batchFactor:       0,
+			holdFactor:        0.6,
+			wantMultiplier:    1.8,
+			wantBatchFactor:   1,
+			wantHoldFactor:    1,
+			wantEstimatedCost: 0.9,
+			wantHoldAmount:    0.9,
+		},
+		{
+			name:                 "preserves the independent image rate",
+			userRate:             &userRate,
+			inviteeFactor:        0.4,
+			batchFactor:          0.5,
+			holdFactor:           0.6,
+			imageRateIndependent: true,
+			wantMultiplier:       1.5,
+			wantBatchFactor:      0.5,
+			wantHoldFactor:       0.6,
+			wantEstimatedCost:    0.375,
+			wantHoldAmount:       0.45,
+		},
+		{
+			name:    "rejects when the effective rate is unavailable",
+			rateErr: context.DeadlineExceeded,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, repo, queue, gemini, vertex := newTestBatchImagePublicService(true)
+			groupID := int64(7)
+			svc.GroupRepo = &publicBatchImageGroupRepo{groups: map[int64]*Group{
+				groupID: {
+					ID:                           groupID,
+					Platform:                     PlatformGemini,
+					RateMultiplier:               2,
+					AllowImageGeneration:         true,
+					AllowBatchImageGeneration:    true,
+					ImageRateIndependent:         tc.imageRateIndependent,
+					ImageRateMultiplier:          1.5,
+					BatchImageDiscountMultiplier: tc.batchFactor,
+					BatchImageHoldMultiplier:     tc.holdFactor,
+				},
+			}}
+			rateRepo := &userGroupRateDiscountRepoStub{
+				userGroupRateResolverRepoStub: &userGroupRateResolverRepoStub{rate: tc.userRate},
+				factor:                        tc.inviteeFactor,
+				discountErr:                   tc.rateErr,
+			}
+			svc.UserGroupRateRepo = rateRepo
+			billing := svc.BillingRepo.(*fakeBatchImageBillingRepo)
+
+			got, err := svc.Submit(context.Background(), BatchImageOwner{UserID: 11, APIKeyID: 22, GroupID: &groupID}, validBatchImageSubmitRequest(), "")
+			require.Equal(t, 1, rateRepo.discountCalls)
+			if tc.rateErr != nil {
+				require.ErrorIs(t, err, ErrBatchImageSettlementPricingMissing)
+				require.Nil(t, got)
+				require.Empty(t, repo.jobs)
+				require.Empty(t, billing.reserves)
+				require.Empty(t, queue.enqueued)
+				require.Empty(t, gemini.submits)
+				require.Empty(t, vertex.submits)
+				return
+			}
+
+			require.NoError(t, err)
+			require.InDelta(t, tc.wantEstimatedCost, got.EstimatedCost, 1e-12)
+			require.Len(t, repo.jobs, 1)
+			job := repo.jobs[got.ID]
+			require.InDelta(t, tc.wantMultiplier, job.GroupRateMultiplier, 1e-12)
+			require.InDelta(t, tc.wantBatchFactor, job.BatchDiscountMultiplier, 1e-12)
+			require.InDelta(t, tc.wantHoldFactor, job.HoldMultiplier, 1e-12)
+			require.InDelta(t, tc.wantEstimatedCost/2, job.BillableUnitPrice, 1e-12)
+			require.InDelta(t, tc.wantHoldAmount/2, job.HoldUnitPrice, 1e-12)
+			require.InDelta(t, job.BaseUnitPrice*job.GroupRateMultiplier*job.BatchDiscountMultiplier*job.AccountRateMultiplier, job.BillableUnitPrice, 1e-12)
+			require.InDelta(t, job.BaseUnitPrice*job.GroupRateMultiplier*job.HoldMultiplier*job.AccountRateMultiplier, job.HoldUnitPrice, 1e-12)
+			require.NotNil(t, job.HoldAmount)
+			require.InDelta(t, tc.wantHoldAmount, *job.HoldAmount, 1e-12)
+			require.GreaterOrEqual(t, *job.HoldAmount, got.EstimatedCost)
+			require.Len(t, billing.reserves, 1)
+			require.InDelta(t, tc.wantHoldAmount, billing.reserves[0].HoldAmount, 1e-12)
+			require.Equal(t, []string{got.ID}, queue.enqueued)
+			require.Len(t, gemini.submits, 1)
+			require.Empty(t, vertex.submits)
+		})
+	}
+}
+
 func TestBatchImagePublicService_List(t *testing.T) {
 	ctx := context.Background()
 	svc, repo, _, _, _ := newTestBatchImagePublicService(true)

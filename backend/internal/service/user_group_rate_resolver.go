@@ -18,6 +18,32 @@ type userGroupRateResolver struct {
 	logComponent string
 }
 
+type userGroupRateReader interface {
+	GetByUserAndGroup(ctx context.Context, userID, groupID int64) (*float64, error)
+}
+
+type userGroupPricingReader interface {
+	GetUserGroupRate(ctx context.Context, userID, groupID int64, groupDefaultMultiplier float64) (UserGroupRate, error)
+}
+
+func loadEffectiveUserGroupRate(ctx context.Context, repo userGroupRateReader, userID, groupID int64, groupDefaultMultiplier float64) (float64, error) {
+	rate, err := loadUserGroupRate(ctx, repo, userID, groupID, groupDefaultMultiplier)
+	return rate.BaseRate(), err
+}
+
+func loadUserGroupRate(ctx context.Context, repo userGroupRateReader, userID, groupID int64, groupDefaultMultiplier float64) (UserGroupRate, error) {
+	if pricingRepo, ok := repo.(userGroupPricingReader); ok {
+		return pricingRepo.GetUserGroupRate(ctx, userID, groupID, groupDefaultMultiplier)
+	}
+	rate := UserGroupRate{GroupRateMultiplier: groupDefaultMultiplier}
+	userRate, err := repo.GetByUserAndGroup(ctx, userID, groupID)
+	if err != nil {
+		return rate, err
+	}
+	rate.UserRateMultiplier = userRate
+	return rate, nil
+}
+
 func newUserGroupRateResolver(repo UserGroupRateRepository, cache *gocache.Cache, cacheTTL time.Duration, sf *singleflight.Group, logComponent string) *userGroupRateResolver {
 	if cacheTTL <= 0 {
 		cacheTTL = defaultUserGroupRateCacheTTL
@@ -42,48 +68,61 @@ func newUserGroupRateResolver(repo UserGroupRateRepository, cache *gocache.Cache
 }
 
 func (r *userGroupRateResolver) Resolve(ctx context.Context, userID, groupID int64, groupDefaultMultiplier float64) float64 {
+	return r.ResolveRate(ctx, userID, groupID, groupDefaultMultiplier).BaseRate()
+}
+
+func cachedUserGroupRate(value any, groupDefaultMultiplier float64) (UserGroupRate, bool) {
+	switch cached := value.(type) {
+	case UserGroupRate:
+		// Group defaults are request snapshots, not user-specific cached state.
+		cached.GroupRateMultiplier = groupDefaultMultiplier
+		return cached, true
+	case float64:
+		return UserGroupRate{GroupRateMultiplier: groupDefaultMultiplier, UserRateMultiplier: &cached}, true
+	default:
+		return UserGroupRate{}, false
+	}
+}
+
+func (r *userGroupRateResolver) ResolveRate(ctx context.Context, userID, groupID int64, groupDefaultMultiplier float64) UserGroupRate {
+	fallback := UserGroupRate{GroupRateMultiplier: groupDefaultMultiplier}
 	if r == nil || userID <= 0 || groupID <= 0 {
-		return groupDefaultMultiplier
+		return fallback
 	}
 
 	key := fmt.Sprintf("%d:%d", userID, groupID)
 	if r.cache != nil {
 		if cached, ok := r.cache.Get(key); ok {
-			if multiplier, castOK := cached.(float64); castOK {
+			if rate, castOK := cachedUserGroupRate(cached, groupDefaultMultiplier); castOK {
 				userGroupRateCacheHitTotal.Add(1)
-				return multiplier
+				return rate
 			}
 		}
 	}
 	if r.repo == nil {
-		return groupDefaultMultiplier
+		return fallback
 	}
 	userGroupRateCacheMissTotal.Add(1)
 
 	value, err, shared := r.sf.Do(key, func() (any, error) {
 		if r.cache != nil {
 			if cached, ok := r.cache.Get(key); ok {
-				if multiplier, castOK := cached.(float64); castOK {
+				if rate, castOK := cachedUserGroupRate(cached, groupDefaultMultiplier); castOK {
 					userGroupRateCacheHitTotal.Add(1)
-					return multiplier, nil
+					return rate, nil
 				}
 			}
 		}
 
 		userGroupRateCacheLoadTotal.Add(1)
-		userRate, repoErr := r.repo.GetByUserAndGroup(ctx, userID, groupID)
+		rate, repoErr := loadUserGroupRate(ctx, r.repo, userID, groupID, groupDefaultMultiplier)
 		if repoErr != nil {
 			return nil, repoErr
 		}
-
-		multiplier := groupDefaultMultiplier
-		if userRate != nil {
-			multiplier = *userRate
-		}
 		if r.cache != nil {
-			r.cache.Set(key, multiplier, r.cacheTTL)
+			r.cache.Set(key, rate, r.cacheTTL)
 		}
-		return multiplier, nil
+		return rate, nil
 	})
 	if shared {
 		userGroupRateCacheSFSharedTotal.Add(1)
@@ -91,13 +130,13 @@ func (r *userGroupRateResolver) Resolve(ctx context.Context, userID, groupID int
 	if err != nil {
 		userGroupRateCacheFallbackTotal.Add(1)
 		logger.LegacyPrintf(r.logComponent, "get user group rate failed, fallback to group default: user=%d group=%d err=%v", userID, groupID, err)
-		return groupDefaultMultiplier
+		return fallback
 	}
 
-	multiplier, ok := value.(float64)
+	rate, ok := cachedUserGroupRate(value, groupDefaultMultiplier)
 	if !ok {
 		userGroupRateCacheFallbackTotal.Add(1)
-		return groupDefaultMultiplier
+		return fallback
 	}
-	return multiplier
+	return rate
 }

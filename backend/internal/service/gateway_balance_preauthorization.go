@@ -103,12 +103,16 @@ func (s *GatewayService) BalancePreauthorizationCostInput(
 	if s != nil && s.cfg != nil {
 		multiplier = s.cfg.Default.RateMultiplier
 	}
+	rate := UserGroupRate{GroupRateMultiplier: multiplier}
 	if s != nil && apiKey != nil && apiKey.GroupID != nil && apiKey.Group != nil {
-		multiplier = s.ResolveUserGroupRateMultiplier(ctx, balancePreauthorizationAPIKeyUserID(apiKey), *apiKey.GroupID, apiKey.Group.RateMultiplier)
+		rate = s.ResolveUserGroupRate(ctx, balancePreauthorizationAPIKeyUserID(apiKey), *apiKey.GroupID, apiKey.Group.RateMultiplier)
 	}
-	textMultiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
+	multiplier = rate.BaseRate()
+	textMultiplier := rate.ResolveAt(balancePreauthorizationAPIKeyGroup(apiKey), pricingAt)
+	imageMultiplier := resolveImageRateMultiplier(apiKey, multiplier)
 	videoMultiplier := resolveVideoRateMultiplier(apiKey, multiplier)
 	multiplier = balancePreauthorizationRateMultiplier(rateKind, textMultiplier, imageMultiplier, videoMultiplier, multiplier)
+	tokenPricing := rateKind == BalancePreauthorizationRateText
 	resolver := s.gatewayPricingResolver()
 	var resolved *ResolvedPricing
 	if resolver != nil {
@@ -117,7 +121,14 @@ func (s *GatewayService) BalancePreauthorizationCostInput(
 		})
 		if rateKind != BalancePreauthorizationRateBase && resolved != nil && (resolved.Mode == "" || resolved.Mode == BillingModeToken) {
 			multiplier = textMultiplier
+			tokenPricing = true
+		} else if resolved != nil {
+			tokenPricing = false
 		}
+	}
+	var ratePolicy *UserGroupRate
+	if tokenPricing && rate.InviteeDiscountFactor != nil {
+		ratePolicy = &rate
 	}
 	return CostInput{
 		Ctx:            ctx,
@@ -125,6 +136,7 @@ func (s *GatewayService) BalancePreauthorizationCostInput(
 		GroupID:        apiKeyGroupID(apiKey),
 		Group:          balancePreauthorizationAPIKeyGroup(apiKey),
 		RateMultiplier: multiplier,
+		UserGroupRate:  ratePolicy,
 		PricingAt:      pricingAt,
 		ServiceTier:    strings.TrimSpace(serviceTier),
 		Resolver:       resolver,
@@ -147,12 +159,16 @@ func (s *OpenAIGatewayService) BalancePreauthorizationCostInput(
 	if s != nil && s.cfg != nil {
 		multiplier = s.cfg.Default.RateMultiplier
 	}
+	rate := UserGroupRate{GroupRateMultiplier: multiplier}
 	if s != nil && apiKey != nil && apiKey.GroupID != nil && apiKey.Group != nil {
-		multiplier = s.ResolveUserGroupRateMultiplier(ctx, balancePreauthorizationAPIKeyUserID(apiKey), *apiKey.GroupID, apiKey.Group.RateMultiplier)
+		rate = s.ResolveUserGroupRate(ctx, balancePreauthorizationAPIKeyUserID(apiKey), *apiKey.GroupID, apiKey.Group.RateMultiplier)
 	}
-	textMultiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
+	multiplier = rate.BaseRate()
+	textMultiplier := rate.ResolveAt(balancePreauthorizationAPIKeyGroup(apiKey), pricingAt)
+	imageMultiplier := resolveImageRateMultiplier(apiKey, multiplier)
 	videoMultiplier := resolveVideoRateMultiplier(apiKey, multiplier)
 	multiplier = balancePreauthorizationRateMultiplier(rateKind, textMultiplier, imageMultiplier, videoMultiplier, multiplier)
+	tokenPricing := rateKind == BalancePreauthorizationRateText
 	resolver := s.openAIGatewayPricingResolver()
 	var resolved *ResolvedPricing
 	if resolver != nil {
@@ -161,7 +177,14 @@ func (s *OpenAIGatewayService) BalancePreauthorizationCostInput(
 		})
 		if rateKind != BalancePreauthorizationRateBase && resolved != nil && (resolved.Mode == "" || resolved.Mode == BillingModeToken) {
 			multiplier = textMultiplier
+			tokenPricing = true
+		} else if resolved != nil {
+			tokenPricing = false
 		}
+	}
+	var ratePolicy *UserGroupRate
+	if tokenPricing && rate.InviteeDiscountFactor != nil {
+		ratePolicy = &rate
 	}
 	return CostInput{
 		Ctx:            ctx,
@@ -169,6 +192,7 @@ func (s *OpenAIGatewayService) BalancePreauthorizationCostInput(
 		GroupID:        apiKeyGroupID(apiKey),
 		Group:          balancePreauthorizationAPIKeyGroup(apiKey),
 		RateMultiplier: multiplier,
+		UserGroupRate:  ratePolicy,
 		PricingAt:      pricingAt,
 		ServiceTier:    strings.TrimSpace(serviceTier),
 		Resolver:       resolver,

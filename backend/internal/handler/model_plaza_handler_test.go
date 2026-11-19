@@ -104,7 +104,7 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 	}
 
 	// 有专属倍率:user_rate_multiplier 序列化输出
-	dto := toModelPlazaGroupDTO(&g, map[int64]float64{2: 0.5})
+	dto := toModelPlazaGroupDTO(&g, map[int64]float64{2: 0.5}, nil)
 	raw, err := json.Marshal(dto)
 	require.NoError(t, err)
 	var decoded map[string]any
@@ -140,7 +140,7 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 	require.False(t, hasTimePricing, "无分时时不输出 time_pricing")
 
 	// 无专属倍率:user_rate_multiplier 整个字段省略
-	dtoNoRate := toModelPlazaGroupDTO(&g, nil)
+	dtoNoRate := toModelPlazaGroupDTO(&g, nil, nil)
 	rawNoRate, err := json.Marshal(dtoNoRate)
 	require.NoError(t, err)
 	var decodedNoRate map[string]any
@@ -151,6 +151,22 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 
 func TestToModelPlazaOfficialPricing_NilPassthrough(t *testing.T) {
 	require.Nil(t, toModelPlazaOfficialPricing(nil))
+}
+
+func TestToModelPlazaGroupDTO_InvitationRateMetadata(t *testing.T) {
+	policy := service.UserGroupRate{GroupRateMultiplier: 2, UserRateMultiplier: testPtr(1.6), InviteeDiscountFactor: testPtr(0.9)}
+	dto := toModelPlazaGroupDTO(&service.PlazaGroup{ID: 2, RateMultiplier: 2}, map[int64]float64{2: policy.BaseRate()}, map[int64]service.UserGroupRate{2: policy})
+	require.NotNil(t, dto.UserRateMultiplier)
+	require.Equal(t, 1.8, *dto.UserRateMultiplier)
+	require.Equal(t, &policy, dto.UserGroupRate)
+	raw, err := json.Marshal(dto)
+	require.NoError(t, err)
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	metadata := decoded["user_group_rate"].(map[string]any)
+	require.Equal(t, 2.0, metadata["group_rate_multiplier"])
+	require.Equal(t, 1.6, metadata["user_rate_multiplier"])
+	require.Equal(t, 0.9, metadata["invitee_discount_factor"])
 }
 
 func TestToModelPlazaGroupDTO_LongContextTiersAndBasis(t *testing.T) {
@@ -180,7 +196,7 @@ func TestToModelPlazaGroupDTO_LongContextTiersAndBasis(t *testing.T) {
 		}},
 	}
 
-	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil))
+	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil, nil))
 	require.NoError(t, err)
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(raw, &decoded))
@@ -224,7 +240,7 @@ func TestToModelPlazaGroupDTO_TimePricing(t *testing.T) {
 			}},
 		}},
 	}
-	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil))
+	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil, nil))
 	require.NoError(t, err)
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(raw, &decoded))

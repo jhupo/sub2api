@@ -269,7 +269,7 @@
             <span v-else class="text-gray-400 dark:text-dark-500">-</span>
           </td>
 
-          <!-- 折扣倍率(分时时段行展示 生效倍率×时段倍率;生图独立倍率行展示独立倍率;专属倍率划线展示原倍率) -->
+          <!-- 倍率与价格采用相同口径；分组时段调整不在渠道时段行内合并。 -->
           <td
             class="border-l border-gray-100 py-2.5 pl-3 pr-5 text-right align-middle font-mono text-xs dark:border-dark-700/60"
           >
@@ -308,6 +308,8 @@ import {
 } from '@/constants/channel'
 import type { PlazaModel, PlazaTimePricingPeriod } from '@/api/modelPlaza'
 import type { UserPricingInterval } from '@/api/channels'
+import type { UserGroupRate } from '@/api/groups'
+import { hasInviteeDiscount, resolveUserGroupRate } from '@/utils/userGroupRate'
 
 const props = defineProps<{
   models: PlazaModel[]
@@ -317,14 +319,11 @@ const props = defineProps<{
   rateMultiplier: number
   /** 用户专属倍率;与默认不同,实付价按此计算并划线展示原倍率。 */
   userRateMultiplier?: number | null
+  userGroupRate?: UserGroupRate
   /** 生图独立倍率:true 时图片计费模型的实付倍率取 imageRateMultiplier,不取分组/专属倍率。 */
   imageRateIndependent?: boolean
   imageRateMultiplier?: number | null
-  /**
-   * 高峰窗口描述(含倍率与服务器时区标注),空串/缺省 = 分组未启用高峰。
-   * 表格所有价格均为不含高峰因子的口径,该窗口仅用于分时时段行的 tooltip 披露:
-   * 与高峰重叠的部分实付还会再乘高峰倍率。
-   */
+  /** Group windows disclose adjustments that are not combined with channel periods in this table. */
   peakWindow?: string
   peakRateMultiplier?: number | null
 }>()
@@ -356,9 +355,9 @@ const sortedModels = computed(() => {
   })
 })
 
-const effectiveRate = computed(() => props.userRateMultiplier ?? props.rateMultiplier)
+const effectiveRate = computed(() => props.userGroupRate ? resolveUserGroupRate(props.userGroupRate) : (props.userRateMultiplier ?? props.rateMultiplier))
 const hasCustomRate = computed(
-  () => props.userRateMultiplier != null && props.userRateMultiplier !== props.rateMultiplier
+  () => effectiveRate.value !== props.rateMultiplier
 )
 
 function billingMode(m: PlazaModel): BillingMode {
@@ -393,7 +392,7 @@ const rows = computed<PlazaRow[]>(() =>
   })
 )
 
-/** 时段行的生效倍率 = 生效倍率 × 时段倍率(去掉浮点噪声)。 */
+/** Non-invited users retain the existing time multiplier behavior. */
 function periodRate(period: PlazaTimePricingPeriod): number {
   return Math.round(effectiveRate.value * period.multiplier * 1000) / 1000
 }
@@ -444,7 +443,7 @@ function hasOfficialCache(o: NonNullable<PlazaModel['official_pricing']>): boole
 
 /** 分时倍率时段(后端只给出倍率 ≠ 1 的时段,已升序)。 */
 function timePeriods(m: PlazaModel): PlazaTimePricingPeriod[] {
-  return m.time_pricing?.periods ?? []
+  return hasInviteeDiscount(props.userGroupRate) ? [] : (m.time_pricing?.periods ?? [])
 }
 
 /**

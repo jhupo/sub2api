@@ -1,6 +1,9 @@
 package service
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // UserGroupRateEntry 分组下用户专属倍率/RPM 条目。
 // RateMultiplier 与 RPMOverride 均为指针以支持"未设置"语义（NULL）。
@@ -60,4 +63,48 @@ type UserGroupRateRepository interface {
 
 	// DeleteByUserID 删除指定用户的所有专属条目（用户删除时调用）
 	DeleteByUserID(ctx context.Context, userID int64) error
+}
+
+// UserGroupRate preserves the current group rate and the invitation factor so
+// invitation pricing follows group changes without storing an absolute rate.
+type UserGroupRate struct {
+	GroupRateMultiplier   float64  `json:"group_rate_multiplier"`
+	UserRateMultiplier    *float64 `json:"user_rate_multiplier,omitempty"`
+	InviteeDiscountFactor *float64 `json:"invitee_discount_factor,omitempty"`
+}
+
+func (r UserGroupRate) BaseRate() float64 {
+	if r.InviteeDiscountFactor != nil {
+		return r.GroupRateMultiplier * *r.InviteeDiscountFactor
+	}
+	if r.UserRateMultiplier != nil {
+		return *r.UserRateMultiplier
+	}
+	return r.GroupRateMultiplier
+}
+
+func (r UserGroupRate) Resolve(factors ...float64) float64 {
+	rate := r.BaseRate()
+	if r.InviteeDiscountFactor != nil {
+		return rate
+	}
+	for _, factor := range factors {
+		rate *= factor
+	}
+	return rate
+}
+
+func (r UserGroupRate) ResolveAt(group *Group, at time.Time, factors ...float64) float64 {
+	if r.InviteeDiscountFactor != nil {
+		return r.BaseRate()
+	}
+	factors = append(factors, group.PeakMultiplierAt(at), group.NightMultiplierAt(at))
+	return r.Resolve(factors...)
+}
+
+func inviteeRatePolicy(rates []UserGroupRate) *UserGroupRate {
+	if len(rates) == 0 || rates[0].InviteeDiscountFactor == nil {
+		return nil
+	}
+	return &rates[0]
 }

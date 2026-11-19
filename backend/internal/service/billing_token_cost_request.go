@@ -12,6 +12,7 @@ type TokenCostRequest struct {
 	Group          *Group
 	Tokens         UsageTokens
 	RateMultiplier float64
+	UserGroupRate  *UserGroupRate
 	PricingAt      time.Time
 	ServiceTier    string
 	Resolver       *ModelPricingResolver
@@ -44,6 +45,7 @@ func (s *BillingService) tokenCostInput(req TokenCostRequest, resolved *Resolved
 		Tokens:         req.Tokens,
 		RequestCount:   1,
 		RateMultiplier: req.RateMultiplier,
+		UserGroupRate:  req.UserGroupRate,
 		PricingAt:      req.PricingAt,
 		ServiceTier:    req.ServiceTier,
 		Resolver:       req.Resolver,

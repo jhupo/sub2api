@@ -129,25 +129,51 @@ type UpstreamBillingProbeResult struct {
 }
 
 type upstreamBillingProbeResponse struct {
-	Object                  string   `json:"object"`
-	SchemaVersion           int      `json:"schema_version"`
-	BillingScope            string   `json:"billing_scope"`
-	GroupRateMultiplier     *float64 `json:"group_rate_multiplier"`
-	UserRateMultiplier      *float64 `json:"user_rate_multiplier"`
-	ResolvedRateMultiplier  *float64 `json:"resolved_rate_multiplier"`
-	PeakRateEnabled         *bool    `json:"peak_rate_enabled"`
-	PeakStart               *string  `json:"peak_start"`
-	PeakEnd                 *string  `json:"peak_end"`
-	PeakRateMultiplier      *float64 `json:"peak_rate_multiplier"`
-	AppliedPeakMultiplier   *float64 `json:"applied_peak_multiplier"`
-	NightRateEnabled        *bool    `json:"night_rate_enabled"`
-	NightStart              *string  `json:"night_start"`
-	NightEnd                *string  `json:"night_end"`
-	NightRateMultiplier     *float64 `json:"night_rate_multiplier"`
-	AppliedNightMultiplier  *float64 `json:"applied_night_multiplier"`
-	EffectiveRateMultiplier *float64 `json:"effective_rate_multiplier"`
-	Timezone                *string  `json:"timezone"`
-	ObservedAt              string   `json:"observed_at"`
+	Object                  string          `json:"object"`
+	SchemaVersion           int             `json:"schema_version"`
+	BillingScope            string          `json:"billing_scope"`
+	GroupRateMultiplier     *float64        `json:"group_rate_multiplier"`
+	UserRateMultiplier      *float64        `json:"user_rate_multiplier"`
+	ResolvedRateMultiplier  *float64        `json:"resolved_rate_multiplier"`
+	UserGroupRate           json.RawMessage `json:"user_group_rate"`
+	PeakRateEnabled         *bool           `json:"peak_rate_enabled"`
+	PeakStart               *string         `json:"peak_start"`
+	PeakEnd                 *string         `json:"peak_end"`
+	PeakRateMultiplier      *float64        `json:"peak_rate_multiplier"`
+	AppliedPeakMultiplier   *float64        `json:"applied_peak_multiplier"`
+	NightRateEnabled        *bool           `json:"night_rate_enabled"`
+	NightStart              *string         `json:"night_start"`
+	NightEnd                *string         `json:"night_end"`
+	NightRateMultiplier     *float64        `json:"night_rate_multiplier"`
+	AppliedNightMultiplier  *float64        `json:"applied_night_multiplier"`
+	EffectiveRateMultiplier *float64        `json:"effective_rate_multiplier"`
+	Timezone                *string         `json:"timezone"`
+	ObservedAt              string          `json:"observed_at"`
+}
+
+type upstreamBillingUserGroupRateResponse struct {
+	GroupRateMultiplier   *float64 `json:"group_rate_multiplier"`
+	UserRateMultiplier    *float64 `json:"user_rate_multiplier"`
+	InviteeDiscountFactor *float64 `json:"invitee_discount_factor"`
+}
+
+func (response *upstreamBillingUserGroupRateResponse) rate() (UserGroupRate, bool) {
+	if response == nil || response.GroupRateMultiplier == nil || response.InviteeDiscountFactor == nil {
+		return UserGroupRate{}, false
+	}
+	for _, value := range []*float64{response.GroupRateMultiplier, response.UserRateMultiplier, response.InviteeDiscountFactor} {
+		if value != nil && (*value < 0 || math.IsNaN(*value) || math.IsInf(*value, 0)) {
+			return UserGroupRate{}, false
+		}
+	}
+	if *response.InviteeDiscountFactor <= 0 || *response.InviteeDiscountFactor > 1 {
+		return UserGroupRate{}, false
+	}
+	return UserGroupRate{
+		GroupRateMultiplier:   *response.GroupRateMultiplier,
+		UserRateMultiplier:    response.UserRateMultiplier,
+		InviteeDiscountFactor: response.InviteeDiscountFactor,
+	}, true
 }
 
 // GetUpstreamBillingProbeSettings returns defaults when the setting is absent.
@@ -808,6 +834,25 @@ func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {
 	if !equalBillingMultiplier(*response.ResolvedRateMultiplier, expectedResolved) {
 		return nil, fmt.Errorf("inconsistent resolved billing multiplier")
 	}
+	var userGroupRate *UserGroupRate
+	if len(response.UserGroupRate) > 0 {
+		var components upstreamBillingUserGroupRateResponse
+		if err := json.Unmarshal(response.UserGroupRate, &components); err != nil {
+			return nil, fmt.Errorf("invalid user group billing rate: %w", err)
+		}
+		rate, valid := components.rate()
+		if !valid || !equalBillingMultiplier(rate.GroupRateMultiplier, *response.GroupRateMultiplier) ||
+			!equalBillingMultiplier(rate.Resolve(), *response.ResolvedRateMultiplier) {
+			return nil, fmt.Errorf("invalid user group billing rate")
+		}
+		if *response.PeakRateEnabled || response.NightRateEnabled == nil || *response.NightRateEnabled ||
+			response.AppliedPeakMultiplier == nil || !equalBillingMultiplier(*response.AppliedPeakMultiplier, 1) ||
+			response.AppliedNightMultiplier == nil || !equalBillingMultiplier(*response.AppliedNightMultiplier, 1) ||
+			response.NightRateMultiplier == nil || !equalBillingMultiplier(*response.NightRateMultiplier, 1) {
+			return nil, fmt.Errorf("inconsistent invitee billing time multipliers")
+		}
+		userGroupRate = &rate
+	}
 	observedAt, err := time.Parse(time.RFC3339Nano, response.ObservedAt)
 	if err != nil || observedAt.IsZero() {
 		return nil, fmt.Errorf("invalid observed_at")
@@ -824,6 +869,16 @@ func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {
 	}
 	if response.UserRateMultiplier != nil {
 		data["user_rate_multiplier"] = *response.UserRateMultiplier
+	}
+	if userGroupRate != nil {
+		pricing := map[string]any{
+			"group_rate_multiplier":   userGroupRate.GroupRateMultiplier,
+			"invitee_discount_factor": *userGroupRate.InviteeDiscountFactor,
+		}
+		if userGroupRate.UserRateMultiplier != nil {
+			pricing["user_rate_multiplier"] = *userGroupRate.UserRateMultiplier
+		}
+		data["user_group_rate"] = pricing
 	}
 	if *response.PeakRateEnabled {
 		if response.PeakStart == nil || response.PeakEnd == nil || response.Timezone == nil ||
@@ -864,7 +919,11 @@ func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {
 	if !validNight || (response.AppliedNightMultiplier != nil && !equalBillingMultiplier(*response.AppliedNightMultiplier, appliedNight)) {
 		return nil, fmt.Errorf("inconsistent night billing response")
 	}
-	if !equalBillingMultiplier(*response.EffectiveRateMultiplier, *response.ResolvedRateMultiplier*appliedPeak*appliedNight) {
+	expectedEffective := *response.ResolvedRateMultiplier * appliedPeak * appliedNight
+	if userGroupRate != nil {
+		expectedEffective = userGroupRate.Resolve()
+	}
+	if !equalBillingMultiplier(*response.EffectiveRateMultiplier, expectedEffective) {
 		return nil, fmt.Errorf("inconsistent effective billing multiplier")
 	}
 	return data, nil
@@ -878,16 +937,32 @@ func upstreamBillingRateAt(data map[string]any, now time.Time) (float64, bool) {
 	if !ok || base < 0 || math.IsNaN(base) || math.IsInf(base, 0) {
 		return 0, false
 	}
-	appliedPeak, ok := upstreamBillingPeakMultiplierAt(data, now)
-	if !ok {
-		return 0, false
+	if value, present := data["user_group_rate"]; present {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return 0, false
+		}
+		var response upstreamBillingUserGroupRateResponse
+		if err := json.Unmarshal(encoded, &response); err != nil {
+			return 0, false
+		}
+		rate, valid := response.rate()
+		group, groupOK := resolveAccountExtraNumber(data, "group_rate_multiplier")
+		if !valid || !groupOK || !equalBillingMultiplier(rate.GroupRateMultiplier, group) || !equalBillingMultiplier(rate.Resolve(), base) {
+			return 0, false
+		}
+		base = rate.Resolve()
+	} else {
+		appliedPeak, ok := upstreamBillingPeakMultiplierAt(data, now)
+		if !ok {
+			return 0, false
+		}
+		appliedNight, ok := upstreamBillingTimeMultiplierAt(data, now, "night")
+		if !ok {
+			return 0, false
+		}
+		base *= appliedPeak * appliedNight
 	}
-	base *= appliedPeak
-	appliedNight, ok := upstreamBillingTimeMultiplierAt(data, now, "night")
-	if !ok {
-		return 0, false
-	}
-	base *= appliedNight
 	if math.IsNaN(base) || math.IsInf(base, 0) {
 		return 0, false
 	}

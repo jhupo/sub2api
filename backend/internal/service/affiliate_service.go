@@ -115,6 +115,21 @@ type AffiliateRepository interface {
 	GetAffiliateUserOverview(ctx context.Context, userID int64) (*AffiliateUserOverview, error)
 }
 
+// AffiliateGroupDiscountStore persists per-inviter discount factors applied to
+// users who registered through that inviter's code.
+type AffiliateGroupDiscountStore interface {
+	SetInviteeGroupDiscountFactors(ctx context.Context, inviterID int64, factors map[int64]float64) error
+	UpdateUserAffiliateSettings(ctx context.Context, userID int64, input AffiliateUserSettingsInput) error
+	ClearUserAffiliateSettings(ctx context.Context, userID int64) error
+}
+
+type AffiliateUserSettingsInput struct {
+	AffCode                     *string            `json:"aff_code"`
+	AffRebateRatePercent        *float64           `json:"aff_rebate_rate_percent"`
+	InviteeGroupDiscountFactors *map[int64]float64 `json:"invitee_group_discount_factors"`
+	ClearRebateRate             bool               `json:"clear_rebate_rate"`
+}
+
 // AffiliateAdminFilter 列表筛选条件
 type AffiliateAdminFilter struct {
 	Search   string
@@ -124,13 +139,14 @@ type AffiliateAdminFilter struct {
 
 // AffiliateAdminEntry 专属用户列表条目
 type AffiliateAdminEntry struct {
-	UserID               int64    `json:"user_id"`
-	Email                string   `json:"email"`
-	Username             string   `json:"username"`
-	AffCode              string   `json:"aff_code"`
-	AffCodeCustom        bool     `json:"aff_code_custom"`
-	AffRebateRatePercent *float64 `json:"aff_rebate_rate_percent,omitempty"`
-	AffCount             int      `json:"aff_count"`
+	UserID                      int64             `json:"user_id"`
+	Email                       string            `json:"email"`
+	Username                    string            `json:"username"`
+	AffCode                     string            `json:"aff_code"`
+	AffCodeCustom               bool              `json:"aff_code_custom"`
+	AffRebateRatePercent        *float64          `json:"aff_rebate_rate_percent,omitempty"`
+	InviteeGroupDiscountFactors map[int64]float64 `json:"invitee_group_discount_factors"`
+	AffCount                    int               `json:"aff_count"`
 }
 
 type AffiliateRecordFilter struct {
@@ -537,6 +553,76 @@ func (s *AffiliateService) AdminSetUserRebateRate(ctx context.Context, userID in
 		return err
 	}
 	return s.repo.SetUserRebateRate(ctx, userID, ratePercent)
+}
+
+// AdminSetInviteeGroupDiscountFactors sets or clears group discount factors for
+// direct invitees of the configured inviter. An empty map clears all factors.
+func (s *AffiliateService) AdminSetInviteeGroupDiscountFactors(ctx context.Context, userID int64, factors map[int64]float64) error {
+	if s == nil || s.repo == nil {
+		return infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate service unavailable")
+	}
+	if userID <= 0 {
+		return infraerrors.BadRequest("INVALID_USER", "invalid user")
+	}
+	if err := validateInviteeGroupDiscountFactors(factors); err != nil {
+		return err
+	}
+	store, ok := s.repo.(AffiliateGroupDiscountStore)
+	if !ok {
+		return infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate group discount storage unavailable")
+	}
+	return store.SetInviteeGroupDiscountFactors(ctx, userID, factors)
+}
+
+func validateInviteeGroupDiscountFactors(factors map[int64]float64) error {
+	for groupID, factor := range factors {
+		if groupID <= 0 || math.IsNaN(factor) || math.IsInf(factor, 0) || factor <= 0 || factor > 1 {
+			return infraerrors.BadRequest("INVALID_GROUP_DISCOUNT", "group discount factors must be greater than 0 and at most 1")
+		}
+	}
+	return nil
+}
+
+func (s *AffiliateService) AdminUpdateUserSettings(ctx context.Context, userID int64, input AffiliateUserSettingsInput) error {
+	if s == nil || s.repo == nil {
+		return infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate service unavailable")
+	}
+	if userID <= 0 {
+		return infraerrors.BadRequest("INVALID_USER", "invalid user")
+	}
+	if input.AffCode != nil {
+		code := strings.ToUpper(strings.TrimSpace(*input.AffCode))
+		if !isValidAffiliateCodeFormat(code) {
+			return ErrAffiliateCodeInvalid
+		}
+		input.AffCode = &code
+	}
+	if !input.ClearRebateRate {
+		if err := validateExclusiveRate(input.AffRebateRatePercent); err != nil {
+			return err
+		}
+	}
+	if input.InviteeGroupDiscountFactors != nil {
+		if err := validateInviteeGroupDiscountFactors(*input.InviteeGroupDiscountFactors); err != nil {
+			return err
+		}
+	}
+	store, ok := s.repo.(AffiliateGroupDiscountStore)
+	if !ok {
+		return infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate settings storage unavailable")
+	}
+	return store.UpdateUserAffiliateSettings(ctx, userID, input)
+}
+
+func (s *AffiliateService) AdminClearUserSettings(ctx context.Context, userID int64) error {
+	if s == nil || s.repo == nil {
+		return infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate service unavailable")
+	}
+	store, ok := s.repo.(AffiliateGroupDiscountStore)
+	if !ok {
+		return infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "affiliate settings storage unavailable")
+	}
+	return store.ClearUserAffiliateSettings(ctx, userID)
 }
 
 // AdminBatchSetUserRebateRate 批量设置/清除用户专属返利比例。

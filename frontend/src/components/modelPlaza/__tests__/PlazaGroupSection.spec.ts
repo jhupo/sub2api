@@ -115,6 +115,21 @@ describe('PlazaGroupSection 长上下文说明', () => {
 })
 
 describe('PlazaGroupSection 高峰配置传递', () => {
+  it('passes invitation metadata to the pricing table and explains the dynamic group rate', () => {
+    const policy = { group_rate_multiplier: 1, user_rate_multiplier: 0.8, invitee_discount_factor: 0.9 }
+    const wrapper = mountSection(group({ user_group_rate: policy }))
+    expect(wrapper.findComponent(PlazaModelPricingTable).props('userGroupRate')).toEqual(policy)
+    expect(wrapper.text()).toContain('modelPlaza.detail.inviteeRateNote')
+  })
+
+  it('does not expose time adjustment information for invitation pricing', () => {
+    const policy = { group_rate_multiplier: 1, invitee_discount_factor: 0.9 }
+    const wrapper = mountSection(group({ user_group_rate: policy, night_rate_enabled: true, night_start: '00:00', night_end: '08:00', night_rate_multiplier: 0.5, peak_rate_enabled: true, peak_start: '18:00', peak_end: '22:00', peak_rate_multiplier: 2 }))
+    expect(wrapper.findComponent(PlazaModelPricingTable).props('peakWindow')).toBe('')
+    expect(wrapper.text()).toContain('modelPlaza.detail.inviteeRateNote')
+    expect(wrapper.text()).not.toContain('modelPlaza.detail.peakNote')
+  })
+
   it('分组启用高峰时把窗口描述与倍率传给价格表', () => {
     const wrapper = mountSection(
       group({

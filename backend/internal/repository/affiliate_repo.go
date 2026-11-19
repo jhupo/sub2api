@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -1081,6 +1082,86 @@ WHERE user_id = $2`, nullableArg(ratePercent), userID)
 	})
 }
 
+func (r *affiliateRepository) UpdateUserAffiliateSettings(ctx context.Context, userID int64, input service.AffiliateUserSettingsInput) error {
+	return r.withTx(ctx, func(txCtx context.Context, _ *dbent.Client) error {
+		if input.AffCode != nil {
+			if err := r.UpdateUserAffCode(txCtx, userID, *input.AffCode); err != nil {
+				return err
+			}
+		}
+		if input.ClearRebateRate {
+			if err := r.SetUserRebateRate(txCtx, userID, nil); err != nil {
+				return err
+			}
+		} else if input.AffRebateRatePercent != nil {
+			if err := r.SetUserRebateRate(txCtx, userID, input.AffRebateRatePercent); err != nil {
+				return err
+			}
+		}
+		if input.InviteeGroupDiscountFactors != nil {
+			return r.SetInviteeGroupDiscountFactors(txCtx, userID, *input.InviteeGroupDiscountFactors)
+		}
+		return nil
+	})
+}
+
+func (r *affiliateRepository) ClearUserAffiliateSettings(ctx context.Context, userID int64) error {
+	return r.withTx(ctx, func(txCtx context.Context, _ *dbent.Client) error {
+		if err := r.SetUserRebateRate(txCtx, userID, nil); err != nil {
+			return err
+		}
+		if err := r.SetInviteeGroupDiscountFactors(txCtx, userID, nil); err != nil {
+			return err
+		}
+		_, err := r.ResetUserAffCode(txCtx, userID)
+		return err
+	})
+}
+
+func (r *affiliateRepository) SetInviteeGroupDiscountFactors(ctx context.Context, inviterID int64, factors map[int64]float64) error {
+	if inviterID <= 0 {
+		return service.ErrUserNotFound
+	}
+	if factors == nil {
+		factors = map[int64]float64{}
+	}
+	groupIDs := make([]int64, 0, len(factors))
+	for groupID := range factors {
+		groupIDs = append(groupIDs, groupID)
+	}
+	return r.withTx(ctx, func(txCtx context.Context, txClient *dbent.Client) error {
+		if _, err := ensureUserAffiliateWithClient(txCtx, txClient, inviterID); err != nil {
+			return err
+		}
+		if len(groupIDs) > 0 {
+			found, err := scanInt64(txCtx, txClient, `SELECT COUNT(*) FROM groups WHERE id = ANY($1) AND deleted_at IS NULL`, pq.Array(groupIDs))
+			if err != nil {
+				return fmt.Errorf("validate invitee discount groups: %w", err)
+			}
+			if found != int64(len(groupIDs)) {
+				return service.ErrGroupNotFound
+			}
+		}
+		encoded, err := json.Marshal(factors)
+		if err != nil {
+			return fmt.Errorf("encode invitee group discounts: %w", err)
+		}
+		res, err := txClient.ExecContext(txCtx, `
+UPDATE user_affiliates
+SET invitee_group_discount_factors = $1::jsonb,
+    updated_at = NOW()
+WHERE user_id = $2`, string(encoded), inviterID)
+		if err != nil {
+			return fmt.Errorf("set invitee group discounts: %w", err)
+		}
+		affected, _ := res.RowsAffected()
+		if affected == 0 {
+			return service.ErrUserNotFound
+		}
+		return nil
+	})
+}
+
 // BatchSetUserRebateRate 批量为多个用户设置专属比例（nil 清除）。
 func (r *affiliateRepository) BatchSetUserRebateRate(ctx context.Context, userIDs []int64, ratePercent *float64) error {
 	if len(userIDs) == 0 {
@@ -1143,7 +1224,7 @@ func (r *affiliateRepository) ListUsersWithCustomSettings(ctx context.Context, f
 	const baseFrom = `
 FROM user_affiliates ua
 JOIN users u ON u.id = ua.user_id
-WHERE (ua.aff_code_custom = true OR ua.aff_rebate_rate_percent IS NOT NULL)
+WHERE (ua.aff_code_custom = true OR ua.aff_rebate_rate_percent IS NOT NULL OR ua.invitee_group_discount_factors <> '{}'::jsonb)
   AND (u.email ILIKE $1 OR u.username ILIKE $1)`
 
 	client := clientFromContext(ctx, r.client)
@@ -1160,6 +1241,7 @@ SELECT ua.user_id,
        ua.aff_code,
        ua.aff_code_custom,
        ua.aff_rebate_rate_percent,
+       ua.invitee_group_discount_factors::text,
        ua.aff_count` + baseFrom + `
 ORDER BY ua.updated_at DESC
 LIMIT $2 OFFSET $3`
@@ -1174,9 +1256,14 @@ LIMIT $2 OFFSET $3`
 	for rows.Next() {
 		var e service.AffiliateAdminEntry
 		var rebate sql.NullFloat64
+		var groupDiscounts string
 		if err := rows.Scan(&e.UserID, &e.Email, &e.Username, &e.AffCode,
-			&e.AffCodeCustom, &rebate, &e.AffCount); err != nil {
+			&e.AffCodeCustom, &rebate, &groupDiscounts, &e.AffCount); err != nil {
 			return nil, 0, err
+		}
+		e.InviteeGroupDiscountFactors = make(map[int64]float64)
+		if err := json.Unmarshal([]byte(groupDiscounts), &e.InviteeGroupDiscountFactors); err != nil {
+			return nil, 0, fmt.Errorf("decode invitee group discounts: %w", err)
 		}
 		if rebate.Valid {
 			v := rebate.Float64

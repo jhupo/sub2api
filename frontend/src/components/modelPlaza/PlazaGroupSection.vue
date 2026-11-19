@@ -11,6 +11,7 @@
           :platform="group.platform as GroupPlatform"
           :rate-multiplier="group.rate_multiplier"
           :user-rate-multiplier="group.user_rate_multiplier ?? null"
+          :user-group-rate="group.user_group_rate"
           :peak-rate-enabled="group.peak_rate_enabled"
           :peak-start="group.peak_start"
           :peak-end="group.peak_end"
@@ -35,7 +36,7 @@
         v-if="peakNote"
         class="mt-1.5 inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400"
       >
-        <Icon name="clock" size="xs" class="h-3 w-3" />
+        <Icon :name="hasInviteeDiscount(group.user_group_rate) ? 'infoCircle' : 'clock'" size="xs" class="h-3 w-3" />
         {{ peakNote }}
       </p>
       <p
@@ -55,6 +56,7 @@
         :platform="group.platform"
         :rate-multiplier="group.rate_multiplier"
         :user-rate-multiplier="group.user_rate_multiplier ?? null"
+        :user-group-rate="group.user_group_rate"
         :image-rate-independent="group.image_rate_independent"
         :image-rate-multiplier="group.image_rate_multiplier"
         :peak-window="peakWindow"
@@ -78,6 +80,7 @@ import type { GroupPlatform } from '@/types'
 import { platformBorderStrongClass } from '@/utils/platformColors'
 import { hasPeakRate, formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
 import { useAppStore } from '@/stores/app'
+import { hasInviteeDiscount } from '@/utils/userGroupRate'
 
 const props = defineProps<{
   group: ModelPlazaGroup
@@ -88,7 +91,7 @@ const appStore = useAppStore()
 
 /** 高峰窗口描述(含倍率与服务器时区标注);分组未启用高峰为空串。 */
 const peakWindow = computed(() => {
-  if (!hasPeakRate(props.group)) return ''
+  if (hasInviteeDiscount(props.group.user_group_rate) || !hasPeakRate(props.group)) return ''
   return formatPeakRateWindow(
     props.group,
     serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
@@ -96,6 +99,9 @@ const peakWindow = computed(() => {
 })
 
 const peakNote = computed(() => {
+  if (hasInviteeDiscount(props.group.user_group_rate)) {
+    return t('modelPlaza.detail.inviteeRateNote')
+  }
   if (!peakWindow.value) return ''
   return t('modelPlaza.detail.peakNote', {
     window: peakWindow.value,

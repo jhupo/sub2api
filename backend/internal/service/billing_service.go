@@ -1227,6 +1227,7 @@ type CostInput struct {
 	UsageUnits                float64 // 音频等连续计量单位（分钟/小时/百万字符）
 	SizeTier                  string  // 按次/图片模式的层级标签（"1K","2K","4K","HD" 等）
 	RateMultiplier            float64
+	UserGroupRate             *UserGroupRate        // Optional group-relative invitation rate.
 	PricingAt                 time.Time             // 渠道分时定价使用的计费时刻
 	ServiceTier               string                // "priority","flex","" 等
 	Resolver                  *ModelPricingResolver // 定价解析器
@@ -1312,7 +1313,18 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	applyLongCtx := len(resolved.Intervals) == 0 && contextTierPricingEnabled
 
 	breakdown := s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx)
-	applyCostBreakdownMultiplier(breakdown, resolvedChannelTimeMultiplier(resolved, input.PricingAt))
+	if input.UserGroupRate != nil && input.UserGroupRate.InviteeDiscountFactor != nil {
+		rate := input.UserGroupRate.BaseRate()
+		if rate < 0 {
+			rate = 0
+		}
+		breakdown.ActualCost = breakdown.TotalCost * rate
+		if breakdown.ActualCost == 0 {
+			breakdown.LongContextBillingApplied = false
+		}
+	} else {
+		applyCostBreakdownMultiplier(breakdown, resolvedChannelTimeMultiplier(resolved, input.PricingAt))
+	}
 	return breakdown, nil
 }
 

@@ -37,11 +37,11 @@ func (s *GatewayService) withGatewayProfitControlGate(ctx context.Context, group
 		}
 	}
 
-	downstream := billingGroup.RateMultiplier
+	rate := UserGroupRate{GroupRateMultiplier: billingGroup.RateMultiplier}
 	if userID, _ := ctx.Value(ctxkey.UserID).(int64); userID > 0 {
-		downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
+		rate = s.ResolveUserGroupRate(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
 	}
-	downstream *= billingGroup.TimeRateMultiplierAt(pricingAt)
+	downstream := rate.ResolveAt(billingGroup, pricingAt)
 	threshold := clampProfitControlThreshold(downstream * (1 - group.ProfitMinMargin - group.ProfitSafetyBuffer))
 
 	gate := &openAIProfitControlGate{

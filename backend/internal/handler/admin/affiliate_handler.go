@@ -49,14 +49,8 @@ func (h *AffiliateHandler) ListUsers(c *gin.Context) {
 // UpdateUserSettings updates a user's affiliate settings.
 // PUT /api/v1/admin/affiliates/users/:user_id
 //
-// Both fields are optional and applied independently.
-type UpdateAffiliateUserRequest struct {
-	AffCode              *string  `json:"aff_code"`
-	AffRebateRatePercent *float64 `json:"aff_rebate_rate_percent"`
-	// ClearRebateRate explicitly clears the per-user rate (sets it to NULL).
-	// Used to disambiguate from "field not provided".
-	ClearRebateRate bool `json:"clear_rebate_rate"`
-}
+// Omitted fields are preserved; supplied fields are updated atomically.
+type UpdateAffiliateUserRequest = service.AffiliateUserSettingsInput
 
 func (h *AffiliateHandler) UpdateUserSettings(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
@@ -71,34 +65,16 @@ func (h *AffiliateHandler) UpdateUserSettings(c *gin.Context) {
 		return
 	}
 
-	if req.AffCode != nil {
-		if err := h.affiliateService.AdminUpdateUserAffCode(c.Request.Context(), userID, *req.AffCode); err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-	}
-
-	if req.ClearRebateRate {
-		if err := h.affiliateService.AdminSetUserRebateRate(c.Request.Context(), userID, nil); err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-	} else if req.AffRebateRatePercent != nil {
-		if err := h.affiliateService.AdminSetUserRebateRate(c.Request.Context(), userID, req.AffRebateRatePercent); err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
+	if err := h.affiliateService.AdminUpdateUserSettings(c.Request.Context(), userID, req); err != nil {
+		response.ErrorFrom(c, err)
+		return
 	}
 
 	response.Success(c, gin.H{"user_id": userID})
 }
 
-// ClearUserSettings removes ALL of a user's custom affiliate settings — clears
-// the exclusive rebate rate AND regenerates the invite code as a new system
-// random one. Conceptually this "removes the user from the custom list".
-//
-// Both writes happen in this handler; failure of one leaves the other applied,
-// but the operation is idempotent so the admin can re-run it safely.
+// ClearUserSettings atomically clears custom rates and invitee discounts and
+// regenerates the inviter's code as a new system random code.
 // DELETE /api/v1/admin/affiliates/users/:user_id
 func (h *AffiliateHandler) ClearUserSettings(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
@@ -106,11 +82,7 @@ func (h *AffiliateHandler) ClearUserSettings(c *gin.Context) {
 		response.BadRequest(c, "Invalid user_id")
 		return
 	}
-	if err := h.affiliateService.AdminSetUserRebateRate(c.Request.Context(), userID, nil); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	if _, err := h.affiliateService.AdminResetUserAffCode(c.Request.Context(), userID); err != nil {
+	if err := h.affiliateService.AdminClearUserSettings(c.Request.Context(), userID); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}

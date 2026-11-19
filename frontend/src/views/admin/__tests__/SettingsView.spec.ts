@@ -115,6 +115,17 @@ const stateSettings = vi.hoisted(() => ({
 }));
 vi.mock("@/api/admin/upstreamState", () => ({ upstreamStateApi: stateSettings }));
 
+const affiliateApi = vi.hoisted(() => ({
+  listUsers: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+  lookupUsers: vi.fn().mockResolvedValue([]),
+  updateUserSettings: vi.fn().mockResolvedValue({ user_id: 17 }),
+}));
+const getAffiliateGroups = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+vi.mock("@/api/admin/affiliates", () => ({ affiliatesAPI: affiliateApi, default: affiliateApi }));
+vi.mock("@/api/admin/groups", () => ({
+  default: { getAllIncludingInactive: getAffiliateGroups },
+}));
+
 const localeRef = vi.hoisted(() => ({ value: "zh-CN" }));
 
 vi.mock("@/api", () => ({
@@ -722,6 +733,10 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockReset();
     showError.mockReset();
     showSuccess.mockReset();
+    affiliateApi.listUsers.mockReset().mockResolvedValue({ items: [], total: 0 });
+    affiliateApi.lookupUsers.mockReset().mockResolvedValue([]);
+    affiliateApi.updateUserSettings.mockReset().mockResolvedValue({ user_id: 17 });
+    getAffiliateGroups.mockReset().mockResolvedValue([]);
     localeRef.value = "zh-CN";
 
     getSettings.mockResolvedValue({ ...baseSettingsResponse });
@@ -1332,6 +1347,110 @@ describe("admin SettingsView payment visible method controls", () => {
         affiliate_admin_recharge_enabled: true,
       }),
     );
+  });
+
+  async function openAffiliateEdit(factors: Record<number, number> = {}) {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, affiliate_enabled: true });
+    affiliateApi.listUsers.mockResolvedValue({ items: [{
+      user_id: 17,
+      email: "inviter@example.com",
+      username: "inviter",
+      aff_code: "VIP17",
+      aff_code_custom: false,
+      aff_count: 2,
+      invitee_group_discount_factors: factors,
+    }], total: 1 });
+    getAffiliateGroups.mockResolvedValue([
+      { id: 1, name: "Standard", status: "active" },
+      { id: 2, name: "Premium", status: "active" },
+    ]);
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.findAll("button").find(node => node.text() === "admin.settings.tabs.features")!.trigger("click");
+    const row = wrapper.findAll("tr").find(node => node.text().includes("inviter@example.com"))!;
+    await row.findAll("button").find(node => node.text() === "common.edit")!.trigger("click");
+    await flushPromises();
+    return wrapper;
+  }
+
+  async function saveAffiliateDialog(wrapper: ReturnType<typeof mountView>) {
+    await wrapper.get('[role="dialog"]').findAll("button")
+      .find(node => node.text() === "common.save")!.trigger("click");
+    await flushPromises();
+  }
+
+  it("submits separate invitee discount factors for multiple groups", async () => {
+    const wrapper = await openAffiliateEdit();
+    const dialog = wrapper.get('[role="dialog"]');
+    const addGroup = () => dialog.findAll("button").find(node => node.text() === "admin.settings.features.affiliate.modal.addGroupDiscount")!;
+
+    await addGroup().trigger("click");
+    await dialog.get("#affiliate-discount-group-0").setValue("1");
+    await dialog.get("#affiliate-discount-factor-0").setValue("0.9");
+    await addGroup().trigger("click");
+    await dialog.get("#affiliate-discount-group-1").setValue("2");
+    await dialog.get("#affiliate-discount-factor-1").setValue("0.75");
+    await saveAffiliateDialog(wrapper);
+
+    expect(affiliateApi.updateUserSettings).toHaveBeenCalledWith(17, {
+      invitee_group_discount_factors: { 1: 0.9, 2: 0.75 },
+    });
+    wrapper.unmount();
+  });
+
+  it.each(["0", "1.1", ""])("rejects an invalid invitee discount factor %s", async (factor) => {
+    const wrapper = await openAffiliateEdit({ 1: 0.9 });
+    await wrapper.get("#affiliate-discount-factor-0").setValue(factor);
+    await saveAffiliateDialog(wrapper);
+
+    expect(affiliateApi.updateUserSettings).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith("admin.settings.features.affiliate.modal.errorBadGroupDiscount");
+    wrapper.unmount();
+  });
+
+  it("clears invitee group discounts when every existing row is removed", async () => {
+    const wrapper = await openAffiliateEdit({ 1: 0.9 });
+    await wrapper.get('[role="dialog"] button[aria-label="common.delete"]').trigger("click");
+    await saveAffiliateDialog(wrapper);
+
+    expect(affiliateApi.updateUserSettings).toHaveBeenCalledWith(17, {
+      invitee_group_discount_factors: {},
+    });
+    wrapper.unmount();
+  });
+
+  it("keeps saved discounts when adding a custom code without discount rows", async () => {
+    const wrapper = await openAffiliateEdit({ 1: 0.9 });
+    await wrapper.get('[role="dialog"]').findAll("button").find(node => node.text() === "common.cancel")!.trigger("click");
+    await wrapper.findAll("button").find(node => node.text().includes("admin.settings.features.affiliate.customUsers.addButton"))!.trigger("click");
+    const dialog = wrapper.get('[role="dialog"]');
+    affiliateApi.lookupUsers.mockResolvedValue([{ id: 17, email: "inviter@example.com", username: "inviter" }]);
+    await dialog.get('input[placeholder="admin.settings.features.affiliate.modal.userPlaceholder"]').setValue("inviter");
+    await new Promise(resolve => setTimeout(resolve, 320));
+    await flushPromises();
+    await dialog.findAll("button").find(node => node.text().includes("inviter@example.com"))!.trigger("click");
+    await dialog.get('input[maxlength="32"]').setValue("VIP17");
+    await saveAffiliateDialog(wrapper);
+
+    expect(affiliateApi.updateUserSettings).toHaveBeenCalledWith(17, { aff_code: "VIP17" });
+    wrapper.unmount();
+  });
+
+  it("blocks saving invitee discounts after group load failure and allows retry", async () => {
+    getAffiliateGroups.mockRejectedValueOnce(new Error("offline"));
+    const wrapper = await openAffiliateEdit({ 1: 0.9 });
+    const dialog = wrapper.get('[role="dialog"]');
+    expect(dialog.get('[role="alert"]').text()).toContain("admin.settings.features.affiliate.modal.groupsLoadFailed");
+    expect(dialog.findAll("button").find(node => node.text() === "common.save")!.attributes("disabled")).toBeDefined();
+    await dialog.findAll("button").find(node => node.text() === "admin.settings.features.affiliate.modal.retryGroups")!.trigger("click");
+    await flushPromises();
+
+    expect(dialog.find('[role="alert"]').exists()).toBe(false);
+    await saveAffiliateDialog(wrapper);
+    expect(affiliateApi.updateUserSettings).toHaveBeenCalledWith(17, {
+      invitee_group_discount_factors: { 1: 0.9 },
+    });
+    wrapper.unmount();
   });
 
   it("submits Anthropic cache TTL injection gateway setting", async () => {

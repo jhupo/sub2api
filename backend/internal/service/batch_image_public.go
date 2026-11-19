@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -1001,6 +1002,7 @@ func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, ow
 	groupMultiplier := 1.0
 	discountMultiplier := defaultBatchImageDiscountMultiplier
 	holdMultiplier := defaultBatchImageHoldMultiplier
+	var inviteeGroupRate *UserGroupRate
 	if owner.GroupID != nil && *owner.GroupID > 0 {
 		if s.GroupRepo == nil {
 			return nil, ErrBatchImageSettlementPricingMissing
@@ -1016,19 +1018,19 @@ func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, ow
 		if groupDefaultMultiplier < 0 {
 			groupDefaultMultiplier = 0
 		}
-		effectiveGroupMultiplier := groupDefaultMultiplier
+		groupRate := UserGroupRate{GroupRateMultiplier: groupDefaultMultiplier}
 		if s.UserGroupRateRepo != nil {
-			userRate, rateErr := s.UserGroupRateRepo.GetByUserAndGroup(ctx, owner.UserID, group.ID)
+			userRate, rateErr := loadUserGroupRate(ctx, s.UserGroupRateRepo, owner.UserID, group.ID, groupDefaultMultiplier)
 			if rateErr != nil {
 				return nil, ErrBatchImageSettlementPricingMissing
 			}
-			if userRate != nil {
-				effectiveGroupMultiplier = *userRate
-			}
+			groupRate = userRate
 		}
-		groupMultiplier = effectiveGroupMultiplier
+		groupMultiplier = groupRate.BaseRate()
 		if group.ImageRateIndependent {
 			groupMultiplier = group.ImageRateMultiplier
+		} else if groupRate.InviteeDiscountFactor != nil {
+			inviteeGroupRate = &groupRate
 		}
 		if groupMultiplier < 0 {
 			groupMultiplier = 0
@@ -1053,6 +1055,11 @@ func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, ow
 			return nil, ErrBatchImageSettlementPricingMissing
 		}
 		unit = resolvedUnit
+	}
+	if inviteeGroupRate != nil {
+		// Invitation pricing replaces batch discounts; holds remain spending budgets.
+		discountMultiplier = 1
+		holdMultiplier = math.Max(1, holdMultiplier)
 	}
 	// 定价不变式：hold 比例不得低于 discount 比例，否则成功率足够高时
 	// actualCost > holdAmount，结算永远失败、冻结余额无法解冻。

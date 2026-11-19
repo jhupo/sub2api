@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import PlazaModelPricingTable from '../PlazaModelPricingTable.vue'
 import type { PlazaModel } from '@/api/modelPlaza'
+import type { UserGroupRate } from '@/api/groups'
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
@@ -48,6 +49,7 @@ function mountTable(
     imageRateMultiplier?: number | null
     peakWindow?: string
     peakRateMultiplier?: number | null
+    userGroupRate?: UserGroupRate
   }
 ) {
   return mount(PlazaModelPricingTable, {
@@ -609,6 +611,33 @@ describe('PlazaModelPricingTable 分时计价', () => {
     expect(nightCells[0].text()).toContain('00:30–08:30')
     expect(nightCells[0].find('[title="modelPlaza.table.timePricingRowHintWeekdays"]').exists()).toBe(true)
     expect(nightCells[0].find('[title="modelPlaza.table.timePricingRowHint"]').exists()).toBe(false)
+  })
+
+  it('邀请用户仅按当前分组倍率乘邀请折扣计价，不展示渠道时段价行', () => {
+    const wrapper = mountTable([timePricedModel()], 2, 1.6, {
+      userGroupRate: { group_rate_multiplier: 2, user_rate_multiplier: 1.6, invitee_discount_factor: 0.9 },
+      peakWindow: '14:00-18:00 ×2'
+    })
+    const trs = wrapper.findAll('tbody tr')
+    expect(trs).toHaveLength(1)
+    const cells = trs[0].findAll('td')
+    expect(cells[1].text()).toContain('$5.40')
+    expect(cells[7].text()).toContain('1.8x')
+    expect(wrapper.find('thead').text()).toContain('modelPlaza.table.paidPrice')
+    expect(wrapper.find('thead').text()).not.toContain('modelPlaza.table.referencePrice')
+    expect(wrapper.find('[title*="timePricing"]').exists()).toBe(false)
+  })
+
+  it('邀请用户的个人倍率更低时仍使用邀请倍率，且随分组倍率变化', async () => {
+    const wrapper = mountTable([timePricedModel()], 2, 0.4, {
+      userGroupRate: { group_rate_multiplier: 2, user_rate_multiplier: 0.4, invitee_discount_factor: 0.9 }
+    })
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    expect(wrapper.findAll('tbody td')[1].text()).toContain('$5.40')
+    expect(wrapper.findAll('tbody td')[7].text()).toContain('1.8x')
+    await wrapper.setProps({ rateMultiplier: 3, userGroupRate: { group_rate_multiplier: 3, user_rate_multiplier: 0.4, invitee_discount_factor: 0.9 } })
+    expect(wrapper.findAll('tbody td')[1].text()).toContain('$8.10')
+    expect(wrapper.findAll('tbody td')[7].text()).toContain('2.7x')
   })
 
   it('每日生效(无 weekdays_only)不渲染工作日前缀', () => {

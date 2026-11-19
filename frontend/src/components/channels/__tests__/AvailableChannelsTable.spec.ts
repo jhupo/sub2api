@@ -94,7 +94,8 @@ function mountTable(props = {}) {
         Icon: { props: ['name'], template: '<i :data-icon="name" />' },
         PlatformIcon: { template: '<i data-platform-icon />' },
         GroupBadge: {
-          props: ['name', 'rateMultiplier', 'userRateMultiplier'],
+          name: 'GroupBadge',
+          props: ['name', 'rateMultiplier', 'userRateMultiplier', 'userGroupRate'],
           template:
             '<span data-group-badge>{{ name }}:{{ rateMultiplier }}:{{ userRateMultiplier }}</span>',
         },
@@ -108,6 +109,14 @@ function mountTable(props = {}) {
 }
 
 describe('AvailableChannelsTable responsive surfaces', () => {
+  it('passes invitation metadata to badges and hides the peak window', () => {
+    const policy = { group_rate_multiplier: 1.2, user_rate_multiplier: 0.8, invitee_discount_factor: 0.9 }
+    const wrapper = mountTable({ userGroupRateDetails: { 1: policy } })
+    expect(wrapper.findComponent({ name: 'GroupBadge' }).props('userGroupRate')).toEqual(policy)
+    expect(wrapper.get('[data-testid="mobile-channels"]').text()).not.toContain('08:00-10:00')
+    expect(wrapper.get('[data-testid="desktop-channels"]').text()).not.toContain('08:00-10:00')
+  })
+
   it('keeps the five-column table as the desktop-only surface', () => {
     const wrapper = mountTable()
     const desktop = wrapper.get('[data-testid="desktop-channels"]')

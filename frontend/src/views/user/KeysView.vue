@@ -147,6 +147,7 @@
                   :platform="row.group.platform"
                   :rate-multiplier="row.group.rate_multiplier"
                   :user-rate-multiplier="userGroupRates[row.group.id]"
+                  :user-group-rate="userGroupRateDetails[row.group.id]"
                   :peak-rate-enabled="row.group.peak_rate_enabled"
                   :peak-start="row.group.peak_start"
                   :peak-end="row.group.peak_end"
@@ -495,6 +496,7 @@
                 :platform="(option as unknown as GroupOption).platform"
                 :rate-multiplier="(option as unknown as GroupOption).rate"
                 :user-rate-multiplier="(option as unknown as GroupOption).userRate"
+                :user-group-rate="(option as unknown as GroupOption).userGroupRate"
                 :peak-rate-enabled="(option as unknown as GroupOption).peakRateEnabled"
                 :peak-start="(option as unknown as GroupOption).peakStart"
                 :peak-end="(option as unknown as GroupOption).peakEnd"
@@ -512,6 +514,7 @@
                 :platform="(option as unknown as GroupOption).platform"
                 :rate-multiplier="(option as unknown as GroupOption).rate"
                 :user-rate-multiplier="(option as unknown as GroupOption).userRate"
+                :user-group-rate="(option as unknown as GroupOption).userGroupRate"
                 :peak-rate-enabled="(option as unknown as GroupOption).peakRateEnabled"
                 :peak-start="(option as unknown as GroupOption).peakStart"
                 :peak-end="(option as unknown as GroupOption).peakEnd"
@@ -1128,6 +1131,7 @@
               :platform="option.platform"
               :rate-multiplier="option.rate"
               :user-rate-multiplier="option.userRate"
+              :user-group-rate="option.userGroupRate"
               :peak-rate-enabled="option.peakRateEnabled"
               :peak-start="option.peakStart"
               :peak-end="option.peakEnd"
@@ -1164,6 +1168,7 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 
 const { t } = useI18n()
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
+import type { UserGroupRate } from '@/api/groups'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import DataTable from '@/components/common/DataTable.vue'
@@ -1202,6 +1207,7 @@ interface GroupOption {
   description: string | null
   rate: number
   userRate: number | null
+  userGroupRate?: UserGroupRate
   nightRateEnabled?: boolean
   nightStart?: string
   nightEnd?: string
@@ -1321,6 +1327,7 @@ const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
 const userGroupRates = ref<Record<number, number>>({})
+const userGroupRateDetails = ref<Record<number, UserGroupRate>>({})
 
 const pagination = ref({
   page: 1,
@@ -1511,6 +1518,7 @@ const groupOptions = computed(() =>
     description: group.description,
     rate: group.rate_multiplier,
     userRate: userGroupRates.value[group.id] ?? null,
+    userGroupRate: userGroupRateDetails.value[group.id],
     nightRateEnabled: group.night_rate_enabled,
     nightStart: group.night_start,
     nightEnd: group.night_end,
@@ -1615,6 +1623,7 @@ const loadGroups = async () => {
 const loadUserGroupRates = async () => {
   try {
     userGroupRates.value = await userGroupsAPI.getUserGroupRates()
+    userGroupRateDetails.value = await userGroupsAPI.getUserGroupRateDetails()
   } catch (error) {
     console.error('Failed to load user group rates:', error)
   }

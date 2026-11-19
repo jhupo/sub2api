@@ -16,6 +16,24 @@ vi.mock('@/stores/app', () => ({
 }))
 
 describe('GroupOptionItem description layout', () => {
+  it('uses current group rate times invitation discount and hides time windows', async () => {
+    const wrapper = mount(GroupOptionItem, {
+      props: {
+        name: 'OpenAI', platform: 'openai', rateMultiplier: 2, userRateMultiplier: 1.6,
+        userGroupRate: { group_rate_multiplier: 2, user_rate_multiplier: 1.6, invitee_discount_factor: 0.9 },
+        nightRateEnabled: true, nightStart: '00:00', nightEnd: '08:00', nightRateMultiplier: 0.5,
+        peakRateEnabled: true, peakStart: '18:00', peakEnd: '22:00', peakRateMultiplier: 2
+      },
+      global: { stubs: { GroupBadge: true } }
+    })
+    expect(wrapper.text()).toContain('1.8x')
+    expect(wrapper.text()).not.toContain('1.6x')
+    expect(wrapper.text()).not.toContain('00:00-08:00')
+    expect(wrapper.text()).not.toContain('18:00-22:00')
+    await wrapper.setProps({ rateMultiplier: 3, userGroupRate: { group_rate_multiplier: 3, user_rate_multiplier: 1.6, invitee_discount_factor: 0.9 } })
+    expect(wrapper.text()).toContain('2.7x')
+  })
+
   it('applies multiline and overflow-safe text styles', () => {
     const description = 'First section\nvery-long-unbroken-description-value-that-must-not-overflow'
     const wrapper = mount(GroupOptionItem, {

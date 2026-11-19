@@ -6,6 +6,12 @@
 import { apiClient } from './client'
 import type { Group } from '@/types'
 
+export interface UserGroupRate {
+  group_rate_multiplier: number
+  user_rate_multiplier?: number
+  invitee_discount_factor?: number
+}
+
 /**
  * Get available groups that the current user can bind to API keys
  * This returns groups based on user's permissions:
@@ -27,9 +33,15 @@ export async function getUserGroupRates(): Promise<Record<number, number>> {
   return data || {}
 }
 
+export async function getUserGroupRateDetails(): Promise<Record<number, UserGroupRate>> {
+  const { data } = await apiClient.get<Record<number, UserGroupRate> | null>('/groups/rate-details')
+  return data || {}
+}
+
 export const userGroupsAPI = {
   getAvailable,
-  getUserGroupRates
+  getUserGroupRates,
+  getUserGroupRateDetails
 }
 
 export default userGroupsAPI

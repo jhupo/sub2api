@@ -76,23 +76,24 @@ type modelPlazaModel struct {
 
 // modelPlazaGroup 广场分组条目（白名单字段）。
 type modelPlazaGroup struct {
-	ID                         int64    `json:"id"`
-	Name                       string   `json:"name"`
-	Description                string   `json:"description"`
-	Platform                   string   `json:"platform"`
-	RateMultiplier             float64  `json:"rate_multiplier"`
-	UserRateMultiplier         *float64 `json:"user_rate_multiplier,omitempty"`
-	PeakRateEnabled            bool     `json:"peak_rate_enabled"`
-	PeakStart                  string   `json:"peak_start"`
-	PeakEnd                    string   `json:"peak_end"`
-	PeakRateMultiplier         float64  `json:"peak_rate_multiplier"`
-	NightRateEnabled           bool     `json:"night_rate_enabled"`
-	NightStart                 string   `json:"night_start"`
-	NightEnd                   string   `json:"night_end"`
-	NightRateMultiplier        float64  `json:"night_rate_multiplier"`
-	CacheReadAdjustmentMode    string   `json:"cache_read_adjustment_mode"`
-	CacheReadAdjustmentPercent int      `json:"cache_read_adjustment_percent"`
-	IsExclusive                bool     `json:"is_exclusive"`
+	ID                         int64                  `json:"id"`
+	Name                       string                 `json:"name"`
+	Description                string                 `json:"description"`
+	Platform                   string                 `json:"platform"`
+	RateMultiplier             float64                `json:"rate_multiplier"`
+	UserRateMultiplier         *float64               `json:"user_rate_multiplier,omitempty"`
+	UserGroupRate              *service.UserGroupRate `json:"user_group_rate,omitempty"`
+	PeakRateEnabled            bool                   `json:"peak_rate_enabled"`
+	PeakStart                  string                 `json:"peak_start"`
+	PeakEnd                    string                 `json:"peak_end"`
+	PeakRateMultiplier         float64                `json:"peak_rate_multiplier"`
+	NightRateEnabled           bool                   `json:"night_rate_enabled"`
+	NightStart                 string                 `json:"night_start"`
+	NightEnd                   string                 `json:"night_end"`
+	NightRateMultiplier        float64                `json:"night_rate_multiplier"`
+	CacheReadAdjustmentMode    string                 `json:"cache_read_adjustment_mode"`
+	CacheReadAdjustmentPercent int                    `json:"cache_read_adjustment_percent"`
+	IsExclusive                bool                   `json:"is_exclusive"`
 	// 生图独立倍率：为 true 时图片计费模型的实付倍率取 ImageRateMultiplier，
 	// 不取分组/用户专属倍率。
 	ImageRateIndependent bool    `json:"image_rate_independent"`
@@ -137,6 +138,7 @@ func (h *ModelPlazaHandler) Get(c *gin.Context) {
 	var allowedGroups map[int64]struct{}
 	var restrictPublicGroups bool
 	var userRates map[int64]float64
+	var userRateDetails map[int64]service.UserGroupRate
 	if authed {
 		allowedGroups, restrictPublicGroups, err = h.apiKeyService.GetUserGroupVisibility(c.Request.Context(), subject.UserID)
 		if err != nil {
@@ -144,7 +146,15 @@ func (h *ModelPlazaHandler) Get(c *gin.Context) {
 			response.ErrorFrom(c, err)
 			return
 		}
-		userRates, err = h.apiKeyService.GetUserGroupRates(c.Request.Context(), subject.UserID)
+		userRateDetails, err = h.apiKeyService.GetUserGroupRateDetails(c.Request.Context(), subject.UserID)
+		if err == nil && userRateDetails != nil {
+			userRates = make(map[int64]float64, len(userRateDetails))
+			for groupID, rate := range userRateDetails {
+				userRates[groupID] = rate.BaseRate()
+			}
+		} else if err == nil {
+			userRates, err = h.apiKeyService.GetUserGroupRates(c.Request.Context(), subject.UserID)
+		}
 		if err != nil {
 			// 专属倍率仅是展示增强，失败降级为分组默认倍率。
 			slog.Warn("model_plaza_user_rates_failed", "error", err, "user_id", subject.UserID)
@@ -156,7 +166,7 @@ func (h *ModelPlazaHandler) Get(c *gin.Context) {
 
 	out := make([]modelPlazaGroup, 0, len(visible))
 	for i := range visible {
-		out = append(out, toModelPlazaGroupDTO(&visible[i], userRates))
+		out = append(out, toModelPlazaGroupDTO(&visible[i], userRates, userRateDetails))
 	}
 	response.Success(c, modelPlazaResponse{
 		Description: rt.Description,
@@ -189,7 +199,7 @@ func filterPlazaVisibleGroups(
 }
 
 // toModelPlazaGroupDTO 将 service 层广场分组映射为白名单 DTO,并合并用户专属倍率。
-func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64) modelPlazaGroup {
+func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64, userRateDetails map[int64]service.UserGroupRate) modelPlazaGroup {
 	models := make([]modelPlazaModel, 0, len(g.Models))
 	for i := range g.Models {
 		m := &g.Models[i]
@@ -226,6 +236,9 @@ func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64) mo
 	}
 	if rate, ok := userRates[g.ID]; ok {
 		dto.UserRateMultiplier = &rate
+	}
+	if rate, ok := userRateDetails[g.ID]; ok {
+		dto.UserGroupRate = &rate
 	}
 	return dto
 }

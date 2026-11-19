@@ -72,6 +72,7 @@ import PlazaFilterBar from './PlazaFilterBar.vue'
 import PlazaGroupSection from './PlazaGroupSection.vue'
 import type { ModelPlazaGroup, ModelPlazaResponse } from '@/api/modelPlaza'
 import { useAuthStore } from '@/stores/auth'
+import { resolveUserGroupRate } from '@/utils/userGroupRate'
 
 const props = defineProps<{
   response: ModelPlazaResponse | null
@@ -98,9 +99,9 @@ const descriptionHtml = computed(() => {
   return DOMPurify.sanitize(marked.parse(md) as string)
 })
 
-/** 生效倍率 = 用户专属倍率 ?? 分组默认倍率。 */
+/** Filters and prices use the same current group rate policy. */
 function effectiveRate(g: ModelPlazaGroup): number {
-  return g.user_rate_multiplier ?? g.rate_multiplier
+  return g.user_group_rate ? resolveUserGroupRate(g.user_group_rate) : (g.user_rate_multiplier ?? g.rate_multiplier)
 }
 
 const platforms = computed(() =>

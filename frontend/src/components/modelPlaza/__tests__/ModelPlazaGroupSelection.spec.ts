@@ -46,6 +46,21 @@ const response: ModelPlazaResponse = {
 }
 
 describe('模型广场分组选择', () => {
+  it('uses the current group rate times invitation discount for rate filters', async () => {
+    const invited = {
+      ...group(30, 'Invited', 'openai', 2),
+      user_rate_multiplier: 0.8,
+      user_group_rate: { group_rate_multiplier: 2, user_rate_multiplier: 0.8, invitee_discount_factor: 0.9 }
+    }
+    const wrapper = shallowMount(ModelPlazaContent, {
+      props: { response: { description: '', groups: [invited] }, loading: false }
+    })
+    await nextTick()
+    const filters = wrapper.findComponent(PlazaFilterBar)
+    expect(filters.props('rates')).toEqual([1.8])
+    expect(filters.props('groups')[0].rate).toBe(1.8)
+  })
+
   it('不提供分组全部选项', () => {
     const wrapper = mount(PlazaFilterBar, {
       props: {

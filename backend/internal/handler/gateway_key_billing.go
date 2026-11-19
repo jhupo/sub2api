@@ -14,25 +14,26 @@ import (
 const keyBillingInfoSchemaVersion = 1
 
 type keyBillingInfoResponse struct {
-	Object                  string    `json:"object"`
-	SchemaVersion           int       `json:"schema_version"`
-	BillingScope            string    `json:"billing_scope"`
-	GroupRateMultiplier     float64   `json:"group_rate_multiplier"`
-	UserRateMultiplier      *float64  `json:"user_rate_multiplier,omitempty"`
-	ResolvedRateMultiplier  float64   `json:"resolved_rate_multiplier"`
-	PeakRateEnabled         bool      `json:"peak_rate_enabled"`
-	PeakStart               *string   `json:"peak_start,omitempty"`
-	PeakEnd                 *string   `json:"peak_end,omitempty"`
-	PeakRateMultiplier      *float64  `json:"peak_rate_multiplier,omitempty"`
-	AppliedPeakMultiplier   *float64  `json:"applied_peak_multiplier,omitempty"`
-	NightRateEnabled        bool      `json:"night_rate_enabled"`
-	NightStart              string    `json:"night_start,omitempty"`
-	NightEnd                string    `json:"night_end,omitempty"`
-	NightRateMultiplier     float64   `json:"night_rate_multiplier"`
-	AppliedNightMultiplier  float64   `json:"applied_night_multiplier"`
-	EffectiveRateMultiplier float64   `json:"effective_rate_multiplier"`
-	Timezone                *string   `json:"timezone,omitempty"`
-	ObservedAt              time.Time `json:"observed_at"`
+	Object                  string                 `json:"object"`
+	SchemaVersion           int                    `json:"schema_version"`
+	BillingScope            string                 `json:"billing_scope"`
+	GroupRateMultiplier     float64                `json:"group_rate_multiplier"`
+	UserRateMultiplier      *float64               `json:"user_rate_multiplier,omitempty"`
+	ResolvedRateMultiplier  float64                `json:"resolved_rate_multiplier"`
+	UserGroupRate           *service.UserGroupRate `json:"user_group_rate,omitempty"`
+	PeakRateEnabled         bool                   `json:"peak_rate_enabled"`
+	PeakStart               *string                `json:"peak_start,omitempty"`
+	PeakEnd                 *string                `json:"peak_end,omitempty"`
+	PeakRateMultiplier      *float64               `json:"peak_rate_multiplier,omitempty"`
+	AppliedPeakMultiplier   *float64               `json:"applied_peak_multiplier,omitempty"`
+	NightRateEnabled        bool                   `json:"night_rate_enabled"`
+	NightStart              string                 `json:"night_start,omitempty"`
+	NightEnd                string                 `json:"night_end,omitempty"`
+	NightRateMultiplier     float64                `json:"night_rate_multiplier"`
+	AppliedNightMultiplier  float64                `json:"applied_night_multiplier"`
+	EffectiveRateMultiplier float64                `json:"effective_rate_multiplier"`
+	Timezone                *string                `json:"timezone,omitempty"`
+	ObservedAt              time.Time              `json:"observed_at"`
 }
 
 // KeyBillingInfo returns the token billing multiplier effective for the authenticated API key.
@@ -63,27 +64,36 @@ func (h *GatewayHandler) KeyBillingInfo(c *gin.Context) {
 	}
 
 	c.Header("Cache-Control", "no-store")
-	c.JSON(http.StatusOK, buildKeyBillingInfo(apiKey, resolvedRate, timezone.Now()))
+	c.JSON(http.StatusOK, buildKeyBillingInfoWithUserGroupRate(apiKey, resolvedRate, timezone.Now()))
 }
 
-func (h *GatewayHandler) resolveKeyBillingRate(c *gin.Context, apiKey *service.APIKey) (float64, bool) {
+func (h *GatewayHandler) resolveKeyBillingRate(c *gin.Context, apiKey *service.APIKey) (service.UserGroupRate, bool) {
 	groupRate := apiKey.Group.RateMultiplier
 	switch apiKey.Group.Platform {
 	case service.PlatformOpenAI, service.PlatformGrok:
 		if h.openAIGatewayService == nil {
-			return 0, false
+			return service.UserGroupRate{}, false
 		}
-		return h.openAIGatewayService.ResolveUserGroupRateMultiplier(c.Request.Context(), apiKey.UserID, *apiKey.GroupID, groupRate), true
+		return h.openAIGatewayService.ResolveUserGroupRate(c.Request.Context(), apiKey.UserID, *apiKey.GroupID, groupRate), true
 	default:
 		if h.gatewayService == nil {
-			return 0, false
+			return service.UserGroupRate{}, false
 		}
-		return h.gatewayService.ResolveUserGroupRateMultiplier(c.Request.Context(), apiKey.UserID, *apiKey.GroupID, groupRate), true
+		return h.gatewayService.ResolveUserGroupRate(c.Request.Context(), apiKey.UserID, *apiKey.GroupID, groupRate), true
 	}
 }
 
 func buildKeyBillingInfo(apiKey *service.APIKey, resolvedRate float64, now time.Time) keyBillingInfoResponse {
+	rate := service.UserGroupRate{GroupRateMultiplier: apiKey.Group.RateMultiplier}
+	if resolvedRate != rate.GroupRateMultiplier {
+		rate.UserRateMultiplier = &resolvedRate
+	}
+	return buildKeyBillingInfoWithUserGroupRate(apiKey, rate, now)
+}
+
+func buildKeyBillingInfoWithUserGroupRate(apiKey *service.APIKey, rate service.UserGroupRate, now time.Time) keyBillingInfoResponse {
 	groupRate := apiKey.Group.RateMultiplier
+	resolvedRate := rate.Resolve()
 	var userRate *float64
 	if resolvedRate != groupRate {
 		userRate = &resolvedRate
@@ -103,8 +113,19 @@ func buildKeyBillingInfo(apiKey *service.APIKey, resolvedRate float64, now time.
 		NightEnd:                apiKey.Group.NightEnd,
 		NightRateMultiplier:     apiKey.Group.NightRateMultiplier,
 		AppliedNightMultiplier:  apiKey.Group.NightMultiplierAt(now),
-		EffectiveRateMultiplier: resolvedRate * apiKey.Group.TimeRateMultiplierAt(now),
+		EffectiveRateMultiplier: rate.Resolve(appliedPeak, apiKey.Group.NightMultiplierAt(now)),
 		ObservedAt:              now.UTC(),
+	}
+	if rate.InviteeDiscountFactor != nil {
+		response.UserGroupRate = &rate
+		response.PeakRateEnabled = false
+		response.NightRateEnabled = false
+		response.NightStart, response.NightEnd = "", ""
+		response.NightRateMultiplier = 1
+		response.AppliedNightMultiplier = 1
+		one := 1.0
+		response.AppliedPeakMultiplier = &one
+		return response
 	}
 	if apiKey.Group.PeakRateEnabled || apiKey.Group.NightRateEnabled {
 		tz := timezone.Location().String()

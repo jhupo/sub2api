@@ -7430,17 +7430,18 @@
                         <th class="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">{{ t('admin.settings.features.affiliate.customUsers.col.username') }}</th>
                         <th class="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">{{ t('admin.settings.features.affiliate.customUsers.col.code') }}</th>
                         <th class="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">{{ t('admin.settings.features.affiliate.customUsers.col.rate') }}</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500">{{ t('admin.settings.features.affiliate.customUsers.col.groupDiscount') }}</th>
                         <th class="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">{{ t('admin.settings.features.affiliate.customUsers.col.actions') }}</th>
                       </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
                       <tr v-if="affiliateState.loading">
-                        <td colspan="6" class="px-3 py-6 text-center text-sm text-gray-500">
+                        <td colspan="7" class="px-3 py-6 text-center text-sm text-gray-500">
                           {{ t('common.loading') }}
                         </td>
                       </tr>
                       <tr v-else-if="affiliateState.entries.length === 0">
-                        <td colspan="6" class="px-3 py-6 text-center text-sm text-gray-500">
+                        <td colspan="7" class="px-3 py-6 text-center text-sm text-gray-500">
                           {{ t('admin.settings.features.affiliate.customUsers.empty') }}
                         </td>
                       </tr>
@@ -7463,6 +7464,12 @@
                         </td>
                         <td class="px-3 py-2 text-sm">
                           <span v-if="entry.aff_rebate_rate_percent != null">{{ entry.aff_rebate_rate_percent }}%</span>
+                          <span v-else class="text-gray-400">{{ t('admin.settings.features.affiliate.customUsers.useGlobal') }}</span>
+                        </td>
+                        <td class="px-3 py-2 text-sm">
+                          <span v-if="Object.keys(entry.invitee_group_discount_factors ?? {}).length > 0">
+                            {{ t('admin.settings.features.affiliate.customUsers.groupDiscountCount', { count: Object.keys(entry.invitee_group_discount_factors ?? {}).length }) }}
+                          </span>
                           <span v-else class="text-gray-400">{{ t('admin.settings.features.affiliate.customUsers.useGlobal') }}</span>
                         </td>
                         <td class="px-3 py-2 text-sm">
@@ -7519,8 +7526,13 @@
           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           @click.self="closeAffiliateModal"
         >
-          <div class="w-full max-w-md rounded-lg bg-white p-6 shadow-xl dark:bg-dark-900">
-            <h3 class="mb-4 text-lg font-semibold">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="affiliate-modal-title"
+            class="max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-y-auto rounded-lg bg-white p-6 shadow-xl dark:bg-dark-900"
+          >
+            <h3 id="affiliate-modal-title" class="mb-4 text-lg font-semibold">
               {{ affiliateModal.mode === 'add' ? t('admin.settings.features.affiliate.modal.addTitle') : t('admin.settings.features.affiliate.modal.editTitle') }}
             </h3>
             <div class="space-y-4">
@@ -7611,9 +7623,91 @@
                   {{ t('admin.settings.features.affiliate.modal.rateHint') }}
                 </p>
               </div>
+
+              <div class="border-t border-gray-200 pt-4 dark:border-dark-700">
+                <div class="mb-2 flex items-start justify-between gap-3">
+                  <div>
+                    <h4 class="input-label">{{ t('admin.settings.features.affiliate.modal.groupDiscountLabel') }}</h4>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t('admin.settings.features.affiliate.modal.groupDiscountHint') }}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn btn-secondary btn-sm shrink-0"
+                    :disabled="!affiliateGroupsLoaded || affiliateGroupsLoading"
+                    @click="addAffiliateGroupDiscountRow"
+                  >
+                    <Icon name="plus" size="sm" class="mr-1" />
+                    {{ t('admin.settings.features.affiliate.modal.addGroupDiscount') }}
+                  </button>
+                </div>
+                <div v-if="affiliateGroupsLoading" class="py-3 text-sm text-gray-500">
+                  {{ t('common.loading') }}
+                </div>
+                <div v-else-if="affiliateGroupsLoadFailed" role="alert" class="flex flex-wrap items-center gap-2 py-2 text-sm text-red-600 dark:text-red-400">
+                  <span>{{ t('admin.settings.features.affiliate.modal.groupsLoadFailed') }}</span>
+                  <button type="button" class="btn btn-secondary btn-sm" @click="loadAffiliateDiscountGroups">
+                    <Icon name="refresh" size="sm" class="mr-1" />
+                    {{ t('admin.settings.features.affiliate.modal.retryGroups') }}
+                  </button>
+                </div>
+                <div v-else-if="affiliateModal.groupDiscounts.length === 0" class="py-2 text-sm text-gray-500">
+                  {{ t('admin.settings.features.affiliate.modal.noGroupDiscounts') }}
+                </div>
+                <div v-else class="space-y-2">
+                  <div
+                    v-for="(row, index) in affiliateModal.groupDiscounts"
+                    :key="index"
+                    class="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 sm:grid-cols-[minmax(0,1fr)_9rem_auto]"
+                  >
+                    <div class="col-span-2 min-w-0 sm:col-span-1">
+                      <label :for="`affiliate-discount-group-${index}`" class="input-label">
+                        {{ t('admin.settings.features.affiliate.modal.groupLabel') }}
+                      </label>
+                      <Select
+                        :id="`affiliate-discount-group-${index}`"
+                        :model-value="row.groupId"
+                        :options="affiliateDiscountGroupOptions(index)"
+                        :placeholder="t('admin.settings.features.affiliate.modal.selectGroup')"
+                        :aria-label="t('admin.settings.features.affiliate.modal.groupLabel')"
+                        :disabled="affiliateModal.saving"
+                        @update:model-value="row.groupId = $event == null ? null : Number($event)"
+                      />
+                    </div>
+                    <div class="min-w-0">
+                      <label :for="`affiliate-discount-factor-${index}`" class="input-label">
+                        {{ t('admin.settings.features.affiliate.modal.discountFactorLabel') }}
+                      </label>
+                      <input
+                        :id="`affiliate-discount-factor-${index}`"
+                        v-model="row.factor"
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="any"
+                        class="input"
+                        :disabled="affiliateModal.saving"
+                        :aria-label="t('admin.settings.features.affiliate.modal.discountFactorLabel')"
+                        placeholder="0.9"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      class="btn btn-secondary h-10 w-10 p-2"
+                      :title="t('common.delete')"
+                      :aria-label="t('common.delete')"
+                      :disabled="affiliateModal.saving"
+                      @click="removeAffiliateGroupDiscountRow(index)"
+                    >
+                      <Icon name="trash" size="sm" />
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div class="mt-6 flex items-center justify-between gap-3">
+            <div class="mt-6 flex flex-wrap items-center justify-between gap-3">
               <p
                 v-if="!affiliateModalCanSubmit"
                 class="text-xs text-gray-500 dark:text-gray-400"
@@ -7628,7 +7722,7 @@
                 <button
                   type="button"
                   class="btn btn-primary"
-                  :disabled="affiliateModal.saving || !affiliateModalCanSubmit"
+                  :disabled="affiliateModal.saving || !affiliateModalCanSubmit || affiliateGroupsLoading || affiliateGroupsLoadFailed"
                   @click="submitAffiliateModal"
                 >
                   {{ affiliateModal.saving ? t('common.saving') : t('common.save') }}
@@ -8790,6 +8884,8 @@ import {
 } from "@/composables/useStepUp";
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 import { affiliatesAPI, type AffiliateAdminEntry, type SimpleUser as AffiliateSimpleUser } from "@/api/admin/affiliates";
+import groupsAPI from "@/api/admin/groups";
+import type { AdminGroup } from "@/types";
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";
 import { useAppStore } from "@/stores";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
@@ -12683,6 +12779,7 @@ interface AffiliateModalState {
   editingEntry: AffiliateAdminEntry | null;
   code: string;
   rate: string | number;
+  groupDiscounts: Array<{ groupId: number | null; factor: string | number }>;
   searchTimer: number | null;
 }
 
@@ -12696,8 +12793,47 @@ const affiliateModal = reactive<AffiliateModalState>({
   editingEntry: null,
   code: "",
   rate: "",
+  groupDiscounts: [],
   searchTimer: null,
 });
+
+const affiliateDiscountGroups = ref<AdminGroup[]>([]);
+const affiliateGroupsLoading = ref(false);
+const affiliateGroupsLoaded = ref(false);
+const affiliateGroupsLoadFailed = ref(false);
+
+async function loadAffiliateDiscountGroups() {
+  if (affiliateGroupsLoaded.value || affiliateGroupsLoading.value) return;
+  affiliateGroupsLoading.value = true;
+  affiliateGroupsLoadFailed.value = false;
+  try {
+    affiliateDiscountGroups.value = await groupsAPI.getAllIncludingInactive();
+    affiliateGroupsLoaded.value = true;
+  } catch (err) {
+    affiliateGroupsLoadFailed.value = true;
+    appStore.showError(extractApiErrorMessage(err, t("common.error")));
+  } finally {
+    affiliateGroupsLoading.value = false;
+  }
+}
+
+function affiliateDiscountGroupOptions(index: number) {
+  return affiliateDiscountGroups.value.map((group) => ({
+    value: group.id,
+    label: group.status === "active"
+      ? group.name
+      : `${group.name} (${t("admin.settings.features.affiliate.modal.inactiveGroup")})`,
+    disabled: affiliateModal.groupDiscounts.some((row, rowIndex) => rowIndex !== index && row.groupId === group.id),
+  }));
+}
+
+function addAffiliateGroupDiscountRow() {
+  affiliateModal.groupDiscounts.push({ groupId: null, factor: "0.9" });
+}
+
+function removeAffiliateGroupDiscountRow(index: number) {
+  affiliateModal.groupDiscounts.splice(index, 1);
+}
 
 const affiliateBatchModal = reactive<{
   open: boolean;
@@ -12832,6 +12968,7 @@ function toggleAffiliateSelect(userId: number) {
 // openAffiliateModal opens the add/edit modal, prefilling fields from the
 // edited entry when present and resetting them otherwise.
 function openAffiliateModal(entry: AffiliateAdminEntry | null) {
+  void loadAffiliateDiscountGroups();
   affiliateModal.open = true;
   affiliateModal.mode = entry ? "edit" : "add";
   affiliateModal.userQuery = "";
@@ -12841,6 +12978,9 @@ function openAffiliateModal(entry: AffiliateAdminEntry | null) {
   affiliateModal.code = entry?.aff_code_custom ? entry.aff_code : "";
   affiliateModal.rate =
     entry?.aff_rebate_rate_percent != null ? String(entry.aff_rebate_rate_percent) : "";
+  affiliateModal.groupDiscounts = Object.entries(entry?.invitee_group_discount_factors ?? {}).map(
+    ([groupId, factor]) => ({ groupId: Number(groupId), factor: String(factor) }),
+  );
 }
 
 function closeAffiliateModal() {
@@ -12890,16 +13030,19 @@ const affiliateModalCanSubmit = computed(() => {
   }
   const codeFilled = affiliateModal.code.trim() !== "";
   const rateFilled = String(affiliateModal.rate ?? "").trim() !== "";
-  if (codeFilled || rateFilled) return true;
+  const discountsFilled = affiliateModal.groupDiscounts.length > 0;
+  if (codeFilled || rateFilled || discountsFilled) return true;
   // Edit mode + empty rate input is a meaningful "clear" only if the user
   // currently has an exclusive rate to clear.
   return (
     affiliateModal.mode === "edit" &&
-    affiliateModal.editingEntry?.aff_rebate_rate_percent != null
+    (affiliateModal.editingEntry?.aff_rebate_rate_percent != null ||
+      Object.keys(affiliateModal.editingEntry?.invitee_group_discount_factors ?? {}).length > 0)
   );
 });
 
 async function submitAffiliateModal() {
+  if (affiliateGroupsLoading.value || affiliateGroupsLoadFailed.value) return;
   if (!affiliateModalCanSubmit.value) {
     // Should be unreachable because the button is disabled, but keep a guard.
     appStore.showError(t("admin.settings.features.affiliate.modal.errorEmpty"));
@@ -12925,6 +13068,24 @@ async function submitAffiliateModal() {
     }
   } else {
     payload.aff_rebate_rate_percent = rateInput;
+  }
+
+  const groupDiscountFactors: Record<number, number> = {};
+  for (const row of affiliateModal.groupDiscounts) {
+    const groupId = Number(row.groupId);
+    const factor = Number(String(row.factor ?? "").trim());
+    if (!Number.isInteger(groupId) || groupId <= 0 || !Number.isFinite(factor) || factor <= 0 || factor > 1) {
+      appStore.showError(t("admin.settings.features.affiliate.modal.errorBadGroupDiscount"));
+      return;
+    }
+    if (groupDiscountFactors[groupId] != null) {
+      appStore.showError(t("admin.settings.features.affiliate.modal.errorDuplicateGroup"));
+      return;
+    }
+    groupDiscountFactors[groupId] = factor;
+  }
+  if (affiliateModal.mode === "edit" || affiliateModal.groupDiscounts.length > 0) {
+    payload.invitee_group_discount_factors = groupDiscountFactors;
   }
 
   affiliateModal.saving = true;

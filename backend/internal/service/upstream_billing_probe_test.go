@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -696,6 +697,148 @@ func TestUpstreamBillingProbeRejectsInconsistentMultipliers(t *testing.T) {
 			_, err := parseUpstreamBillingProbeResponse([]byte(tt.body))
 			require.ErrorContains(t, err, "inconsistent")
 		})
+	}
+}
+
+func inviteeBillingProbeResponseForTest() map[string]any {
+	return map[string]any{
+		"object": "sub2api.key_billing", "schema_version": 1, "billing_scope": "token",
+		"group_rate_multiplier": 1.0, "user_rate_multiplier": 0.9, "resolved_rate_multiplier": 0.9,
+		"peak_rate_enabled": false, "applied_peak_multiplier": 1.0,
+		"night_rate_enabled": false, "night_rate_multiplier": 1.0, "applied_night_multiplier": 1.0,
+		"effective_rate_multiplier": 0.9, "observed_at": "2026-07-13T23:00:00Z",
+		"user_group_rate": map[string]any{
+			"group_rate_multiplier": 1.0, "user_rate_multiplier": 0.8, "invitee_discount_factor": 0.9,
+		},
+	}
+}
+
+func TestUpstreamBillingProbeInviteeDiscountIgnoresTimeAndFollowsGroupDefault(t *testing.T) {
+	body, err := json.Marshal(inviteeBillingProbeResponseForTest())
+	require.NoError(t, err)
+	data, err := parseUpstreamBillingProbeResponse(body)
+	require.NoError(t, err)
+	// Probe snapshots pass through JSON before scheduling or display reads them.
+	stored, err := json.Marshal(data)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(stored, &data))
+
+	for _, tc := range []struct {
+		hour int
+		want float64
+	}{
+		{hour: 12, want: 0.9},
+		{hour: 23, want: 0.9},
+		{hour: 7, want: 0.9},
+		{hour: 8, want: 0.9},
+		{hour: 15, want: 0.9},
+	} {
+		t.Run(fmt.Sprintf("hour_%d", tc.hour), func(t *testing.T) {
+			rate, valid := upstreamBillingRateAt(data, time.Date(2026, time.July, 14, tc.hour, 0, 0, 0, time.UTC))
+			require.True(t, valid)
+			require.InDelta(t, tc.want, rate, 1e-12)
+		})
+	}
+	rate, valid := upstreamBillingProbeSyncRate(data)
+	require.True(t, valid)
+	require.Equal(t, 0.9, rate)
+
+	response := inviteeBillingProbeResponseForTest()
+	response["group_rate_multiplier"] = 2.0
+	response["user_rate_multiplier"], response["resolved_rate_multiplier"], response["effective_rate_multiplier"] = 1.8, 1.8, 1.8
+	response["user_group_rate"].(map[string]any)["group_rate_multiplier"] = 2.0
+	body, err = json.Marshal(response)
+	require.NoError(t, err)
+	data, err = parseUpstreamBillingProbeResponse(body)
+	require.NoError(t, err)
+	rate, valid = upstreamBillingRateAt(data, time.Date(2026, time.July, 14, 23, 0, 0, 0, time.UTC))
+	require.True(t, valid)
+	require.Equal(t, 1.8, rate)
+	rate, valid = upstreamBillingProbeSyncRate(data)
+	require.True(t, valid)
+	require.Equal(t, 1.8, rate)
+}
+
+func TestUpstreamBillingProbeInviteeDiscountRejectsInvalidComponents(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(map[string]any)
+	}{
+		{name: "missing group", edit: func(rate map[string]any) { delete(rate, "group_rate_multiplier") }},
+		{name: "missing invitee factor", edit: func(rate map[string]any) { delete(rate, "invitee_discount_factor") }},
+		{name: "different group", edit: func(rate map[string]any) { rate["group_rate_multiplier"] = 2.0 }},
+		{name: "negative personal rate", edit: func(rate map[string]any) { rate["user_rate_multiplier"] = -1.0 }},
+		{name: "inconsistent invitee factor", edit: func(rate map[string]any) { rate["invitee_discount_factor"] = 0.6 }},
+		{name: "zero factor", edit: func(rate map[string]any) { rate["invitee_discount_factor"] = 0.0 }},
+		{name: "negative factor", edit: func(rate map[string]any) { rate["invitee_discount_factor"] = -0.1 }},
+		{name: "factor above one", edit: func(rate map[string]any) { rate["invitee_discount_factor"] = 1.1 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := inviteeBillingProbeResponseForTest()
+			tc.edit(response["user_group_rate"].(map[string]any))
+			body, err := json.Marshal(response)
+			require.NoError(t, err)
+			_, err = parseUpstreamBillingProbeResponse(body)
+			require.ErrorContains(t, err, "invalid user group billing rate")
+			_, valid := upstreamBillingRateAt(response, time.Date(2026, time.July, 13, 23, 0, 0, 0, time.UTC))
+			require.False(t, valid, "stored invalid components must not fall back to stacked discounts")
+		})
+	}
+}
+
+func TestUpstreamBillingProbeInviteeDiscountRejectsStackedEffectiveRate(t *testing.T) {
+	response := inviteeBillingProbeResponseForTest()
+	response["effective_rate_multiplier"] = 0.45
+	body, err := json.Marshal(response)
+	require.NoError(t, err)
+	_, err = parseUpstreamBillingProbeResponse(body)
+	require.ErrorContains(t, err, "inconsistent effective billing multiplier")
+
+	delete(response, "user_group_rate")
+	response["night_rate_enabled"] = true
+	response["night_start"], response["night_end"], response["timezone"] = "22:00", "08:00", "UTC"
+	response["night_rate_multiplier"], response["applied_night_multiplier"] = 0.5, 0.5
+	body, err = json.Marshal(response)
+	require.NoError(t, err)
+	data, err := parseUpstreamBillingProbeResponse(body)
+	require.NoError(t, err, "legacy schema-1 responses still multiply personal and night rates")
+	rate, valid := upstreamBillingRateAt(data, time.Date(2026, time.July, 14, 23, 0, 0, 0, time.UTC))
+	require.True(t, valid)
+	require.Equal(t, 0.45, rate)
+}
+
+func TestUpstreamBillingProbeInviteeDiscountRejectsActiveTimeMultipliers(t *testing.T) {
+	for _, tc := range []struct {
+		field string
+		value any
+	}{
+		{field: "peak_rate_enabled", value: true},
+		{field: "night_rate_enabled", value: true},
+		{field: "applied_peak_multiplier", value: 2.0},
+		{field: "applied_night_multiplier", value: 0.5},
+		{field: "night_rate_multiplier", value: 0.5},
+		{field: "night_rate_enabled", value: nil},
+		{field: "applied_peak_multiplier", value: nil},
+	} {
+		t.Run(tc.field+fmt.Sprint(tc.value), func(t *testing.T) {
+			response := inviteeBillingProbeResponseForTest()
+			response[tc.field] = tc.value
+			body, err := json.Marshal(response)
+			require.NoError(t, err)
+			_, err = parseUpstreamBillingProbeResponse(body)
+			require.ErrorContains(t, err, "inconsistent invitee billing time multipliers")
+		})
+	}
+}
+
+func TestUpstreamBillingProbeRejectsMalformedInviteeRateStructure(t *testing.T) {
+	for _, value := range []any{nil, "invalid", []any{1}, map[string]any{}} {
+		response := inviteeBillingProbeResponseForTest()
+		response["user_group_rate"] = value
+		body, err := json.Marshal(response)
+		require.NoError(t, err)
+		_, err = parseUpstreamBillingProbeResponse(body)
+		require.ErrorContains(t, err, "invalid user group billing rate")
 	}
 }
 

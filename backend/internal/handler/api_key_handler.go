@@ -372,3 +372,19 @@ func (h *APIKeyHandler) GetUserGroupRates(c *gin.Context) {
 
 	response.Success(c, rates)
 }
+
+// GetUserGroupRateDetails returns pricing inputs without changing /groups/rates.
+// GET /api/v1/groups/rate-details
+func (h *APIKeyHandler) GetUserGroupRateDetails(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	rates, err := h.apiKeyService.GetUserGroupRateDetails(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, rates)
+}
