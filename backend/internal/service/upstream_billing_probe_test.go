@@ -746,7 +746,9 @@ func TestUpstreamBillingProbeInviteeDiscountIgnoresTimeAndFollowsGroupDefault(t 
 	response := inviteeBillingProbeResponseForTest()
 	response["group_rate_multiplier"] = 2.0
 	response["user_rate_multiplier"], response["resolved_rate_multiplier"], response["effective_rate_multiplier"] = 1.8, 1.8, 1.8
-	response["user_group_rate"].(map[string]any)["group_rate_multiplier"] = 2.0
+	userGroupRate, ok := response["user_group_rate"].(map[string]any)
+	require.True(t, ok)
+	userGroupRate["group_rate_multiplier"] = 2.0
 	body, err = json.Marshal(response)
 	require.NoError(t, err)
 	data, err = parseUpstreamBillingProbeResponse(body)
@@ -775,7 +777,9 @@ func TestUpstreamBillingProbeInviteeDiscountRejectsInvalidComponents(t *testing.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			response := inviteeBillingProbeResponseForTest()
-			tc.edit(response["user_group_rate"].(map[string]any))
+			userGroupRate, ok := response["user_group_rate"].(map[string]any)
+			require.True(t, ok)
+			tc.edit(userGroupRate)
 			body, err := json.Marshal(response)
 			require.NoError(t, err)
 			_, err = parseUpstreamBillingProbeResponse(body)

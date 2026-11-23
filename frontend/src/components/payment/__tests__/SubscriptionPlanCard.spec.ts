@@ -14,6 +14,9 @@ const i18n = createI18n({
   missingWarn: false,
   messages: {
     en: {
+      quotaFeatures: {
+        hours: "hours",
+      },
       payment: {
         days: "days",
         weeks: "weeks",
@@ -59,20 +62,20 @@ describe("SubscriptionPlanCard", () => {
     expect(wrapper.get("time").text()).toBe(formatDateTimeToMinute(deadline));
     expect(wrapper.get(".plan-card__limits").text()).toContain("$300");
     expect(wrapper.find(".plan-card__period").exists()).toBe(false);
-    expect(wrapper.text()).not.toContain("payment.planCard.unlimited");
+    expect(wrapper.text()).not.toContain("Unlimited");
   });
 
   it("shows an hourly card's duration and total allowance", () => {
     const wrapper = mountPlanCard({card_mode: "hours", validity_hours: 12, total_limit_usd: 300, validity_days: 1});
-    expect(wrapper.get(".plan-card__period").text()).toContain("12quotaFeatures.hours");
+    expect(wrapper.get(".plan-card__period").text()).toContain("12hours");
     expect(wrapper.get(".plan-card__limits").text()).toContain("$300");
-    expect(wrapper.text()).not.toContain("payment.planCard.unlimited");
+    expect(wrapper.text()).not.toContain("Unlimited");
   });
 
   it("keeps repeated quota card purchases separate from subscription renewals", async () => {
     const wrapper = mountPlanCard({card_mode: "hours", validity_hours: 12, total_limit_usd: 300});
     await wrapper.setProps({activeSubscriptions: [{plan_id: 1, status: "active"} as UserSubscription]});
-    expect(wrapper.get("button").text()).toBe("payment.subscribeNow");
+    expect(wrapper.get("button").text()).toBe("Subscribe now");
     expect(wrapper.classes()).not.toContain("plan-card--owned");
   });
 
@@ -86,13 +89,12 @@ describe("SubscriptionPlanCard", () => {
   });
 
   // #4607：管理端保存的单位是复数（months/weeks），此前用户侧只匹配单数
-  // 'month'，「1 个月」的套餐卡片被显示成「1天」。测试环境的 vue-i18n 为
-  // runtime-only 构建，t() 原样返回 key，故按 key 断言单位分支。
+  // 'month'，「1 个月」的套餐卡片被显示成「1天」。按测试消息的渲染文案断言。
   it("renders plural admin-form validity units instead of mislabeled days (#4607)", () => {
-    expect(mountPlanCard({ validity_days: 1, validity_unit: "months" }).text()).toContain("/ payment.perMonth");
-    expect(mountPlanCard({ validity_days: 3, validity_unit: "months" }).text()).toContain("/ 3payment.months");
-    expect(mountPlanCard({ validity_days: 2, validity_unit: "weeks" }).text()).toContain("/ 2payment.weeks");
-    expect(mountPlanCard({ validity_days: 30, validity_unit: "day" }).text()).toContain("/ 30payment.days");
+    expect(mountPlanCard({ validity_days: 1, validity_unit: "months" }).text()).toContain("/ month");
+    expect(mountPlanCard({ validity_days: 3, validity_unit: "months" }).text()).toContain("/ 3months");
+    expect(mountPlanCard({ validity_days: 2, validity_unit: "weeks" }).text()).toContain("/ 2weeks");
+    expect(mountPlanCard({ validity_days: 30, validity_unit: "day" }).text()).toContain("/ 30days");
   });
 
   it("uses the configured currency symbol while preserving USD for legacy plans", () => {
@@ -136,10 +138,10 @@ describe("SubscriptionPlanCard", () => {
 
     expect(title.element.parentElement?.classList).toContain("min-w-0");
     expect(priceRegion?.classList).toContain("min-w-0");
-    expect(priceRegion?.textContent).toContain("/ 30payment.days");
+    expect(priceRegion?.textContent).toContain("/ 30days");
     expect(price?.exists()).toBe(true);
     expect(wrapper.get("p").text()).toBe("Includes advanced models and priority support.");
-    expect(wrapper.get("button").text()).toBe("payment.subscribeNow");
+    expect(wrapper.get("button").text()).toBe("Subscribe now");
   });
 
   it("keeps short plan titles compact and aligned", () => {
@@ -151,7 +153,7 @@ describe("SubscriptionPlanCard", () => {
     expect(title.attributes("title")).toBe("Pro");
     expect(title.classes()).toEqual(expect.arrayContaining(["text-base", "font-semibold"]));
     expect(priceRegion?.classList).toContain("min-w-0");
-    expect(priceRegion?.textContent).toContain("/ 30payment.days");
+    expect(priceRegion?.textContent).toContain("/ 30days");
   });
 
   it("submits the selected catalog product with its configured limits", async () => {

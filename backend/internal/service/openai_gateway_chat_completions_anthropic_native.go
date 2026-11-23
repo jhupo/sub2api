@@ -257,10 +257,11 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 
 	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
 		finalResp.Usage = apicompat.AnthropicUsage{
-			InputTokens:              usage.InputTokens,
-			OutputTokens:             usage.OutputTokens,
-			CacheCreationInputTokens: usage.CacheCreationInputTokens,
-			CacheReadInputTokens:     usage.CacheReadInputTokens,
+			InputTokens:                     usage.InputTokens,
+			OutputTokens:                    usage.OutputTokens,
+			CacheCreationInputTokens:        usage.CacheCreationInputTokens,
+			CacheCreationInputTokensPresent: true,
+			CacheReadInputTokens:            usage.CacheReadInputTokens,
 		}
 	}
 
@@ -416,6 +417,8 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			return false
 		}
 
+		syncAnthropicResponsesUsage(anthState, usage)
+		normalizeAnthropicEventUsageForResponses(event, usage)
 		responsesEvents := apicompat.AnthropicEventToResponsesEvents(event, anthState)
 		for _, resEvt := range responsesEvents {
 			ccChunks := apicompat.ResponsesEventToChatChunks(&resEvt, ccState)

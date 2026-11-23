@@ -74,12 +74,16 @@ func (f *AntigravityQuotaFetcher) FetchQuota(ctx context.Context, account *Accou
 	}
 
 	// 调用 API 获取配额
-	summary, err := client.RetrieveUserQuotaSummary(ctx, accessToken, projectID, resolveModelsListReadLimit(f.cfg))
+	baseURL := resolveAntigravityForwardBaseURL(account)
+	if baseURL == "" {
+		return nil, errors.New("no antigravity base url configured")
+	}
+	summary, err := client.RetrieveUserQuotaSummaryFromURL(ctx, baseURL, accessToken, projectID, resolveModelsListReadLimit(f.cfg))
 	modelsResp := &antigravity.FetchAvailableModelsResponse{}
 	var modelsRaw map[string]any
 	// Only an unsupported endpoint permits model-quota fallback.
 	if errors.Is(err, antigravity.ErrQuotaSummaryUnsupported) {
-		modelsResp, modelsRaw, err = client.FetchAvailableModels(ctx, accessToken, projectID, resolveModelsListReadLimit(f.cfg))
+		modelsResp, modelsRaw, err = client.FetchAvailableModelsFromURL(ctx, baseURL, accessToken, projectID, resolveModelsListReadLimit(f.cfg))
 	}
 	if err != nil {
 		// 403 Forbidden: 不报错，返回 is_forbidden 标记

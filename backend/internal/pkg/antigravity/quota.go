@@ -38,6 +38,17 @@ func (b QuotaBucket) Valid() bool {
 }
 
 func (c *Client) RetrieveUserQuotaSummary(ctx context.Context, token, project string, limit int64) (*QuotaSummary, error) {
+	return c.retrieveUserQuotaSummaryFromURLs(ctx, token, project, limit, CodeAssistBaseURLs())
+}
+
+func (c *Client) RetrieveUserQuotaSummaryFromURL(ctx context.Context, baseURL, token, project string, limit int64) (*QuotaSummary, error) {
+	if strings.TrimSpace(baseURL) == "" {
+		return nil, errors.New("antigravity base url is empty")
+	}
+	return c.retrieveUserQuotaSummaryFromURLs(ctx, token, project, limit, []string{strings.TrimRight(baseURL, "/")})
+}
+
+func (c *Client) retrieveUserQuotaSummaryFromURLs(ctx context.Context, token, project string, limit int64, urls []string) (*QuotaSummary, error) {
 	if c == nil || c.httpClient == nil || limit <= 0 {
 		return nil, errors.New("quota summary client or response limit is invalid")
 	}
@@ -45,7 +56,6 @@ func (c *Client) RetrieveUserQuotaSummary(ctx context.Context, token, project st
 	if err != nil {
 		return nil, err
 	}
-	urls := CodeAssistBaseURLs()
 	for index, baseURL := range urls {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/v1internal:retrieveUserQuotaSummary", bytes.NewReader(body))
 		if err != nil {

@@ -973,8 +973,21 @@ func TestAccountUsageServiceGrokRefreshUsesBillingOnly(t *testing.T) {
 	}
 }
 
+type grokProbeWaitingContext struct {
+	context.Context
+	waiting chan struct{}
+	once    sync.Once
+}
+
+func (ctx *grokProbeWaitingContext) Done() <-chan struct{} {
+	// runProbeFlight evaluates the caller's Done only after DoChan registers it.
+	ctx.once.Do(func() { close(ctx.waiting) })
+	return ctx.Context.Done()
+}
+
 func TestGrokQuotaServiceProbeFlightsDeduplicateBillingAndSeparateActive(t *testing.T) {
-	t.Parallel()
+	// Keep the intentionally blocked probe out of the parallel test queue so
+	// fixture scheduling cannot consume its production upstream timeout.
 
 	account := healthyGrokQuotaOAuthAccount(55)
 	repo := &grokQuotaAccountRepo{mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
@@ -982,6 +995,9 @@ func TestGrokQuotaServiceProbeFlightsDeduplicateBillingAndSeparateActive(t *test
 	}}
 	billingStarted := make(chan struct{})
 	billingRelease := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseBilling := func() { releaseOnce.Do(func() { close(billingRelease) }) }
+	t.Cleanup(releaseBilling)
 	upstream := &grokHybridUpstream{billingStarted: billingStarted, billingRelease: billingRelease}
 	svc := NewGrokQuotaService(repo, nil, NewGrokTokenProvider(repo, nil), upstream, nil)
 
@@ -995,19 +1011,17 @@ func TestGrokQuotaServiceProbeFlightsDeduplicateBillingAndSeparateActive(t *test
 		billingOutcomes <- probeOutcome{result: result, err: err}
 	}()
 	<-billingStarted
-	secondStarted := make(chan struct{})
+	secondWaiting := &grokProbeWaitingContext{Context: context.Background(), waiting: make(chan struct{})}
 	go func() {
-		close(secondStarted)
-		result, err := svc.ProbeBilling(context.Background(), account.ID)
+		result, err := svc.ProbeBilling(secondWaiting, account.ID)
 		billingOutcomes <- probeOutcome{result: result, err: err}
 	}()
-	<-secondStarted
-	time.Sleep(25 * time.Millisecond)
+	<-secondWaiting.waiting
 
 	activeResult, err := svc.ProbeUsage(context.Background(), account.ID)
 	require.NoError(t, err)
 	require.NotNil(t, activeResult.Snapshot)
-	close(billingRelease)
+	releaseBilling()
 	for range 2 {
 		outcome := <-billingOutcomes
 		require.NoError(t, outcome.err)
@@ -1228,18 +1242,17 @@ func TestShouldAutoPauseGrokAccountByQuota(t *testing.T) {
 
 	zero := int64(0)
 	limit := int64(10)
-	resetFuture := time.Now().Add(time.Minute).Unix()
 	retryAfter := 30
 	tests := []struct {
 		name     string
 		snapshot xai.QuotaSnapshot
+		age      time.Duration
 		want     bool
 	}{
 		{
 			name: "remaining requests exhausted",
 			snapshot: xai.QuotaSnapshot{
-				Requests:  &xai.QuotaWindow{Limit: &limit, Remaining: &zero, ResetUnix: &resetFuture},
-				UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+				Requests: &xai.QuotaWindow{Limit: &limit, Remaining: &zero},
 			},
 			want: true,
 		},
@@ -1247,7 +1260,6 @@ func TestShouldAutoPauseGrokAccountByQuota(t *testing.T) {
 			name: "retry after active",
 			snapshot: xai.QuotaSnapshot{
 				RetryAfterSeconds: &retryAfter,
-				UpdatedAt:         time.Now().UTC().Format(time.RFC3339),
 			},
 			want: true,
 		},
@@ -1255,16 +1267,16 @@ func TestShouldAutoPauseGrokAccountByQuota(t *testing.T) {
 			name: "retry after expired",
 			snapshot: xai.QuotaSnapshot{
 				RetryAfterSeconds: &retryAfter,
-				UpdatedAt:         time.Now().Add(-time.Duration(retryAfter+1) * time.Second).UTC().Format(time.RFC3339),
 			},
+			age:  time.Duration(retryAfter+1) * time.Second,
 			want: false,
 		},
 		{
 			name: "stale snapshot ignored",
 			snapshot: xai.QuotaSnapshot{
-				Requests:  &xai.QuotaWindow{Limit: &limit, Remaining: &zero, ResetUnix: &resetFuture},
-				UpdatedAt: time.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339),
+				Requests: &xai.QuotaWindow{Limit: &limit, Remaining: &zero},
 			},
+			age:  3 * time.Hour,
 			want: false,
 		},
 	}
@@ -1273,11 +1285,21 @@ func TestShouldAutoPauseGrokAccountByQuota(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			// Start fixture lifetimes after this subtest leaves the parallel queue.
+			now := time.Now().UTC()
+			snapshot := tt.snapshot
+			snapshot.UpdatedAt = now.Add(-tt.age).Format(time.RFC3339)
+			if snapshot.Requests != nil {
+				window := *snapshot.Requests
+				resetFuture := now.Add(time.Minute).Unix()
+				window.ResetUnix = &resetFuture
+				snapshot.Requests = &window
+			}
 			account := &Account{
 				Platform: PlatformGrok,
 				Type:     AccountTypeOAuth,
 				Extra: map[string]any{
-					grokQuotaSnapshotExtraKey: tt.snapshot,
+					grokQuotaSnapshotExtraKey: snapshot,
 				},
 			}
 			got, _ := shouldAutoPauseGrokAccountByQuota(account)

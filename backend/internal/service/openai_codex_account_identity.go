@@ -175,7 +175,7 @@ func (s codexAccountIdentityScope) applyEmbeddedMetadata(values map[string]any) 
 	return true
 }
 
-func (s codexAccountIdentityScope) applyBody(requestBody map[string]any) bool {
+func (s codexAccountIdentityScope) applyBody(requestBody map[string]any, clientSessionIDs ...string) bool {
 	if requestBody == nil || s.namespace == "" {
 		return false
 	}
@@ -195,6 +195,12 @@ func (s codexAccountIdentityScope) applyBody(requestBody map[string]any) bool {
 		kind := "prompt-cache"
 		if strings.TrimSpace(originalBodySessionID) != "" && raw == originalBodySessionID {
 			kind = "session"
+		}
+		for _, sessionID := range clientSessionIDs {
+			if strings.TrimSpace(sessionID) != "" && raw == sessionID {
+				kind = "session"
+				break
+			}
 		}
 		next := s.value(kind, raw)
 		if next != raw {

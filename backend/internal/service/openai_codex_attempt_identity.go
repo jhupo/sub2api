@@ -175,7 +175,7 @@ func (i *codexAttemptIdentity) applyBody(body map[string]any) bool {
 	if i == nil {
 		return false
 	}
-	changed := i.scope.applyBody(body)
+	changed := i.scope.applyBody(body, i.clientSession)
 	if i.fingerprint != nil {
 		ids := *i.fingerprint
 		if applyCodexFingerprintClientMetadata(body, &ids) {

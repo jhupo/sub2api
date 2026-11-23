@@ -602,6 +602,11 @@ type ClaudeUsage struct {
 	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
 	AudioInputTokens         int `json:"audio_input_tokens,omitempty"`
 	AudioCacheReadTokens     int `json:"audio_cache_read_tokens,omitempty"`
+
+	cacheCreationInputTokensPresent     bool
+	cacheCreationInputTokensFromDetails bool
+	promptTotalTokens                   int
+	promptTotalPresent                  bool
 }
 
 // ForwardResult 转发结果

@@ -370,6 +370,16 @@ func TestBackupService_S3ConfigKeepExistingSecret(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "original-secret", internal.SecretAccessKey)
 	require.Equal(t, "AKID-NEW", internal.AccessKeyID)
+	for i := 0; i < 2; i++ {
+		raw, err := repo.GetValue(context.Background(), settingKeyBackupS3Config)
+		require.NoError(t, err)
+		var stored BackupS3Config
+		require.NoError(t, json.Unmarshal([]byte(raw), &stored))
+		require.Equal(t, "ENC:original-secret", stored.SecretAccessKey)
+		stored.SecretAccessKey = ""
+		_, err = svc.UpdateS3Config(context.Background(), stored)
+		require.NoError(t, err)
+	}
 }
 
 func TestBackupService_UpdateS3Config_RejectsEphemeralKey(t *testing.T) {

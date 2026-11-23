@@ -39,6 +39,7 @@ var (
 	integrationDB        *sql.DB
 	integrationEntClient *dbent.Client
 	integrationRedis     *redisclient.Client
+	integrationDSN       string
 
 	redisNamespaceSeq uint64
 )
@@ -49,6 +50,14 @@ func TestMain(m *testing.M) {
 	if err := timezone.Init("UTC"); err != nil {
 		log.Printf("failed to init timezone: %v", err)
 		os.Exit(1)
+	}
+	if dsn := strings.TrimSpace(os.Getenv("SUB2API_TEST_POSTGRES_DSN")); dsn != "" {
+		code, err := runExternalPostgresIntegration(m, dsn)
+		if err != nil {
+			log.Printf("external integration setup failed: %v", err)
+			os.Exit(1)
+		}
+		os.Exit(code)
 	}
 
 	if !dockerIsAvailable(ctx) {
@@ -91,6 +100,7 @@ func TestMain(m *testing.M) {
 		log.Printf("failed to get postgres dsn: %v", err)
 		os.Exit(1)
 	}
+	integrationDSN = dsn
 
 	integrationDB, err = openSQLWithRetry(ctx, dsn, 30*time.Second)
 	if err != nil {

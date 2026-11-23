@@ -57,6 +57,10 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 	if groupIn == nil {
 		return errors.New("group is nil")
 	}
+	cacheReadAdjustmentMode := groupIn.CacheReadAdjustmentMode
+	if cacheReadAdjustmentMode == "" {
+		cacheReadAdjustmentMode = "inherit"
+	}
 	modelPricing, err := json.Marshal(groupIn.ModelPricing)
 	if err != nil {
 		return fmt.Errorf("marshal group model pricing: %w", err)
@@ -117,7 +121,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetNightStart(groupIn.NightStart).
 		SetNightEnd(groupIn.NightEnd).
 		SetNightRateMultiplier(groupIn.NightRateMultiplier).
-		SetCacheReadAdjustmentMode(groupIn.CacheReadAdjustmentMode).
+		SetCacheReadAdjustmentMode(cacheReadAdjustmentMode).
 		SetCacheReadAdjustmentPercent(groupIn.CacheReadAdjustmentPercent).
 		SetProfitControlEnabled(groupIn.ProfitControlEnabled).
 		SetProfitMinMargin(groupIn.ProfitMinMargin).
@@ -139,6 +143,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		return translatePersistenceError(err, nil, service.ErrGroupExists)
 	}
 	groupIn.ID = created.ID
+	groupIn.CacheReadAdjustmentMode = created.CacheReadAdjustmentMode
 	groupIn.CreatedAt = created.CreatedAt
 	groupIn.UpdatedAt = created.UpdatedAt
 	return nil
@@ -245,6 +250,10 @@ func (r *groupRepository) GetByIDLite(ctx context.Context, id int64) (*service.G
 }
 
 func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) error {
+	cacheReadAdjustmentMode := groupIn.CacheReadAdjustmentMode
+	if cacheReadAdjustmentMode == "" {
+		cacheReadAdjustmentMode = "inherit"
+	}
 	modelPricing, err := json.Marshal(groupIn.ModelPricing)
 	if err != nil {
 		return fmt.Errorf("marshal group model pricing: %w", err)
@@ -297,7 +306,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetNightStart(groupIn.NightStart).
 		SetNightEnd(groupIn.NightEnd).
 		SetNightRateMultiplier(groupIn.NightRateMultiplier).
-		SetCacheReadAdjustmentMode(groupIn.CacheReadAdjustmentMode).
+		SetCacheReadAdjustmentMode(cacheReadAdjustmentMode).
 		SetCacheReadAdjustmentPercent(groupIn.CacheReadAdjustmentPercent).
 		SetProfitControlEnabled(groupIn.ProfitControlEnabled).
 		SetProfitMinMargin(groupIn.ProfitMinMargin).
@@ -388,6 +397,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		return translatePersistenceError(err, service.ErrGroupNotFound, service.ErrGroupExists)
 	}
 	groupIn.UpdatedAt = updated.UpdatedAt
+	groupIn.CacheReadAdjustmentMode = updated.CacheReadAdjustmentMode
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group update failed: group=%d err=%v", groupIn.ID, err)
 	}

@@ -62,3 +62,19 @@ func TestMigration234SkipsWatermarkLockForCurrentDayInserts(t *testing.T) {
 	require.Contains(t, sql, "FOR KEY SHARE")
 	require.Contains(t, sql, "closed_before = LEAST(closed_before, affected_date)")
 }
+
+func TestMigration249AddsNonblockingBuildAndKeepsCurrentDayFastPath(t *testing.T) {
+	content, err := FS.ReadFile("249_group_usage_rollup_nonblocking_build.sql")
+	require.NoError(t, err)
+	sql := string(content)
+	require.Contains(t, sql, "SET LOCAL lock_timeout")
+	require.Contains(t, sql, "ADD COLUMN IF NOT EXISTS expired_before TIMESTAMPTZ NOT NULL")
+	require.Contains(t, sql, "ADD COLUMN IF NOT EXISTS building_until DATE")
+	require.Contains(t, sql, "ADD COLUMN IF NOT EXISTS build_dirty_from DATE")
+	require.Contains(t, sql, "CREATE OR REPLACE FUNCTION apply_group_usage_rollup_invalidation")
+	require.Contains(t, sql, "CREATE OR REPLACE FUNCTION invalidate_group_usage_rollups_at")
+	require.Contains(t, sql, "created_at >= state_expired_before")
+	require.Contains(t, sql, "FOR KEY SHARE")
+	require.NotContains(t, sql, "FOR UPDATE;")
+	require.Contains(t, sql, "affected_date >= (NOW() AT TIME ZONE configured_timezone)::date")
+}

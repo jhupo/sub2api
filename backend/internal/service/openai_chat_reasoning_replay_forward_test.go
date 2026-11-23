@@ -140,7 +140,7 @@ func TestForwardAsChatCompletions_ReasoningReplayAcrossToolTurns(t *testing.T) {
 	types := make([]string, 0, len(items))
 	for _, item := range items {
 		typ, _ := item["type"].(string)
-		if typ == "" {
+		if typ == "" || typ == "message" {
 			typ, _ = item["role"].(string)
 		}
 		types = append(types, typ)

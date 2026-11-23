@@ -263,6 +263,8 @@ import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import { fetchCodexModelsManifest } from '@/api/codex'
 import type { GroupPlatform } from '@/types'
+import { DEFAULT_CODEX_MODEL, DEFAULT_CODEX_REASONING_EFFORT } from '@/utils/codexDefaults'
+import { buildCodexApiKeyAuthConfig } from '@/utils/codexAuthConfig'
 import {
   findCodexCatalogModel,
   formatCodexReasoningEffortTomlLine,
@@ -660,8 +662,17 @@ function selectCodexCatalogModel(preferredModel: string): string {
 }
 
 function codexReasoningEffortTomlLine(modelSlug: string): string {
+  const preferredEffort = modelSlug === DEFAULT_CODEX_MODEL
+    ? DEFAULT_CODEX_REASONING_EFFORT
+    : undefined
+  if (codexModelManifestState.value !== 'ready' && preferredEffort) {
+    return formatCodexReasoningEffortTomlLine(preferredEffort)
+  }
   return formatCodexReasoningEffortTomlLine(
-    selectCodexConfigReasoningEffort(findCodexCatalogModel(codexModelManifestContent.value, modelSlug))
+    selectCodexConfigReasoningEffort(
+      findCodexCatalogModel(codexModelManifestContent.value, modelSlug),
+      preferredEffort
+    )
   )
 }
 
@@ -931,7 +942,7 @@ function generateOpenAIFiles(baseUrl: string, apiKey: string): FileConfig[] {
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
 
-  const model = selectCodexCatalogModel('gpt-5.5')
+  const model = selectCodexCatalogModel(DEFAULT_CODEX_MODEL)
   const reasoningEffortLine = codexReasoningEffortTomlLine(model)
 
   // config.toml content
@@ -947,7 +958,7 @@ windows_wsl_setup_acknowledged = true
 name = "OpenAI"
 base_url = "${baseUrl}"
 wire_api = "responses"
-${generateCodexProviderAuthConfig()}
+${generateCodexProviderAuthConfig(apiKey)}
 
 [features]
 goals = true`
@@ -970,10 +981,9 @@ goals = true`
   ]
 }
 
-function generateCodexProviderAuthConfig(): string {
+function generateCodexProviderAuthConfig(apiKey: string): string {
   if (codexAuthMode.value === 'api-key') {
-    return `requires_openai_auth = false
-http_headers = { "x-openai-actor-authorization" = "local-image-extension" }`
+    return buildCodexApiKeyAuthConfig(apiKey)
   }
 
   return 'requires_openai_auth = true'
@@ -1207,7 +1217,7 @@ function generateRoutedCodexFiles(
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
   const preferredModels: Partial<Record<GroupPlatform, string>> = {
-    openai: 'gpt-5.5',
+    openai: DEFAULT_CODEX_MODEL,
     anthropic: 'claude-sonnet-4-6',
     gemini: 'gemini-2.5-pro',
     antigravity: 'claude-sonnet-4-6',
@@ -1215,10 +1225,13 @@ function generateRoutedCodexFiles(
     kimi: 'kimi-k2.5',
     zhipu: 'glm-4.7',
     deepseek: 'deepseek-v4-pro',
-    composite: 'gpt-5.5'
+    composite: DEFAULT_CODEX_MODEL
   }
   const preferredModel = preferredModels[platform] || ''
   const model = selectCodexCatalogModel(preferredModel)
+  const reasoningEffortLine = platform === 'openai' || platform === 'composite'
+    ? codexReasoningEffortTomlLine(model)
+    : ''
   const labels: Record<GroupPlatform, string> = {
     anthropic: 'Anthropic',
     openai: 'OpenAI',
@@ -1239,7 +1252,7 @@ function generateRoutedCodexFiles(
 model_provider = "sub2api"
 model = "${model}"
 review_model = "${model}"
-disable_response_storage = true
+${reasoningEffortLine}disable_response_storage = true
 model_catalog_json = "${escapeTomlBasicString(codexModelCatalogPath.value)}"
 
 [model_providers.sub2api]
@@ -1267,7 +1280,7 @@ supports_websockets = false`
 function generateOpenAIWsFiles(baseUrl: string, apiKey: string): FileConfig[] {
   const isWindows = activeTab.value === 'windows'
   const configDir = isWindows ? '%userprofile%\\.codex' : '~/.codex'
-  const model = selectCodexCatalogModel('gpt-5.5')
+  const model = selectCodexCatalogModel(DEFAULT_CODEX_MODEL)
   const reasoningEffortLine = codexReasoningEffortTomlLine(model)
 
   // config.toml content with WebSocket v2
@@ -1284,7 +1297,7 @@ name = "OpenAI"
 base_url = "${baseUrl}"
 wire_api = "responses"
 supports_websockets = true
-${generateCodexProviderAuthConfig()}
+${generateCodexProviderAuthConfig(apiKey)}
 
 [features]
 responses_websockets_v2 = true
@@ -1318,6 +1331,25 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     }
   }
   const openaiModels = {
+    [DEFAULT_CODEX_MODEL]: {
+      name: 'GPT-6.2 Sol',
+      limit: {
+        context: 1050000,
+        output: 128000
+      },
+      options: {
+        store: false,
+        reasoningEffort: DEFAULT_CODEX_REASONING_EFFORT
+      },
+      variants: {
+        none: {},
+        low: {},
+        medium: {},
+        high: {},
+        xhigh: {},
+        max: {}
+      }
+    },
     'gpt-6': {
       name: 'GPT-6 (Astra)',
       limit: {
@@ -1886,6 +1918,7 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
   const content = JSON.stringify(
     {
       provider,
+      ...(platform === 'openai' ? { model: `openai/${DEFAULT_CODEX_MODEL}` } : {}),
       ...(agent ? { agent } : {}),
       $schema: 'https://opencode.ai/config.json'
     },

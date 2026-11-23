@@ -26,11 +26,6 @@ type userGroupPricingReader interface {
 	GetUserGroupRate(ctx context.Context, userID, groupID int64, groupDefaultMultiplier float64) (UserGroupRate, error)
 }
 
-func loadEffectiveUserGroupRate(ctx context.Context, repo userGroupRateReader, userID, groupID int64, groupDefaultMultiplier float64) (float64, error) {
-	rate, err := loadUserGroupRate(ctx, repo, userID, groupID, groupDefaultMultiplier)
-	return rate.BaseRate(), err
-}
-
 func loadUserGroupRate(ctx context.Context, repo userGroupRateReader, userID, groupID int64, groupDefaultMultiplier float64) (UserGroupRate, error) {
 	if pricingRepo, ok := repo.(userGroupPricingReader); ok {
 		return pricingRepo.GetUserGroupRate(ctx, userID, groupID, groupDefaultMultiplier)

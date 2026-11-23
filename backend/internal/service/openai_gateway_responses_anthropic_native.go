@@ -259,10 +259,11 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 
 	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
 		finalResp.Usage = apicompat.AnthropicUsage{
-			InputTokens:              usage.InputTokens,
-			OutputTokens:             usage.OutputTokens,
-			CacheCreationInputTokens: usage.CacheCreationInputTokens,
-			CacheReadInputTokens:     usage.CacheReadInputTokens,
+			InputTokens:                     usage.InputTokens,
+			OutputTokens:                    usage.OutputTokens,
+			CacheCreationInputTokens:        usage.CacheCreationInputTokens,
+			CacheCreationInputTokensPresent: true,
+			CacheReadInputTokens:            usage.CacheReadInputTokens,
 		}
 	}
 
@@ -397,6 +398,8 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			mergeAnthropicUsage(&usage, event.Message.Usage)
 		}
 
+		syncAnthropicResponsesUsage(state, usage)
+		normalizeAnthropicEventUsageForResponses(event, usage)
 		events := apicompat.AnthropicEventToResponsesEvents(event, state)
 		if clientDisconnected {
 			return

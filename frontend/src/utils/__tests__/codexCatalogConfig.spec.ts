@@ -56,4 +56,26 @@ describe('codexCatalogConfig', () => {
       supported_reasoning_levels: [{ effort: 'none' }, { effort: 'high' }]
     })).toBe('high')
   })
+
+  it('prefers high when the selected model supports it over a medium catalog default', () => {
+    expect(selectCodexConfigReasoningEffort({
+      slug: 'gpt-6.2-sol',
+      default_reasoning_level: 'medium',
+      supported_reasoning_levels: [{ effort: 'medium' }, { effort: 'high' }, { effort: 'xhigh' }]
+    }, 'high')).toBe('high')
+  })
+
+  it('keeps catalog constraints when the preferred effort is not supported', () => {
+    expect(selectCodexConfigReasoningEffort({
+      slug: 'gpt-6.2-sol',
+      default_reasoning_level: 'medium',
+      supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }]
+    }, 'high')).toBe('medium')
+    expect(selectCodexConfigReasoningEffort({
+      slug: 'custom',
+      default_reasoning_level: 'none',
+      supported_reasoning_levels: [{ effort: 'none' }]
+    }, 'high')).toBeNull()
+    expect(selectCodexConfigReasoningEffort(undefined, 'high')).toBeNull()
+  })
 })

@@ -680,6 +680,17 @@ type FetchAvailableModelsResponse struct {
 // 使用与 Code Assist 请求相同的 daily → daily sandbox → prod 端点集合，
 // 避免配额监控与实际转发看到不同的账号模型目录。
 func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectID string, bodyLimit int64) (*FetchAvailableModelsResponse, map[string]any, error) {
+	return c.fetchAvailableModelsFromURLs(ctx, accessToken, projectID, bodyLimit, CodeAssistBaseURLs())
+}
+
+func (c *Client) FetchAvailableModelsFromURL(ctx context.Context, baseURL, accessToken, projectID string, bodyLimit int64) (*FetchAvailableModelsResponse, map[string]any, error) {
+	if strings.TrimSpace(baseURL) == "" {
+		return nil, nil, errors.New("antigravity base url is empty")
+	}
+	return c.fetchAvailableModelsFromURLs(ctx, accessToken, projectID, bodyLimit, []string{strings.TrimRight(baseURL, "/")})
+}
+
+func (c *Client) fetchAvailableModelsFromURLs(ctx context.Context, accessToken, projectID string, bodyLimit int64, availableURLs []string) (*FetchAvailableModelsResponse, map[string]any, error) {
 	if c == nil || c.httpClient == nil {
 		return nil, nil, errors.New("antigravity client is not configured")
 	}
@@ -692,8 +703,6 @@ func (c *Client) FetchAvailableModels(ctx context.Context, accessToken, projectI
 	if err != nil {
 		return nil, nil, fmt.Errorf("序列化请求失败: %w", err)
 	}
-
-	availableURLs := CodeAssistBaseURLs()
 
 	fetchClient := c.fetchAvailableModelsHTTPClient()
 	var lastErr error

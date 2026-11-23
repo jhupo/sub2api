@@ -117,7 +117,11 @@ func TestPassthroughIngressFirstTurnRunsAdmissionAndPreservesStart(t *testing.T)
 	// 等待连接自然结束（inter-turn idle 超时），确保 AfterTurn 已提交。
 	_, _ = readPassthroughLifecycleFrame(t, clientConn, 3*time.Second)
 	select {
-	case <-serverErr:
+	case err := <-serverErr:
+		var closeErr *OpenAIWSClientCloseError
+		require.ErrorAs(t, err, &closeErr)
+		require.Equal(t, coderws.StatusNormalClosure, closeErr.StatusCode())
+		require.Equal(t, "websocket idle timeout", closeErr.Reason())
 	case <-time.After(3 * time.Second):
 		t.Fatal("passthrough ingress did not exit")
 	}
@@ -257,7 +261,10 @@ func testPassthroughIngressFreezesSubsequentTurnBeforeRequestPolicy(t *testing.T
 	_ = clientConn.CloseNow()
 	cancelControl(context.Canceled)
 	select {
-	case <-serverErr:
+	case err := <-serverErr:
+		if err != nil {
+			require.ErrorIs(t, err, context.Canceled)
+		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("passthrough ingress did not exit")
 	}

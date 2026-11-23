@@ -56,7 +56,6 @@ func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) erro
 		SetNillableGroupID(key.GroupID).
 		SetFundingSource(fundingSource).
 		SetNillableSubscriptionID(key.SubscriptionID).
-		SetSubscriptionPriority(key.SubscriptionPriority).
 		SetAllowWalletFallback(key.AllowWalletFallback).
 		SetNillableLastUsedAt(key.LastUsedAt).
 		SetQuota(key.Quota).
@@ -65,6 +64,10 @@ func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) erro
 		SetRateLimit5h(key.RateLimit5h).
 		SetRateLimit1d(key.RateLimit1d).
 		SetRateLimit7d(key.RateLimit7d)
+
+	if key.SubscriptionPriority != nil {
+		builder.SetSubscriptionPriority(key.SubscriptionPriority)
+	}
 
 	if len(key.IPWhitelist) > 0 {
 		builder.SetIPWhitelist(key.IPWhitelist)
@@ -326,7 +329,12 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 		}
 	}
 	if fields.FundingSource {
-		builder.SetFundingSource(key.FundingSource).SetSubscriptionPriority(key.SubscriptionPriority).SetAllowWalletFallback(key.AllowWalletFallback)
+		builder.SetFundingSource(key.FundingSource).SetAllowWalletFallback(key.AllowWalletFallback)
+		if key.SubscriptionPriority != nil {
+			builder.SetSubscriptionPriority(key.SubscriptionPriority)
+		} else {
+			builder.ClearSubscriptionPriority()
+		}
 		if key.SubscriptionID != nil {
 			builder.SetSubscriptionID(*key.SubscriptionID)
 		} else {

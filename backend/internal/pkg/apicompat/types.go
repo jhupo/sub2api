@@ -158,15 +158,50 @@ func AnthropicStopReasonString(p *string) string {
 // AnthropicPromptTokensDetails holds OpenAI-compatible prompt token details
 // occasionally included by Anthropic-compatible providers.
 type AnthropicPromptTokensDetails struct {
-	CachedTokens int `json:"cached_tokens,omitempty"`
+	CachedTokens        int  `json:"cached_tokens,omitempty"`
+	CachedTokensPresent bool `json:"-"`
+}
+
+func (details *AnthropicPromptTokensDetails) UnmarshalJSON(data []byte) error {
+	var decoded struct {
+		CachedTokens *int `json:"cached_tokens"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*details = AnthropicPromptTokensDetails{}
+	if decoded.CachedTokens != nil {
+		details.CachedTokens = *decoded.CachedTokens
+		details.CachedTokensPresent = true
+	}
+	return nil
+}
+
+func (details AnthropicPromptTokensDetails) MarshalJSON() ([]byte, error) {
+	var cachedTokens *int
+	if details.CachedTokensPresent || details.CachedTokens != 0 {
+		cachedTokens = &details.CachedTokens
+	}
+	return json.Marshal(struct {
+		CachedTokens *int `json:"cached_tokens,omitempty"`
+	}{CachedTokens: cachedTokens})
+}
+
+// AnthropicCacheCreation holds Anthropic's cache creation TTL breakdown.
+// Pointers preserve the distinction between an omitted field and an explicit
+// zero in streaming usage events.
+type AnthropicCacheCreation struct {
+	Ephemeral5mInputTokens *int `json:"ephemeral_5m_input_tokens,omitempty"`
+	Ephemeral1hInputTokens *int `json:"ephemeral_1h_input_tokens,omitempty"`
 }
 
 // AnthropicUsage holds token counts in Anthropic format.
 type AnthropicUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	InputTokens              int                     `json:"input_tokens"`
+	OutputTokens             int                     `json:"output_tokens"`
+	CacheCreationInputTokens int                     `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int                     `json:"cache_read_input_tokens"`
+	CacheCreation            *AnthropicCacheCreation `json:"cache_creation,omitempty"`
 	// Anthropic-compatible providers can also expose their native OpenAI-style
 	// total/cache fields. Preserve them so callers can normalize provider totals
 	// into Anthropic's mutually-exclusive billing buckets.
@@ -175,6 +210,64 @@ type AnthropicUsage struct {
 	PromptTokensDetails   *AnthropicPromptTokensDetails `json:"prompt_tokens_details,omitempty"`
 	PromptCacheHitTokens  *int                          `json:"prompt_cache_hit_tokens,omitempty"`
 	PromptCacheMissTokens *int                          `json:"prompt_cache_miss_tokens,omitempty"`
+
+	// Presence distinguishes explicit zero from missing/null; TTL details remain raw.
+	CacheCreationInputTokensPresent bool `json:"-"`
+	CacheReadInputTokensPresent     bool `json:"-"`
+	CachedTokensPresent             bool `json:"-"`
+}
+
+func (usage *AnthropicUsage) UnmarshalJSON(data []byte) error {
+	type usageAlias AnthropicUsage
+	var decoded struct {
+		usageAlias
+		CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
+		CachedTokens             *int `json:"cached_tokens"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*usage = AnthropicUsage(decoded.usageAlias)
+	if decoded.CacheCreationInputTokens != nil {
+		usage.CacheCreationInputTokens = *decoded.CacheCreationInputTokens
+		usage.CacheCreationInputTokensPresent = true
+	}
+	if decoded.CacheReadInputTokens != nil {
+		usage.CacheReadInputTokens = *decoded.CacheReadInputTokens
+		usage.CacheReadInputTokensPresent = true
+	}
+	if decoded.CachedTokens != nil {
+		usage.CachedTokens = *decoded.CachedTokens
+		usage.CachedTokensPresent = true
+	}
+	return nil
+}
+
+func (usage AnthropicUsage) HasCacheCreationInputTokens() bool {
+	return usage.CacheCreationInputTokensPresent || usage.CacheCreationInputTokens != 0
+}
+
+// MarshalJSON preserves aggregate presence and raw TTL details without deriving totals.
+func (usage AnthropicUsage) MarshalJSON() ([]byte, error) {
+	type usageAlias AnthropicUsage
+	var aggregate *int
+	if usage.HasCacheCreationInputTokens() {
+		aggregate = &usage.CacheCreationInputTokens
+	}
+	var cacheReadTokens, cachedTokens *int
+	if usage.CacheReadInputTokensPresent || usage.CacheReadInputTokens != 0 {
+		cacheReadTokens = &usage.CacheReadInputTokens
+	}
+	if usage.CachedTokensPresent || usage.CachedTokens != 0 {
+		cachedTokens = &usage.CachedTokens
+	}
+	return json.Marshal(struct {
+		usageAlias
+		CacheCreationInputTokens *int `json:"cache_creation_input_tokens,omitempty"`
+		CacheReadInputTokens     *int `json:"cache_read_input_tokens,omitempty"`
+		CachedTokens             *int `json:"cached_tokens,omitempty"`
+	}{usageAlias: usageAlias(usage), CacheCreationInputTokens: aggregate, CacheReadInputTokens: cacheReadTokens, CachedTokens: cachedTokens})
 }
 
 // ---------------------------------------------------------------------------
@@ -311,8 +404,9 @@ func (i *ResponsesInputItem) UnmarshalJSON(data []byte) error {
 
 // ResponsesContentPart is a typed content part in a Responses message.
 type ResponsesContentPart struct {
-	Type     string `json:"type"` // "input_text" | "output_text" | "input_image" | "input_file"
+	Type     string `json:"type"` // "input_text" | "output_text" | "refusal" | "input_image" | "input_file"
 	Text     string `json:"text,omitempty"`
+	Refusal  string `json:"refusal,omitempty"`
 	ImageURL string `json:"image_url,omitempty"` // data URI for input_image
 
 	// input_file fields.
@@ -517,10 +611,6 @@ type ResponsesUsage struct {
 
 func (u *ResponsesUsage) UnmarshalJSON(data []byte) error {
 	type responsesUsageAlias ResponsesUsage
-	type cacheTokenPresence struct {
-		CacheCreationTokens *int `json:"cache_creation_tokens"`
-		CacheWriteTokens    *int `json:"cache_write_tokens"`
-	}
 	var aux struct {
 		responsesUsageAlias
 		PromptTokens            int                           `json:"prompt_tokens"`
@@ -532,13 +622,6 @@ func (u *ResponsesUsage) UnmarshalJSON(data []byte) error {
 		CompletionTokensDetails *ResponsesOutputTokensDetails `json:"completion_tokens_details,omitempty"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-	var nestedPresence struct {
-		InputTokensDetails  *cacheTokenPresence `json:"input_tokens_details"`
-		PromptTokensDetails *cacheTokenPresence `json:"prompt_tokens_details"`
-	}
-	if err := json.Unmarshal(data, &nestedPresence); err != nil {
 		return err
 	}
 	*u = ResponsesUsage(aux.responsesUsageAlias)
@@ -565,18 +648,30 @@ func (u *ResponsesUsage) UnmarshalJSON(data []byte) error {
 		u.OutputTokensDetails = aux.CompletionTokensDetails
 	}
 	var canonicalCacheCreationTokens *int
+	canonicalCacheWrite := false
 	switch {
-	case nestedPresence.InputTokensDetails != nil && nestedPresence.InputTokensDetails.CacheWriteTokens != nil:
-		canonicalCacheCreationTokens = nestedPresence.InputTokensDetails.CacheWriteTokens
-	case nestedPresence.PromptTokensDetails != nil && nestedPresence.PromptTokensDetails.CacheWriteTokens != nil:
-		canonicalCacheCreationTokens = nestedPresence.PromptTokensDetails.CacheWriteTokens
-	case nestedPresence.InputTokensDetails != nil && nestedPresence.InputTokensDetails.CacheCreationTokens != nil:
-		canonicalCacheCreationTokens = nestedPresence.InputTokensDetails.CacheCreationTokens
-	case nestedPresence.PromptTokensDetails != nil && nestedPresence.PromptTokensDetails.CacheCreationTokens != nil:
-		canonicalCacheCreationTokens = nestedPresence.PromptTokensDetails.CacheCreationTokens
+	case aux.InputTokensDetails != nil && aux.InputTokensDetails.cacheWriteTokensPresent:
+		canonicalCacheCreationTokens = &aux.InputTokensDetails.CacheWriteTokens
+		canonicalCacheWrite = true
+	case aux.PromptTokensDetails != nil && aux.PromptTokensDetails.cacheWriteTokensPresent:
+		canonicalCacheCreationTokens = &aux.PromptTokensDetails.CacheWriteTokens
+		canonicalCacheWrite = true
+	case aux.InputTokensDetails != nil && aux.InputTokensDetails.cacheCreationTokensPresent:
+		canonicalCacheCreationTokens = &aux.InputTokensDetails.CacheCreationTokens
+	case aux.PromptTokensDetails != nil && aux.PromptTokensDetails.cacheCreationTokensPresent:
+		canonicalCacheCreationTokens = &aux.PromptTokensDetails.CacheCreationTokens
 	}
 	if canonicalCacheCreationTokens != nil {
 		u.CacheCreationInputTokens = max(*canonicalCacheCreationTokens, 0)
+		// Preserve the winning alias when prompt details are merged into input
+		// details, including an explicit null/zero that suppresses other aliases.
+		if canonicalCacheWrite {
+			u.InputTokensDetails.CacheWriteTokens = u.CacheCreationInputTokens
+			u.InputTokensDetails.cacheWriteTokensPresent = true
+		} else {
+			u.InputTokensDetails.CacheCreationTokens = u.CacheCreationInputTokens
+			u.InputTokensDetails.cacheCreationTokensPresent = true
+		}
 	}
 	if u.TotalTokens == 0 && (u.InputTokens != 0 || u.OutputTokens != 0) {
 		u.TotalTokens = u.InputTokens + u.OutputTokens
@@ -586,10 +681,54 @@ func (u *ResponsesUsage) UnmarshalJSON(data []byte) error {
 
 // ResponsesInputTokensDetails breaks down input token usage.
 type ResponsesInputTokensDetails struct {
-	CachedTokens        int `json:"cached_tokens,omitempty"`
-	AudioTokens         int `json:"audio_tokens,omitempty"`
-	CacheCreationTokens int `json:"cache_creation_tokens,omitempty"`
-	CacheWriteTokens    int `json:"cache_write_tokens,omitempty"`
+	CachedTokens               int `json:"cached_tokens,omitempty"`
+	AudioTokens                int `json:"audio_tokens,omitempty"`
+	CacheCreationTokens        int `json:"cache_creation_tokens,omitempty"`
+	CacheWriteTokens           int `json:"cache_write_tokens,omitempty"`
+	cacheCreationTokensPresent bool
+	cacheWriteTokensPresent    bool
+}
+
+func (details *ResponsesInputTokensDetails) UnmarshalJSON(data []byte) error {
+	type detailsAlias ResponsesInputTokensDetails
+	var decoded struct {
+		detailsAlias
+		CacheCreationTokens json.RawMessage `json:"cache_creation_tokens"`
+		CacheWriteTokens    json.RawMessage `json:"cache_write_tokens"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*details = ResponsesInputTokensDetails(decoded.detailsAlias)
+	if len(decoded.CacheCreationTokens) != 0 {
+		if err := json.Unmarshal(decoded.CacheCreationTokens, &details.CacheCreationTokens); err != nil {
+			return err
+		}
+		details.cacheCreationTokensPresent = true
+	}
+	if len(decoded.CacheWriteTokens) != 0 {
+		if err := json.Unmarshal(decoded.CacheWriteTokens, &details.CacheWriteTokens); err != nil {
+			return err
+		}
+		details.cacheWriteTokensPresent = true
+	}
+	return nil
+}
+
+func (details ResponsesInputTokensDetails) MarshalJSON() ([]byte, error) {
+	type detailsAlias ResponsesInputTokensDetails
+	var cacheCreationTokens, cacheWriteTokens *int
+	if details.cacheCreationTokensPresent || details.CacheCreationTokens != 0 {
+		cacheCreationTokens = &details.CacheCreationTokens
+	}
+	if details.cacheWriteTokensPresent || details.CacheWriteTokens != 0 {
+		cacheWriteTokens = &details.CacheWriteTokens
+	}
+	return json.Marshal(struct {
+		detailsAlias
+		CacheCreationTokens *int `json:"cache_creation_tokens,omitempty"`
+		CacheWriteTokens    *int `json:"cache_write_tokens,omitempty"`
+	}{detailsAlias: detailsAlias(details), CacheCreationTokens: cacheCreationTokens, CacheWriteTokens: cacheWriteTokens})
 }
 
 // ResponsesOutputTokensDetails breaks down output token usage.
@@ -685,6 +824,7 @@ type ChatStreamOptions struct {
 type ChatMessage struct {
 	Role             string          `json:"role"` // "system" | "user" | "assistant" | "tool" | "function"
 	Content          json.RawMessage `json:"content,omitempty"`
+	Refusal          string          `json:"refusal,omitempty"`
 	ReasoningContent string          `json:"reasoning_content,omitempty"`
 	Reasoning        string          `json:"reasoning,omitempty"`
 	Name             string          `json:"name,omitempty"`
@@ -799,6 +939,48 @@ type ChatTokenDetails struct {
 	ReasoningTokens          int `json:"reasoning_tokens,omitempty"`
 	AcceptedPredictionTokens int `json:"accepted_prediction_tokens,omitempty"`
 	RejectedPredictionTokens int `json:"rejected_prediction_tokens,omitempty"`
+	cacheWriteTokensPresent  bool
+}
+
+func (details *ChatTokenDetails) UnmarshalJSON(data []byte) error {
+	type detailsAlias ChatTokenDetails
+	var decoded struct {
+		detailsAlias
+		CacheWriteTokens json.RawMessage `json:"cache_write_tokens"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*details = ChatTokenDetails(decoded.detailsAlias)
+	if len(decoded.CacheWriteTokens) != 0 {
+		if err := json.Unmarshal(decoded.CacheWriteTokens, &details.CacheWriteTokens); err != nil {
+			return err
+		}
+		details.cacheWriteTokensPresent = true
+	}
+	return nil
+}
+
+func (details ChatTokenDetails) MarshalJSON() ([]byte, error) {
+	type detailsAlias ChatTokenDetails
+	var cacheWriteTokens *int
+	if details.cacheWriteTokensPresent || details.CacheWriteTokens != 0 {
+		cacheWriteTokens = &details.CacheWriteTokens
+	}
+	return json.Marshal(struct {
+		detailsAlias
+		CacheWriteTokens *int `json:"cache_write_tokens,omitempty"`
+	}{detailsAlias: detailsAlias(details), CacheWriteTokens: cacheWriteTokens})
+}
+
+func (details *ChatTokenDetails) cacheCreationInputTokens() int {
+	if details == nil {
+		return 0
+	}
+	if details.cacheWriteTokensPresent || details.CacheWriteTokens > 0 {
+		return max(details.CacheWriteTokens, 0)
+	}
+	return max(details.CacheCreationTokens, 0)
 }
 
 // ChatCompletionsChunk is a single streaming chunk from POST /v1/chat/completions.
@@ -824,6 +1006,7 @@ type ChatChunkChoice struct {
 type ChatDelta struct {
 	Role             string         `json:"role,omitempty"`
 	Content          *string        `json:"content,omitempty"` // pointer: omit when not present, null vs "" matters
+	Refusal          *string        `json:"refusal,omitempty"`
 	ReasoningContent *string        `json:"reasoning_content,omitempty"`
 	Reasoning        *string        `json:"reasoning,omitempty"`
 	ToolCalls        []ChatToolCall `json:"tool_calls,omitempty"`

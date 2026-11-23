@@ -67,9 +67,10 @@ func TestSchedulerSnapshotDecodedCacheAvoidsRepeatedCacheReads(t *testing.T) {
 		hit:     true,
 		version: "v1",
 		accounts: []*Account{{
-			ID:       7,
-			Platform: PlatformOpenAI,
-			Status:   StatusActive,
+			ID:          7,
+			Platform:    PlatformOpenAI,
+			Status:      StatusActive,
+			Schedulable: true,
 		}},
 	}
 	svc := NewSchedulerSnapshotService(cache, nil, nil, nil, nil)
@@ -95,6 +96,7 @@ func TestSchedulerSnapshotDecodedCacheDoesNotShareMutableAccountMaps(t *testing.
 			ID:          8,
 			Platform:    PlatformOpenAI,
 			Status:      StatusActive,
+			Schedulable: true,
 			Credentials: map[string]any{"nested": map[string]any{"token": "original"}},
 			Extra:       map[string]any{"limits": map[string]any{"remaining": float64(3)}},
 		}},
@@ -120,7 +122,7 @@ type snapshotFallbackProbeRepo struct {
 	calls   int
 }
 
-func (r *snapshotFallbackProbeRepo) ListSchedulableUngroupedByPlatform(context.Context, string) ([]Account, error) {
+func (r *snapshotFallbackProbeRepo) ListModelAvailabilityCandidates(context.Context, *int64, []string, bool) ([]Account, error) {
 	r.mu.Lock()
 	r.calls++
 	r.mu.Unlock()
@@ -129,7 +131,7 @@ func (r *snapshotFallbackProbeRepo) ListSchedulableUngroupedByPlatform(context.C
 	default:
 	}
 	<-r.release
-	return []Account{{ID: 42, Platform: PlatformOpenAI, Status: StatusActive}}, nil
+	return []Account{{ID: 42, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}}, nil
 }
 
 func TestSchedulerSnapshotFallbackSingleflightPerBucket(t *testing.T) {
@@ -180,7 +182,7 @@ func (c *schedulerLateSnapshotCache) GetSnapshot(context.Context, SchedulerBucke
 	if c.calls == 1 {
 		return nil, false, nil
 	}
-	return []*Account{{ID: 44, Platform: PlatformOpenAI, Status: StatusActive}}, true, nil
+	return []*Account{{ID: 44, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}}, true, nil
 }
 
 func TestSchedulerSnapshotFallbackRechecksCacheBeforeLimiter(t *testing.T) {
@@ -240,13 +242,14 @@ type snapshotFallbackProbeRepoWithMaps struct {
 	once    sync.Once
 }
 
-func (r *snapshotFallbackProbeRepoWithMaps) ListSchedulableUngroupedByPlatform(context.Context, string) ([]Account, error) {
+func (r *snapshotFallbackProbeRepoWithMaps) ListModelAvailabilityCandidates(context.Context, *int64, []string, bool) ([]Account, error) {
 	r.once.Do(func() { close(r.started) })
 	<-r.release
 	return []Account{{
 		ID:          43,
 		Platform:    PlatformOpenAI,
 		Status:      StatusActive,
+		Schedulable: true,
 		Credentials: map[string]any{"nested": map[string]any{"token": "original"}},
 		Extra:       map[string]any{"limits": map[string]any{"remaining": float64(3)}},
 	}}, nil

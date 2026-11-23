@@ -57,7 +57,7 @@ func TestChatCompletionsToResponses_ReasoningReplayInsertsItemsBeforeToolCall(t 
 	types := make([]string, 0, len(items))
 	for _, item := range items {
 		typ, _ := item["type"].(string)
-		if typ == "" {
+		if typ == "" || typ == "message" {
 			role, _ := item["role"].(string)
 			typ = "message:" + role
 		}

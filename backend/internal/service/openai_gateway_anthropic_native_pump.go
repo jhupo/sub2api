@@ -18,10 +18,14 @@ import (
 	"errors"
 	"io"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
 // errAnthropicNativeStreamIdle 表示上游流读间隔超时（见上方文件注释）。
 var errAnthropicNativeStreamIdle = errors.New("stream data interval timeout")
+
+var errAnthropicNativeClientGone = errors.New("client gone")
 
 // anthropicNativeLineEvent 是行泵交付的单次读取结果：line 为一行 SSE 文本，
 // err 为 scanner 读错误（流自然结束时 next 返回 io.EOF，不经过本字段）。
@@ -72,20 +76,44 @@ func newAnthropicNativeLinePump(scanner *bufio.Scanner, interval time.Duration) 
 // 表示 interval 内无任何数据到达（计时从收到上一行时起算，事件处理耗时不算入，
 // 与 readOpenAICompatBufferedTerminal 的 resetTimeout 语义一致）。
 func (p *anthropicNativeLinePump) next() (string, error) {
+	return p.nextOrClientGone(nil)
+}
+
+func (p *anthropicNativeLinePump) nextOrClientGone(clientGone <-chan struct{}) (string, error) {
 	var timeoutCh <-chan time.Time
 	if p.timer != nil {
 		timeoutCh = p.timer.C
 	}
 	select {
 	case ev, ok := <-p.events:
-		if !ok {
-			return "", io.EOF
-		}
-		p.resetTimer()
-		return ev.line, ev.err
+		return p.deliver(ev, ok)
 	case <-timeoutCh:
-		return "", errAnthropicNativeStreamIdle
+		// Buffered data wins over a timer that expired during downstream work.
+		select {
+		case ev, ok := <-p.events:
+			return p.deliver(ev, ok)
+		default:
+			return "", errAnthropicNativeStreamIdle
+		}
+	case <-clientGone:
+		return "", errAnthropicNativeClientGone
 	}
+}
+
+func (p *anthropicNativeLinePump) deliver(ev anthropicNativeLineEvent, ok bool) (string, error) {
+	if !ok {
+		return "", io.EOF
+	}
+	p.resetTimer()
+	return ev.line, ev.err
+}
+
+func (p *anthropicNativeLinePump) enableInterval(interval time.Duration) {
+	if p.timer != nil || interval <= 0 {
+		return
+	}
+	p.interval = interval
+	p.timer = time.NewTimer(interval)
 }
 
 // resetTimer 在收到一行后重启间隔计时器。
@@ -119,8 +147,12 @@ func (p *anthropicNativeLinePump) stop() {
 // anthropicNativeStreamInterval 返回本组转换路径适用的读间隔上限；
 // gateway.stream_data_interval_timeout <= 0 时视为禁用。
 func (s *OpenAIGatewayService) anthropicNativeStreamInterval() time.Duration {
-	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
-		return time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+	return anthropicNativeStreamInterval(s.cfg)
+}
+
+func anthropicNativeStreamInterval(cfg *config.Config) time.Duration {
+	if cfg != nil && cfg.Gateway.StreamDataIntervalTimeout > 0 {
+		return time.Duration(cfg.Gateway.StreamDataIntervalTimeout) * time.Second
 	}
 	return 0
 }

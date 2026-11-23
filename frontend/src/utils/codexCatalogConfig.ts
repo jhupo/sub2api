@@ -41,7 +41,8 @@ export function findCodexCatalogModel(
 }
 
 export function selectCodexConfigReasoningEffort(
-  model: CodexCatalogModel | undefined
+  model: CodexCatalogModel | undefined,
+  preferredEffort?: string
 ): string | null {
   if (!model) return null
   const efforts = (model.supported_reasoning_levels ?? []).flatMap((level) => {
@@ -49,6 +50,11 @@ export function selectCodexConfigReasoningEffort(
     return effort ? [effort] : []
   })
   if (efforts.length === 0) return null
+
+  const preferredLevel = trimEffort(preferredEffort)
+  if (preferredLevel && efforts.includes(preferredLevel)) {
+    return preferredLevel === 'none' ? null : preferredLevel
+  }
 
   const defaultLevel = trimEffort(model.default_reasoning_level)
   if (defaultLevel && efforts.includes(defaultLevel)) {

@@ -226,6 +226,8 @@ type OpenAIUsage struct {
 	ImageInputTokens         int `json:"image_input_tokens,omitempty"`
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheCreation5mTokens    int `json:"-"`
+	CacheCreation1hTokens    int `json:"-"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
 }

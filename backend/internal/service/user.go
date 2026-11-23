@@ -64,6 +64,8 @@ type User struct {
 	// nil = 该 API Key 对应的 (user, group) 无 override；非 nil 时 checkRPM 直接使用，
 	// 避免每请求查 DB。字段不持久化到数据库。
 	UserGroupRPMOverride *int
+	// Zero means the snapshot has not successfully looked up an override.
+	UserGroupRPMOverrideGroupID int64
 
 	APIKeys       []APIKey
 	Subscriptions []UserSubscription

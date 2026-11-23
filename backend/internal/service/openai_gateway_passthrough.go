@@ -178,7 +178,10 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if normalized {
 			body = normalizedBody
 		}
-		reqStream = gjson.GetBytes(body, "stream").Bool()
+		// OAuth forces upstream streaming; retain the client's response format.
+		if isOpenAIResponsesCompactPath(c) {
+			reqStream = false
+		}
 
 		accountScopedBody, accountScoped, scopeErr := s.codexAttemptIdentity(c, account).applyBodyRaw(body)
 		if scopeErr != nil {
@@ -1375,10 +1378,18 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 		}
 	}
 	switch {
-	case strings.Contains(combined, "rate_limit"):
+	case strings.Contains(errType, "rate_limit") || strings.Contains(code, "rate_limit"):
 		return http.StatusTooManyRequests
-	case strings.Contains(errType, "invalid_request"):
+	case openAIStreamCredentialAuthFailure(payload):
+		// Providers can wrap a credential code in invalid_request_error.
+		// Trust structured auth signals before the generic request type.
+		return http.StatusUnauthorized
+	case strings.Contains(errType, "invalid_request") || strings.Contains(code, "invalid_request") ||
+		isExplicitOpenAIResponsesFieldRejection(code, ""):
 		return http.StatusBadRequest
+	case strings.Contains(combined, "rate_limit"):
+		// Keep message-only provider compatibility after structured request errors.
+		return http.StatusTooManyRequests
 	case strings.Contains(combined, "authentication") || strings.Contains(combined, "unauthorized") || strings.Contains(combined, "invalid_api_key"):
 		return http.StatusUnauthorized
 	case strings.Contains(combined, "permission") || strings.Contains(combined, "forbidden") || strings.Contains(combined, "access denied"):
@@ -1537,9 +1548,9 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 		return openAIStream403AccountFailure(payload, message)
 	}
 	// A response.failed event is transported over HTTP 200. Prefer its semantic
-	// rate-limit status over a generic/invalid_request error type so it can enter
-	// the same 429 retry policy as a regular upstream HTTP response.
-	if semanticStatus == http.StatusTooManyRequests {
+	// auth/rate-limit status over a generic/invalid_request error type so it can
+	// enter the same retry policy as a regular upstream HTTP response.
+	if semanticStatus == http.StatusUnauthorized || semanticStatus == http.StatusTooManyRequests {
 		return true
 	}
 	if isOpenAITransientProcessingError(http.StatusBadRequest, message, payload) {
@@ -1559,6 +1570,8 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	}
 	nonRetryableMarkers := []string{
 		"invalid_request",
+		"unknown_parameter",
+		"unsupported_parameter",
 		"content_policy",
 		"policy",
 		"safety",
@@ -1717,6 +1730,19 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 	message string,
 	responseHeaders ...http.Header,
 ) *UpstreamFailoverError {
+	return s.newOpenAIStreamFailoverErrorWithModel(c, account, passthrough, upstreamRequestID, payload, message, "", responseHeaders...)
+}
+
+func (s *OpenAIGatewayService) newOpenAIStreamFailoverErrorWithModel(
+	c *gin.Context,
+	account *Account,
+	passthrough bool,
+	upstreamRequestID string,
+	payload []byte,
+	message string,
+	canonicalModel string,
+	responseHeaders ...http.Header,
+) *UpstreamFailoverError {
 	message = sanitizeUpstreamErrorMessage(strings.TrimSpace(message))
 	if message == "" {
 		message = "OpenAI stream disconnected before completion"
@@ -1725,7 +1751,7 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 	if len(responseHeaders) > 0 && responseHeaders[0] != nil {
 		headers = responseHeaders[0].Clone()
 	}
-	statusCode, shouldDisable := s.handleOpenAIStreamTerminalAccountSideEffects(c, account, payload, message, headers)
+	statusCode, shouldDisable := s.handleOpenAIStreamTerminalAccountSideEffects(c, account, payload, message, headers, canonicalModel)
 	// 流内 failed 事件承载于 HTTP 200；使用事件的语义状态更新账号健康，
 	// 再由 failover 引擎按 StatusCode/RetryableOnSameAccount 决定恢复策略。
 	message = s.recordOpenAIStreamUpstreamError(c, account, passthrough, upstreamRequestID, "failover", payload, message)
@@ -2353,7 +2379,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	// Some upstreams (e.g. other sub2api instances) may return SSE even when
 	// stream=false was requested. Without this conversion the client would
 	// receive raw SSE text or a terminal event with empty output.
-	if isEventStreamResponse(resp.Header) {
+	if isEventStreamResponse(resp.Header) || (account != nil && account.Type == AccountTypeOAuth && bodyHasSSEFraming(body)) {
 		return s.handlePassthroughSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
 
@@ -2423,6 +2449,9 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 	}
 	finalResponse, ok := extractCodexFinalResponse(bodyText)
+	if !ok && terminalOK {
+		finalResponse, ok = extractOpenAINonCompletedTerminalResponse(terminalType, terminalPayload)
+	}
 
 	usage := s.parseSSEUsageFromBody(bodyText)
 	if ok {
@@ -2470,6 +2499,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		}
 	}
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
+		c.Writer.Header().Set("Content-Type", contentType)
 		c.Data(resp.StatusCode, contentType, body)
 	}
 

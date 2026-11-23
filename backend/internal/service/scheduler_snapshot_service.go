@@ -314,7 +314,13 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 			return nil, useMixed, result.Err
 		}
 		accounts, _ := result.Val.([]Account)
-		return cloneSnapshotAccounts(accounts), useMixed, nil
+		eligible := make([]Account, 0, len(accounts))
+		for i := range accounts {
+			if accounts[i].IsSchedulable() {
+				eligible = append(eligible, cloneSnapshotAccount(&accounts[i]))
+			}
+		}
+		return eligible, useMixed, nil
 	case <-ctx.Done():
 		return nil, useMixed, ctx.Err()
 	}
@@ -392,14 +398,6 @@ func accountsToPointers(accounts []Account) []*Account {
 	for i := range accounts {
 		account := accounts[i]
 		result[i] = &account
-	}
-	return result
-}
-
-func cloneSnapshotAccounts(accounts []Account) []Account {
-	result := make([]Account, len(accounts))
-	for i := range accounts {
-		result[i] = cloneSnapshotAccount(&accounts[i])
 	}
 	return result
 }
@@ -1654,42 +1652,27 @@ func (s *SchedulerSnapshotService) loadAccountsFromDB(ctx context.Context, bucke
 	if s.accountRepo == nil {
 		return nil, ErrSchedulerCacheNotReady
 	}
-	groupID := bucket.GroupID
-	if s.isRunModeSimple() {
-		groupID = 0
+	var groupID *int64
+	if !s.isRunModeSimple() && bucket.GroupID > 0 {
+		groupID = &bucket.GroupID
 	}
-
+	platforms := []string{bucket.Platform}
 	if useMixed {
-		platforms := mixedSchedulingPlatforms(bucket.Platform)
-		var accounts []Account
-		var err error
-		if groupID > 0 {
-			accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, platforms)
-		} else if s.isRunModeSimple() {
-			accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, platforms)
-		} else {
-			accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatforms(ctx, platforms)
-		}
-		if err != nil {
-			return nil, err
-		}
-		filtered := make([]Account, 0, len(accounts))
-		for _, acc := range accounts {
-			if !isAccountAllowedForMixedPlatform(&acc, bucket.Platform) {
-				continue
-			}
+		platforms = mixedSchedulingPlatforms(bucket.Platform)
+	}
+	// Keep configured members even while runtime cooldowns make them ineligible.
+	// Every snapshot read evaluates those time-based limits again.
+	accounts, err := s.accountRepo.ListModelAvailabilityCandidates(ctx, groupID, platforms, s.isRunModeSimple())
+	if err != nil || !useMixed {
+		return accounts, err
+	}
+	filtered := make([]Account, 0, len(accounts))
+	for _, acc := range accounts {
+		if isAccountAllowedForMixedPlatform(&acc, bucket.Platform) {
 			filtered = append(filtered, acc)
 		}
-		return filtered, nil
 	}
-
-	if groupID > 0 {
-		return s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, groupID, bucket.Platform)
-	}
-	if s.isRunModeSimple() {
-		return s.accountRepo.ListSchedulableByPlatform(ctx, bucket.Platform)
-	}
-	return s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, bucket.Platform)
+	return filtered, nil
 }
 
 func (s *SchedulerSnapshotService) loadAccountsForRebuild(
@@ -1852,7 +1835,7 @@ func derefAccounts(accounts []*Account) []Account {
 	}
 	out := make([]Account, 0, len(accounts))
 	for _, account := range accounts {
-		if account == nil {
+		if account == nil || !account.IsSchedulable() {
 			continue
 		}
 		out = append(out, cloneSnapshotAccount(account))

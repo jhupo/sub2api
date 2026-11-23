@@ -73,15 +73,18 @@ vi.mock('@/api/admin/usage', () => ({
 
 vi.mock('file-saver', () => ({ saveAs }))
 
-vi.mock('xlsx', () => ({
-	utils: {
-		aoa_to_sheet: aoaToSheet,
-		sheet_add_aoa: sheetAddAoa,
-		book_new: vi.fn(() => ({})),
-		book_append_sheet: vi.fn(),
-	},
-	write: xlsxWrite,
-}))
+vi.mock('xlsx', async () => {
+	const actual = await vi.importActual<typeof import('xlsx')>('xlsx')
+	return {
+		...actual,
+		utils: {
+			...actual.utils,
+			aoa_to_sheet: aoaToSheet.mockImplementation(actual.utils.aoa_to_sheet),
+			sheet_add_aoa: sheetAddAoa.mockImplementation(actual.utils.sheet_add_aoa),
+		},
+		write: xlsxWrite.mockImplementation(actual.write),
+	}
+})
 
 vi.mock('@/api/admin/ops', () => ({
   listErrorLogs,
@@ -798,5 +801,12 @@ describe('admin UsageView model audit export', () => {
 		const row = sheetAddAoa.mock.calls[0][1][0]
 		expect(row.slice(4, 8)).toEqual(['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'Yes'])
 		expect(saveAs).toHaveBeenCalledTimes(1)
+		const XLSX = await import('xlsx')
+		const workbook = XLSX.read(xlsxWrite.mock.results[0].value, { type: 'array' })
+		expect(workbook.SheetNames).toEqual(['Usage'])
+		const exportedRows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets.Usage, { header: 1 })
+		expect(exportedRows[0].slice(4, 8)).toEqual(headers.slice(4, 8))
+		expect(exportedRows[1].slice(4, 8)).toEqual(row.slice(4, 8))
+		expect(saveAs.mock.calls[0][0].size).toBeGreaterThan(0)
 	})
 })
