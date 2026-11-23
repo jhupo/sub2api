@@ -65,6 +65,7 @@ func TestAPIKeyRepositorySubscriptionPriorityCreateDefaults(t *testing.T) {
 			user := mustCreateAPIKeyRepoUser(t, ctx, client, tt.name+"-priority@test.com")
 			key := &service.APIKey{
 				UserID:               user.ID,
+				Name:                 "priority-" + tt.name,
 				Key:                  "sk-priority-" + tt.name,
 				Status:               service.StatusActive,
 				SubscriptionPriority: tt.priority,
@@ -83,6 +84,7 @@ func TestAPIKeyRepositorySubscriptionPriorityUpdateDefaults(t *testing.T) {
 	user := mustCreateAPIKeyRepoUser(t, ctx, client, "update-priority@test.com")
 	key := &service.APIKey{
 		UserID:               user.ID,
+		Name:                 "update-priority",
 		Key:                  "sk-update-priority",
 		Status:               service.StatusActive,
 		SubscriptionPriority: []int64{41},
