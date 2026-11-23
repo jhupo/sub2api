@@ -66,12 +66,14 @@
         />
       </div>
 
-      <div v-if="supportsImageTest" class="space-y-1.5">
+      <div v-if="supportsPromptInput" class="space-y-1.5">
         <TextArea
+          id="account-test-prompt"
           v-model="testPrompt"
-          :label="t('admin.accounts.imagePromptLabel')"
-          :placeholder="t('admin.accounts.imagePromptPlaceholder')"
-          :hint="t('admin.accounts.imageTestHint')"
+          :label="t(supportsImageTest ? 'admin.accounts.imagePromptLabel' : 'admin.accounts.testPromptLabel')"
+          :placeholder="t(supportsImageTest ? 'admin.accounts.imagePromptPlaceholder' : 'admin.accounts.testPromptPlaceholder')"
+          :hint="t(supportsImageTest ? 'admin.accounts.imageTestHint' : 'admin.accounts.testPromptHint')"
+          :error="promptError"
           :disabled="status === 'connecting'"
           rows="3"
         />
@@ -189,7 +191,7 @@
           {{
             supportsImageTest
               ? t('admin.accounts.imageTestMode')
-              : t('admin.accounts.testPrompt')
+              : t('admin.accounts.textTestMode')
           }}
         </span>
       </div>
@@ -205,10 +207,10 @@
         </button>
         <button
           @click="startTest"
-          :disabled="status === 'connecting' || !selectedModelId"
+          :disabled="!canStartTest"
           :class="[
             'flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-            status === 'connecting' || !selectedModelId
+            !canStartTest
               ? 'cursor-not-allowed bg-primary-400 text-white'
               : status === 'success'
                 ? 'bg-green-500 text-white hover:bg-green-600'
@@ -309,6 +311,19 @@ const supportsOpenAIImageTest = computed(() => {
 
 const supportsImageTest = computed(() => supportsGeminiImageTest.value || supportsOpenAIImageTest.value)
 
+const supportsPromptInput = computed(() => {
+  if (isOpenAIAccount.value && testMode.value === 'compact') return false
+  if (props.account?.platform === 'antigravity' && props.account.type !== 'apikey') return false
+  return true
+})
+
+const promptError = computed(() =>
+  supportsPromptInput.value && Array.from(testPrompt.value.trim()).length > 4000
+    ? t('admin.accounts.testPromptTooLong')
+    : ''
+)
+const canStartTest = computed(() => status.value !== 'connecting' && Boolean(selectedModelId.value) && !promptError.value)
+
 const sortTestModels = (models: ClaudeModel[]) => {
   const priorityMap = new Map(prioritizedGeminiModels.map((id, index) => [id, index]))
 
@@ -326,20 +341,30 @@ watch(
   async (newVal) => {
     if (newVal && props.account) {
       testPrompt.value = ''
+      previousDefaultPrompt.value = ''
       testMode.value = 'default'
       resetState()
       await loadAvailableModels()
+      applyDefaultPrompt()
     } else {
       abortStream()
     }
   }
 )
 
-watch(selectedModelId, () => {
-  if (supportsImageTest.value && !testPrompt.value.trim()) {
-    testPrompt.value = t('admin.accounts.imagePromptDefault')
-  }
-})
+const previousDefaultPrompt = ref('')
+
+const applyDefaultPrompt = () => {
+  if (!supportsPromptInput.value) return
+  if (testPrompt.value.trim() && testPrompt.value !== previousDefaultPrompt.value) return
+  const defaultPrompt = supportsImageTest.value
+    ? t('admin.accounts.imagePromptDefault')
+    : t('admin.accounts.testPromptDefault')
+  testPrompt.value = defaultPrompt
+  previousDefaultPrompt.value = defaultPrompt
+}
+
+watch([selectedModelId, supportsPromptInput], applyDefaultPrompt)
 
 const loadAvailableModels = async () => {
   if (!props.account) return
@@ -405,7 +430,7 @@ const scrollToBottom = async () => {
 }
 
 const startTest = async () => {
-  if (!props.account || !selectedModelId.value) return
+  if (!props.account || !canStartTest.value) return
 
   resetState()
   status.value = 'connecting'
@@ -430,7 +455,7 @@ const startTest = async () => {
       },
       body: JSON.stringify({
         model_id: selectedModelId.value,
-        prompt: supportsImageTest.value ? testPrompt.value.trim() : '',
+        prompt: supportsPromptInput.value ? testPrompt.value.trim() : '',
         mode: isOpenAIAccount.value ? testMode.value : 'default'
       }),
       signal: abortController.signal

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
@@ -1111,8 +1113,15 @@ func (h *AccountHandler) Test(c *gin.Context) {
 	}
 
 	var req TestAccountRequest
-	// Allow empty body, model_id is optional
-	_ = c.ShouldBindJSON(&req)
+	// Empty bodies keep the default connectivity probe compatible with older clients.
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		response.BadRequest(c, "Invalid test request JSON")
+		return
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(req.Prompt)) > 4000 {
+		response.BadRequest(c, "Test prompt must not exceed 4000 characters")
+		return
+	}
 
 	opts := service.AccountTestOptions{
 		ImageDataURL: req.ImageDataURL,

@@ -24,7 +24,8 @@ vi.mock('@/composables/useClipboard', () => ({
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   const messages: Record<string, string> = {
-    'admin.accounts.imagePromptDefault': 'Generate a cute orange cat astronaut sticker on a clean pastel background.'
+    'admin.accounts.imagePromptDefault': 'Generate a cute orange cat astronaut sticker on a clean pastel background.',
+    'admin.accounts.testPromptDefault': 'hi'
   }
   return {
     ...actual,
@@ -148,7 +149,7 @@ describe('AccountTestModal', () => {
     expect(preview.attributes('src')).toBe('data:image/png;base64,QUJD')
   })
 
-  it('grok 账号测试默认选择 Grok 模型', async () => {
+  it('grok 文本测试支持自定义提示词并默认发送 hi', async () => {
     getAvailableModels.mockResolvedValue([
       { id: 'grok-4.3', display_name: 'Grok 4.3' },
       { id: 'grok-build-0.1', display_name: 'Grok Build 0.1' }
@@ -171,6 +172,10 @@ describe('AccountTestModal', () => {
     await wrapper.setProps({ show: true })
     await flushPromises()
 
+    const promptInput = wrapper.find('textarea.textarea-stub')
+    expect(promptInput.exists()).toBe(true)
+    expect((promptInput.element as HTMLTextAreaElement).value).toBe('hi')
+
     const buttons = wrapper.findAll('button')
     const startButton = buttons.find((button) => button.text().includes('admin.accounts.startTest'))
     expect(startButton).toBeTruthy()
@@ -182,9 +187,77 @@ describe('AccountTestModal', () => {
     const [, request] = (global.fetch as any).mock.calls[0]
     expect(JSON.parse(request.body)).toEqual({
       model_id: 'grok-4.3',
-      prompt: '',
+      prompt: 'hi',
       mode: 'text'
     })
+  })
+
+  it.each(['anthropic', 'openai', 'gemini', 'grok'])('%s 文本测试发送自定义提示词', async (platform) => {
+    getAvailableModels.mockResolvedValue([{ id: 'claude-sonnet-4-6', display_name: 'Claude Sonnet' }])
+    const wrapper = mountModal({
+      id: 9,
+      name: 'Claude account',
+      platform,
+      type: 'apikey',
+      status: 'active'
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    const promptInput = wrapper.find('textarea.textarea-stub')
+    expect((promptInput.element as HTMLTextAreaElement).value).toBe('hi')
+    await promptInput.setValue('  return only pong  ')
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+
+    const [, request] = (global.fetch as any).mock.calls[0]
+    expect(JSON.parse(request.body)).toMatchObject({
+      model_id: 'claude-sonnet-4-6',
+      prompt: 'return only pong'
+    })
+  })
+
+  it('空白提示词交给后端回退，关闭后不会保留自定义内容', async () => {
+    const wrapper = mountModal({ id: 9, platform: 'openai', type: 'oauth' })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    await wrapper.find('textarea').setValue('  \n ')
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+    expect(JSON.parse((global.fetch as any).mock.calls[0][1].body).prompt).toBe('')
+    await wrapper.find('textarea').setValue('custom prompt')
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('hi')
+  })
+
+  it('超长提示词不会发起请求', async () => {
+    const wrapper = mountModal({ id: 9, platform: 'openai', type: 'oauth' })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    await wrapper.find('textarea').setValue('x'.repeat(4001))
+    await (wrapper.vm as any).startTest()
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it.each(['stt', 'realtime'])('Grok %s 不发送普通提示词', async (mode) => {
+    const wrapper = mountModal({ id: 9, platform: 'grok', type: 'apikey' })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    ;(wrapper.vm as any).grokTestMode = mode
+    await flushPromises()
+    expect(wrapper.find('textarea').exists()).toBe(false)
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+    expect(JSON.parse((global.fetch as any).mock.calls[0][1].body).prompt).toBe('')
+  })
+
+  it('Antigravity OAuth 不显示无效的提示词输入', async () => {
+    const wrapper = mountModal({ id: 9, platform: 'antigravity', type: 'oauth' })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect(wrapper.find('textarea').exists()).toBe(false)
   })
 
   it('OpenAI Compact 探测会携带 compact 测试模式', async () => {
@@ -209,6 +282,8 @@ describe('AccountTestModal', () => {
 
     ;(wrapper.vm as any).selectedModelId = 'gpt-5.4'
     ;(wrapper.vm as any).testMode = 'compact'
+    await flushPromises()
+    expect(wrapper.find('textarea.textarea-stub').exists()).toBe(false)
     await (wrapper.vm as any).startTest()
     await flushPromises()
 

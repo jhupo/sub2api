@@ -905,7 +905,7 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	if accessToken == "" && !account.IsOpenAIAgentIdentity() {
 		return nil, fmt.Errorf("no access token available")
 	}
-	payloadBytes, err := json.Marshal(createOpenAITestPayload(openaipkg.CodexUsageProbeModel, true))
+	payloadBytes, err := json.Marshal(createOpenAITestPayload(openaipkg.CodexUsageProbeModel, true, ""))
 	if err != nil {
 		return nil, fmt.Errorf("marshal openai probe payload: %w", err)
 	}

@@ -26,7 +26,7 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key
+      t: (key: string) => key === 'admin.accounts.testPromptDefault' ? 'hi' : key
     })
   }
 })
@@ -136,7 +136,10 @@ describe('AccountTestModal', () => {
 
     await flushPromises()
     ;(wrapper.vm as any).selectedModelId = 'gpt-5.4'
+    ;(wrapper.vm as any).testPrompt = 'custom probe'
     ;(wrapper.vm as any).testMode = 'compact'
+    await flushPromises()
+    expect(wrapper.find('textarea').exists()).toBe(false)
     await (wrapper.vm as any).startTest()
     await flushPromises()
 
@@ -145,6 +148,39 @@ describe('AccountTestModal', () => {
     expect(JSON.parse(options.body)).toMatchObject({
       model_id: 'gpt-5.4',
       mode: 'compact'
+    })
+  })
+
+  it('shows and sends a temporary prompt for a regular text test', async () => {
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account: buildAccount()
+      },
+      global: {
+        stubs: {
+          BaseDialog: BaseDialogStub,
+          Select: SelectStub,
+          TextArea: TextAreaStub,
+          Icon: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    const prompt = wrapper.find('textarea')
+    expect((prompt.element as HTMLTextAreaElement).value).toBe('hi')
+    await prompt.setValue('reply with pong')
+    ;(wrapper.vm as any).selectedModelId = 'gpt-5.4'
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+
+    const [, options] = (global.fetch as any).mock.calls[0]
+    expect(JSON.parse(options.body)).toMatchObject({
+      model_id: 'gpt-5.4',
+      prompt: 'reply with pong',
+      mode: 'default'
     })
   })
 

@@ -248,7 +248,7 @@ func (s *OpenAIGatewayService) refreshManagedUpstreamState(ctx context.Context, 
 
 	refreshCtx, finish := context.WithTimeout(ctx, upstreamStateRefreshTimeout)
 	defer finish()
-	payload, err := json.Marshal(createOpenAITestPayload(strings.TrimSpace(model), true))
+	payload, err := json.Marshal(createOpenAITestPayload(strings.TrimSpace(model), true, ""))
 	if err != nil {
 		return nil, err
 	}

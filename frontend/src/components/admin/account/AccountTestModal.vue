@@ -83,10 +83,12 @@
 
       <div v-if="supportsPromptInput" class="space-y-1.5">
         <TextArea
+          id="admin-account-test-prompt"
           v-model="testPrompt"
           :label="promptInputLabel"
           :placeholder="promptInputPlaceholder"
           :hint="promptInputHint"
+          :error="promptError"
           :disabled="status === 'connecting'"
           rows="3"
         />
@@ -497,16 +499,25 @@ const modelOptionsForMode = computed(() => {
 })
 
 const supportsPromptInput = computed(() => {
-  if (!isGrokAccount.value) {
-    return supportsImageTest.value
+  if (isGrokAccount.value) {
+    return (
+      grokTestMode.value === 'text' ||
+      grokTestMode.value === 'image' ||
+      grokTestMode.value === 'video' ||
+      grokTestMode.value === 'search' ||
+      grokTestMode.value === 'tts'
+    )
   }
-  return (
-    grokTestMode.value === 'image' ||
-    grokTestMode.value === 'video' ||
-    grokTestMode.value === 'search' ||
-    grokTestMode.value === 'tts'
-  )
+  if (isOpenAIAccount.value && testMode.value === 'compact') return false
+  if (props.account?.platform === 'antigravity' && props.account.type !== 'apikey') return false
+  return true
 })
+
+const promptError = computed(() =>
+  supportsPromptInput.value && Array.from(testPrompt.value.trim()).length > 4000
+    ? t('admin.accounts.testPromptTooLong')
+    : ''
+)
 
 const supportsImageUpload = computed(
   () => isGrokAccount.value && (grokTestMode.value === 'image' || grokTestMode.value === 'video')
@@ -609,7 +620,9 @@ const promptInputLabel = computed(() => {
   if (grokTestMode.value === 'tts') {
     return t('admin.accounts.grok.ttsTextLabel')
   }
-  return t('admin.accounts.imagePromptLabel')
+  return supportsImageTest.value
+    ? t('admin.accounts.imagePromptLabel')
+    : t('admin.accounts.testPromptLabel')
 })
 
 const promptInputPlaceholder = computed(() => {
@@ -625,7 +638,9 @@ const promptInputPlaceholder = computed(() => {
   if (grokTestMode.value === 'tts') {
     return t('admin.accounts.grok.ttsTextPlaceholder')
   }
-  return ''
+  return supportsImageTest.value
+    ? t('admin.accounts.imagePromptPlaceholder')
+    : t('admin.accounts.testPromptPlaceholder')
 })
 
 const promptInputHint = computed(() => {
@@ -647,7 +662,9 @@ const promptInputHint = computed(() => {
   if (grokTestMode.value === 'realtime') {
     return t('admin.accounts.grok.realtimeTestHint')
   }
-  return ''
+  return supportsImageTest.value
+    ? t('admin.accounts.imageTestHint')
+    : t('admin.accounts.testPromptHint')
 })
 
 const testModeSummary = computed(() => {
@@ -670,11 +687,11 @@ const testModeSummary = computed(() => {
     }
   }
   if (supportsImageTest.value) return t('admin.accounts.imageTestMode')
-  return t('admin.accounts.testPrompt')
+  return t('admin.accounts.textTestMode')
 })
 
 const canStartTest = computed(() => {
-  if (status.value === 'connecting') return false
+  if (status.value === 'connecting' || promptError.value) return false
   if (isGrokAccount.value) {
     if (
       grokTestMode.value === 'search' ||
@@ -703,17 +720,22 @@ const sortTestModels = (models: ClaudeModel[]) => {
 // Load available models when modal opens
 const applyDefaultPromptForMode = () => {
   if (!supportsPromptInput.value) return
-  if (testPrompt.value.trim()) return
+  if (testPrompt.value.trim() && testPrompt.value !== previousDefaultPrompt.value) return
+  let defaultPrompt = t('admin.accounts.testPromptDefault')
   if (grokTestMode.value === 'video') {
-    testPrompt.value = t('admin.accounts.videoPromptDefault')
+    defaultPrompt = t('admin.accounts.videoPromptDefault')
   } else if (grokTestMode.value === 'image' || supportsImageTest.value) {
-    testPrompt.value = t('admin.accounts.imagePromptDefault')
+    defaultPrompt = t('admin.accounts.imagePromptDefault')
   } else if (grokTestMode.value === 'search') {
-    testPrompt.value = t('admin.accounts.grok.searchQueryDefault')
+    defaultPrompt = t('admin.accounts.grok.searchQueryDefault')
   } else if (grokTestMode.value === 'tts') {
-    testPrompt.value = t('admin.accounts.grok.ttsTextDefault')
+    defaultPrompt = t('admin.accounts.grok.ttsTextDefault')
   }
+  testPrompt.value = defaultPrompt
+  previousDefaultPrompt.value = defaultPrompt
 }
+
+const previousDefaultPrompt = ref('')
 
 const pickDefaultModelForMode = () => {
   const opts = modelOptionsForMode.value
@@ -738,14 +760,13 @@ watch(
   async (newVal) => {
     if (newVal && props.account) {
       testPrompt.value = ''
+      previousDefaultPrompt.value = ''
       testMode.value = 'default'
       grokTestMode.value = 'text'
       resetState()
       await loadAvailableModels()
-      if (isGrokAccount.value) {
-        pickDefaultModelForMode()
-        applyDefaultPromptForMode()
-      }
+      if (isGrokAccount.value) pickDefaultModelForMode()
+      applyDefaultPromptForMode()
     } else {
       abortStream()
     }
@@ -755,9 +776,14 @@ watch(
 watch(grokTestMode, () => {
   if (!isGrokAccount.value) return
   testPrompt.value = ''
+  previousDefaultPrompt.value = ''
   clearMediaUploads()
   pickDefaultModelForMode()
   applyDefaultPromptForMode()
+})
+
+watch([selectedModelId, supportsPromptInput], () => {
+  if (!isGrokAccount.value) applyDefaultPromptForMode()
 })
 
 const loadAvailableModels = async () => {
