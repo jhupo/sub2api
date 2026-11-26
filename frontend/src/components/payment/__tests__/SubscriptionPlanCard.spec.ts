@@ -7,7 +7,7 @@ import type { UserSubscription } from "@/types";
 import { formatDateTimeToMinute } from "@/utils/format";
 import SubscriptionPlanCard from "../SubscriptionPlanCard.vue";
 
-const i18n = createI18n({
+const createTestI18n = () => createI18n({
   legacy: false,
   locale: "en",
   fallbackWarn: false,
@@ -15,20 +15,20 @@ const i18n = createI18n({
   messages: {
     en: {
       quotaFeatures: {
-        hours: "hours",
+        hours: () => "hours",
       },
       payment: {
-        days: "days",
-        weeks: "weeks",
-        months: "months",
-        perMonth: "month",
-        models: "Models",
+        days: () => "days",
+        weeks: () => "weeks",
+        months: () => "months",
+        perMonth: () => "month",
+        models: () => "Models",
         planCard: {
-          quota: "Quota",
-          rate: "Rate",
-          unlimited: "Unlimited",
+          quota: () => "Quota",
+          rate: () => "Rate",
+          unlimited: () => "Unlimited",
         },
-        subscribeNow: "Subscribe now",
+        subscribeNow: () => "Subscribe now",
       },
     },
   },
@@ -50,10 +50,32 @@ const mountPlanCard = (overrides: Partial<SubscriptionPlan> = {}) =>
         ...overrides,
       },
     },
-    global: { plugins: [i18n, createPinia()] },
+    global: { plugins: [createTestI18n(), createPinia()] },
   });
 
 describe("SubscriptionPlanCard", () => {
+  it("keeps legacy cards static and applies selected appearance without changing purchase data", async () => {
+    const wrapper = mountPlanCard({ id: 19, total_limit_usd: 300 });
+    expect(wrapper.classes()).toContain("plan-card--classic");
+    expect(wrapper.classes()).toContain("plan-card--none");
+    const plan = { ...wrapper.props("plan"), card_appearance: { theme: "mint", motion: "shine" } } as SubscriptionPlan;
+    await wrapper.setProps({ plan });
+    expect(wrapper.classes()).toContain("plan-card--mint");
+    expect(wrapper.classes()).toContain("plan-card--shine");
+    await wrapper.get("button").trigger("click");
+    expect(wrapper.emitted("select")?.[0]?.[0]).toEqual(plan);
+    wrapper.unmount();
+  });
+
+  it("previews the selected design with purchasing disabled", async () => {
+    const wrapper = mountPlanCard({ card_appearance: { theme: "ruby", motion: "flow" } });
+    await wrapper.setProps({ preview: true });
+    expect(wrapper.classes()).toContain("plan-card--ruby");
+    expect(wrapper.classes()).toContain("plan-card--flow");
+    expect(wrapper.get("button").attributes("disabled")).toBeDefined();
+    wrapper.unmount();
+  });
+
   it("shows the exact deadline and lifetime quota instead of one day and unlimited", () => {
     const deadline = new Date(2027, 0, 2, 18, 30).toISOString();
     const wrapper = mountPlanCard({card_mode: "deadline", deadline_at: deadline, total_limit_usd: 300, validity_days: 1});
@@ -75,6 +97,13 @@ describe("SubscriptionPlanCard", () => {
   it("keeps repeated quota card purchases separate from subscription renewals", async () => {
     const wrapper = mountPlanCard({card_mode: "hours", validity_hours: 12, total_limit_usd: 300});
     await wrapper.setProps({activeSubscriptions: [{plan_id: 1, status: "active"} as UserSubscription]});
+    expect(wrapper.get("button").text()).toBe("Subscribe now");
+    expect(wrapper.classes()).not.toContain("plan-card--owned");
+  });
+
+  it("buys another daily card instead of extending the first card", async () => {
+    const wrapper = mountPlanCard({ validity_days: 1, validity_unit: "days", daily_limit_usd: 100 });
+    await wrapper.setProps({ activeSubscriptions: [{ plan_id: 1, status: "active" } as UserSubscription] });
     expect(wrapper.get("button").text()).toBe("Subscribe now");
     expect(wrapper.classes()).not.toContain("plan-card--owned");
   });

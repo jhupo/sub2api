@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -89,6 +90,48 @@ func TestApplyUsageBillingSubscriptionWithoutPreauthorizationSettlesActualUsage(
 	require.False(t, repo.lastCmd.SubscriptionPreauthorized)
 	require.Equal(t, 0.021, repo.lastCmd.SubscriptionCost)
 	require.Nil(t, repo.lastCmd.SubscriptionCaptureCost)
+	require.Equal(t, &PriorityFundingPolicy{SubscriptionIDs: []int64{99}}, repo.lastCmd.PriorityFunding)
+}
+
+func TestApplyUsageBillingPreservesFundingOrderWithoutPreauthorization(t *testing.T) {
+	usageLog, params, deps := guardedUsageBillingParams(0.8)
+	params.APIKey.FundingSource = FundingSourceSubscription
+	params.APIKey.SubscriptionID = int64Pointer(99)
+	params.APIKey.SubscriptionPriority = []int64{99, 101, 100}
+	params.APIKey.AllowWalletFallback = true
+	params.Subscription, params.IsSubscriptionBill = &UserSubscription{ID: 99}, true
+	repo := &guardedUsageBillingApplyRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	applied, err := applyUsageBilling(context.Background(), "priority-no-guard", usageLog, params, deps, repo)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, &PriorityFundingPolicy{SubscriptionIDs: []int64{99, 101, 100}, WalletFallback: true}, repo.lastCmd.PriorityFunding)
+	require.Zero(t, repo.lastCmd.BalanceCost)
+	require.Equal(t, 0.8, repo.lastCmd.SubscriptionCost)
+}
+
+func TestPriorityFundingUpdatesWalletCacheOnlyForUnreservedRemainder(t *testing.T) {
+	for _, preauthorized := range []bool{false, true} {
+		t.Run(fmt.Sprint(preauthorized), func(t *testing.T) {
+			_, params, deps := guardedUsageBillingParams(0.8)
+			params.IsSubscriptionBill = true
+			queue := make(chan cacheWriteTask, 2)
+			deps.billingCacheService = &BillingCacheService{cache: &billingCacheWorkerStub{}, cacheWriteChan: queue}
+			finalizePostUsageBilling(context.Background(), params, deps, &UsageBillingApplyResult{
+				Applied: true, BalanceFinalizationPending: preauthorized,
+				PriorityFunding: &PriorityFundingReservation{ActualAmount: 0.8, WalletAmount: 0.15},
+			}, false)
+			if preauthorized {
+				require.Empty(t, queue, "the finalized live wallet must not be charged twice")
+			} else {
+				require.Len(t, queue, 1)
+				task := <-queue
+				require.Equal(t, cacheWriteDeductBalance, task.kind)
+				require.Equal(t, 0.15, task.amount)
+			}
+			require.True(t, params.IsSubscriptionBill)
+			require.Equal(t, 0.8, params.Cost.ActualCost)
+		})
+	}
 }
 
 func TestApplyUsageBillingSubscriptionWithoutPreauthorizationRequiresRepository(t *testing.T) {

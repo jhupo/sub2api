@@ -1939,19 +1939,19 @@ func init() {
 	// subscriptionplan.DefaultForSale holds the default value on creation for the for_sale field.
 	subscriptionplan.DefaultForSale = subscriptionplanDescForSale.Default.(bool)
 	// subscriptionplanDescIsHistorical is the schema descriptor for is_historical field.
-	subscriptionplanDescIsHistorical := subscriptionplanFields[7].Descriptor()
+	subscriptionplanDescIsHistorical := subscriptionplanFields[8].Descriptor()
 	// subscriptionplan.DefaultIsHistorical holds the default value on creation for the is_historical field.
 	subscriptionplan.DefaultIsHistorical = subscriptionplanDescIsHistorical.Default.(bool)
 	// subscriptionplanDescSortOrder is the schema descriptor for sort_order field.
-	subscriptionplanDescSortOrder := subscriptionplanFields[8].Descriptor()
+	subscriptionplanDescSortOrder := subscriptionplanFields[9].Descriptor()
 	// subscriptionplan.DefaultSortOrder holds the default value on creation for the sort_order field.
 	subscriptionplan.DefaultSortOrder = subscriptionplanDescSortOrder.Default.(int)
 	// subscriptionplanDescCreatedAt is the schema descriptor for created_at field.
-	subscriptionplanDescCreatedAt := subscriptionplanFields[9].Descriptor()
+	subscriptionplanDescCreatedAt := subscriptionplanFields[10].Descriptor()
 	// subscriptionplan.DefaultCreatedAt holds the default value on creation for the created_at field.
 	subscriptionplan.DefaultCreatedAt = subscriptionplanDescCreatedAt.Default.(func() time.Time)
 	// subscriptionplanDescUpdatedAt is the schema descriptor for updated_at field.
-	subscriptionplanDescUpdatedAt := subscriptionplanFields[10].Descriptor()
+	subscriptionplanDescUpdatedAt := subscriptionplanFields[11].Descriptor()
 	// subscriptionplan.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	subscriptionplan.DefaultUpdatedAt = subscriptionplanDescUpdatedAt.Default.(func() time.Time)
 	// subscriptionplan.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

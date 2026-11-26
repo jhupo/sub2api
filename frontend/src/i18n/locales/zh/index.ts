@@ -6,8 +6,14 @@ import batchImage from './batchImage'
 import admin from './admin'
 import misc from './misc'
 import quotaFeatures from './quotaFeatures'
+import beginnerGuide from './beginnerGuide'
+import planAppearance from './planAppearance'
+import guideManager from './guideManager'
 
 export default {
+  beginnerGuide,
+  guideManager,
+  planAppearance,
   quotaFeatures,
   ...landing,
   ...common,

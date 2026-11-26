@@ -211,8 +211,12 @@ func (s *SubscriptionService) assignOrExtendSubscriptionInTx(ctx context.Context
 	if err != nil {
 		return nil, false, err
 	}
+	// A one-day entitlement has a single allowance, just like a timed quota
+	// card. Extending its row would turn it into a multi-day subscription and
+	// incorrectly enable the midnight reset on the original remaining quota.
+	isQuotaCard := plan.CardMode != "" || !expiresAt.After(startsAt.AddDate(0, 0, 1))
 	var existing *UserSubscription
-	if plan.CardMode == "" {
+	if !isQuotaCard {
 		existing, err = s.userSubRepo.GetByUserIDAndPlanVersionID(ctx, input.UserID, plan.PublishedVersionID)
 	}
 	if err != nil && !errors.Is(err, ErrSubscriptionNotFound) {
@@ -221,7 +225,7 @@ func (s *SubscriptionService) assignOrExtendSubscriptionInTx(ctx context.Context
 	if existing == nil || errors.Is(err, ErrSubscriptionNotFound) {
 		sub := &UserSubscription{
 			UserID: input.UserID, PlanID: plan.ID, PlanVersionID: plan.PublishedVersionID,
-			IsQuotaCard: plan.CardMode != "",
+			IsQuotaCard: isQuotaCard,
 			StartsAt:    startsAt, ExpiresAt: expiresAt, Status: SubscriptionStatusActive,
 			AssignedBy: input.AssignedBy, AssignedAt: now, Notes: input.Notes, Plan: plan,
 		}

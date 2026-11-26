@@ -68,3 +68,25 @@ func TestCacheReadAdjustmentRevenueWithoutRequestIDHeader(t *testing.T) {
 		})
 	}
 }
+
+func TestCacheReadAdjustmentRevenueAcrossPriorityFunding(t *testing.T) {
+	for _, tc := range []struct {
+		name                                                                string
+		baseline, actual, wallet, uncovered, walletDelta, subscriptionDelta float64
+	}{
+		{"both sources", 0.6, 0.8, 0.15, 0, 0.15, 0.05},
+		{"wallet increment", 0.7, 0.8, 0.15, 0, 0.1, 0},
+		{"subscription only", 0.4, 0.6, 0, 0, 0, 0.2},
+		{"uncovered excluded", 0.6, 0.8, 0, 0.15, 0, 0.05},
+		{"uncovered exceeds increment", 0.7, 0.8, 0, 0.15, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			delta := tc.actual - tc.baseline
+			log := &UsageLog{CacheReadAdjustment: &CacheReadAdjustmentUsage{BaselineActualCost: &tc.baseline, AdditionalActualCost: &delta}}
+			recordPriorityFundingCacheAdjustment(log, &PriorityFundingReservation{ActualAmount: tc.actual, WalletAmount: tc.wallet, UncoveredAmount: tc.uncovered})
+			require.Equal(t, tc.walletDelta, *log.CacheReadAdjustment.BalanceAdditionalCost)
+			require.Equal(t, tc.subscriptionDelta, *log.CacheReadAdjustment.SubscriptionAdditionalCost)
+			require.InDelta(t, tc.walletDelta+tc.subscriptionDelta, *log.CacheReadAdjustment.AdditionalActualCost, 1e-10)
+		})
+	}
+}

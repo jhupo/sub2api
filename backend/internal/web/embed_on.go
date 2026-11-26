@@ -171,9 +171,11 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 	// Check cache first
 	cached := s.cache.Get()
 	if cached != nil {
+		etag := indexHTMLETag(cached.ETag, nonce)
+		c.Header("ETag", etag)
+		applyHTMLNoCacheHeaders(c.Writer.Header())
 		// Check If-None-Match for 304 response
-		if match := c.GetHeader("If-None-Match"); nonce == "" && match == cached.ETag {
-			applyHTMLNoCacheHeaders(c.Writer.Header())
+		if match := c.GetHeader("If-None-Match"); match == etag {
 			c.Status(http.StatusNotModified)
 			c.Abort()
 			return
@@ -181,9 +183,6 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 
 		// Replace nonce placeholder with actual nonce before serving
 		content := replaceNoncePlaceholder(cached.Content, nonce)
-
-		c.Header("ETag", cached.ETag)
-		applyHTMLNoCacheHeaders(c.Writer.Header())
 		c.Data(http.StatusOK, "text/html; charset=utf-8", content)
 		c.Abort()
 		return
@@ -219,11 +218,20 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 
 	cached = s.cache.Get()
 	if cached != nil {
-		c.Header("ETag", cached.ETag)
+		c.Header("ETag", indexHTMLETag(cached.ETag, nonce))
 	}
 	applyHTMLNoCacheHeaders(c.Writer.Header())
 	c.Data(http.StatusOK, "text/html; charset=utf-8", content)
 	c.Abort()
+}
+
+// A new CSP nonce requires matching HTML, even when the settings are unchanged.
+func indexHTMLETag(baseTag, nonce string) string {
+	if nonce == "" {
+		return baseTag
+	}
+	digest := sha256.Sum256([]byte(nonce))
+	return fmt.Sprintf(`"%s-%x"`, strings.Trim(baseTag, `"`), digest[:8])
 }
 
 func (s *FrontendServer) injectSettings(settingsJSON []byte) []byte {

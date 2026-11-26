@@ -863,6 +863,7 @@ func userSubscriptionFromServiceBase(sub *service.UserSubscription) UserSubscrip
 		ExpiresAt:          sub.ExpiresAt,
 		Status:             sub.Status,
 		DailyWindowStart:   sub.DailyWindowStart,
+		DailyResetAt:       sub.DailyResetTime(),
 		WeeklyWindowStart:  sub.WeeklyWindowStart,
 		MonthlyWindowStart: sub.MonthlyWindowStart,
 		DailyUsageUSD:      sub.DailyUsageUSD,

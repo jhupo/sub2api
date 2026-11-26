@@ -86,6 +86,7 @@ func (w *BalancePreauthorizationRecoveryWorker) run(ctx context.Context) {
 	defer ticker.Stop()
 	w.recoverBatch(ctx)
 	w.recoverSubscriptionBatch(ctx)
+	w.recoverPriorityBatch(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -93,6 +94,26 @@ func (w *BalancePreauthorizationRecoveryWorker) run(ctx context.Context) {
 		case <-ticker.C:
 			w.recoverBatch(ctx)
 			w.recoverSubscriptionBatch(ctx)
+			w.recoverPriorityBatch(ctx)
+		}
+	}
+}
+
+func (w *BalancePreauthorizationRecoveryWorker) recoverPriorityBatch(parent context.Context) {
+	source, ok := w.source.(PriorityFundingRepository)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, balancePreauthorizationRecoveryBatchTimeout)
+	defer cancel()
+	records, err := source.ListRecoverablePriorityFunding(ctx, time.Now(), balancePreauthorizationRecoveryBatchSize)
+	if err != nil {
+		logger.L().Warn("billing.priority_funding_recovery_list_failed", zap.Error(err))
+		return
+	}
+	for _, record := range records {
+		if err := source.ReleasePriorityFunding(ctx, record.RequestID, record.APIKeyID); err != nil {
+			logger.L().Warn("billing.priority_funding_recovery_failed", zap.String("request_id", record.RequestID), zap.Error(err))
 		}
 	}
 }

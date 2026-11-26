@@ -139,6 +139,29 @@ func (s *UserSubscription) HasOneTimeDailyQuota() bool {
 	return !s.ExpiresAt.After(s.StartsAt.AddDate(0, 0, 1))
 }
 
+// Older versions merged repeated daily-card purchases into one entitlement.
+// Keep those purchased days, but advance their allowance every 24 hours from
+// activation instead of granting another allowance at the next midnight.
+func (s *UserSubscription) hasLegacyRenewedDailyQuota() bool {
+	return s != nil && !s.IsQuotaCard && s.RenewalCount > 0 && s.Plan != nil &&
+		s.Plan.CardMode == "" && psComputeValidityDays(s.Plan.ValidityDays, s.Plan.ValidityUnit) == 1
+}
+
+func (s *UserSubscription) legacyDailyWindowAnchor() time.Time {
+	anchor := s.StartsAt
+	if s.DailyWindowStart != nil && s.DailyWindowStart.After(anchor) {
+		elapsed := s.DailyWindowStart.Sub(anchor)
+		periods := elapsed / subscriptionDayDuration
+		// A legacy midnight reset already granted the following day's
+		// allowance early. Do not grant it again at the aligned boundary.
+		if elapsed%subscriptionDayDuration != 0 {
+			periods++
+		}
+		anchor = anchor.Add(periods * subscriptionDayDuration)
+	}
+	return anchor
+}
+
 func (s *UserSubscription) NeedsDailyReset() bool {
 	return s.NeedsDailyResetAt(time.Now())
 }
@@ -180,6 +203,10 @@ func (s *UserSubscription) automaticDailyWindowStartAt(now time.Time) (time.Time
 	}
 	if s.HasOneTimeDailyQuota() {
 		return time.Time{}, false
+	}
+	if s.hasLegacyRenewedDailyQuota() {
+		anchor := s.legacyDailyWindowAnchor()
+		return s.automaticWindowStartAt(&anchor, subscriptionDayDuration, now)
 	}
 	today := timezone.StartOfDay(now)
 	if !today.After(timezone.StartOfDay(*s.DailyWindowStart)) {
@@ -231,6 +258,13 @@ func (s *UserSubscription) DailyResetTime() *time.Time {
 	}
 	if s.HasOneTimeDailyQuota() {
 		t := s.ExpiresAt
+		return &t
+	}
+	if s.hasLegacyRenewedDailyQuota() {
+		t := s.legacyDailyWindowAnchor().Add(subscriptionDayDuration)
+		if t.After(s.ExpiresAt) {
+			t = s.ExpiresAt
+		}
 		return &t
 	}
 	// 日窗口按日历日对齐：下次刷新固定在窗口起点所在日的次日 0 点。

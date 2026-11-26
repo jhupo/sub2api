@@ -45,7 +45,7 @@ func TestGetCheckoutInfoIncludesQuotaCardTerms(t *testing.T) {
 	prior := time.Now().Add(-time.Hour)
 	for _, terms := range []service.CreatePlanRequest{
 		{Name: "Deadline card", Price: 45, ForSale: true, CardMode: "deadline", DeadlineAt: &deadline, TotalLimitUSD: &total, SaleSchedule: &domain.PlanSaleSchedule{PriceSteps: []domain.PlanPriceStep{{At: prior, Price: 35}}}},
-		{Name: "Hourly card", Price: 20, ForSale: true, CardMode: "hours", ValidityHours: 12, TotalLimitUSD: &total},
+		{Name: "Hourly card", Price: 20, ForSale: true, CardMode: "hours", ValidityHours: 12, TotalLimitUSD: &total, CardAppearance: &domain.PlanCardAppearance{Theme: "mint", Motion: "shine"}},
 		{Name: "Recurring plan", Price: 20, ForSale: true, ValidityDays: 30, ValidityUnit: "days"},
 	} {
 		_, err := config.CreatePlan(ctx, terms)
@@ -68,7 +68,7 @@ func TestGetCheckoutInfoIncludesQuotaCardTerms(t *testing.T) {
 	require.Zero(t, response.Code)
 	require.Len(t, response.Data.Plans, 3)
 	for _, plan := range response.Data.Plans {
-		for _, field := range []string{"card_mode", "validity_hours", "deadline_at", "total_limit_usd"} {
+		for _, field := range []string{"card_mode", "validity_hours", "deadline_at", "total_limit_usd", "card_appearance"} {
 			require.Contains(t, plan, field, "checkout must retain published quota card terms")
 		}
 		switch plan["name"] {
@@ -80,6 +80,7 @@ func TestGetCheckoutInfoIncludesQuotaCardTerms(t *testing.T) {
 			require.Equal(t, deadline.Format(time.RFC3339), plan["deadline_at"])
 			require.Equal(t, total, plan["total_limit_usd"])
 		case "Hourly card":
+			require.Equal(t, map[string]any{"theme": "mint", "motion": "shine"}, plan["card_appearance"])
 			require.Equal(t, "hours", plan["card_mode"])
 			require.Equal(t, float64(12), plan["validity_hours"])
 			require.Equal(t, total, plan["total_limit_usd"])

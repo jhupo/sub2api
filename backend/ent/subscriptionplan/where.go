@@ -435,6 +435,16 @@ func SaleScheduleNotNil() predicate.SubscriptionPlan {
 	return predicate.SubscriptionPlan(sql.FieldNotNull(FieldSaleSchedule))
 }
 
+// CardAppearanceIsNil applies the IsNil predicate on the "card_appearance" field.
+func CardAppearanceIsNil() predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldIsNull(FieldCardAppearance))
+}
+
+// CardAppearanceNotNil applies the NotNil predicate on the "card_appearance" field.
+func CardAppearanceNotNil() predicate.SubscriptionPlan {
+	return predicate.SubscriptionPlan(sql.FieldNotNull(FieldCardAppearance))
+}
+
 // IsHistoricalEQ applies the EQ predicate on the "is_historical" field.
 func IsHistoricalEQ(v bool) predicate.SubscriptionPlan {
 	return predicate.SubscriptionPlan(sql.FieldEQ(FieldIsHistorical, v))

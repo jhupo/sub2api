@@ -42511,6 +42511,7 @@ type SubscriptionPlanMutation struct {
 	product_name            *string
 	for_sale                *bool
 	sale_schedule           *domain.PlanSaleSchedule
+	card_appearance         *domain.PlanCardAppearance
 	is_historical           *bool
 	sort_order              *int
 	addsort_order           *int
@@ -42925,6 +42926,55 @@ func (m *SubscriptionPlanMutation) ResetSaleSchedule() {
 	delete(m.clearedFields, subscriptionplan.FieldSaleSchedule)
 }
 
+// SetCardAppearance sets the "card_appearance" field.
+func (m *SubscriptionPlanMutation) SetCardAppearance(dca domain.PlanCardAppearance) {
+	m.card_appearance = &dca
+}
+
+// CardAppearance returns the value of the "card_appearance" field in the mutation.
+func (m *SubscriptionPlanMutation) CardAppearance() (r domain.PlanCardAppearance, exists bool) {
+	v := m.card_appearance
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCardAppearance returns the old "card_appearance" field's value of the SubscriptionPlan entity.
+// If the SubscriptionPlan object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SubscriptionPlanMutation) OldCardAppearance(ctx context.Context) (v domain.PlanCardAppearance, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCardAppearance is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCardAppearance requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCardAppearance: %w", err)
+	}
+	return oldValue.CardAppearance, nil
+}
+
+// ClearCardAppearance clears the value of the "card_appearance" field.
+func (m *SubscriptionPlanMutation) ClearCardAppearance() {
+	m.card_appearance = nil
+	m.clearedFields[subscriptionplan.FieldCardAppearance] = struct{}{}
+}
+
+// CardAppearanceCleared returns if the "card_appearance" field was cleared in this mutation.
+func (m *SubscriptionPlanMutation) CardAppearanceCleared() bool {
+	_, ok := m.clearedFields[subscriptionplan.FieldCardAppearance]
+	return ok
+}
+
+// ResetCardAppearance resets all changes to the "card_appearance" field.
+func (m *SubscriptionPlanMutation) ResetCardAppearance() {
+	m.card_appearance = nil
+	delete(m.clearedFields, subscriptionplan.FieldCardAppearance)
+}
+
 // SetIsHistorical sets the "is_historical" field.
 func (m *SubscriptionPlanMutation) SetIsHistorical(b bool) {
 	m.is_historical = &b
@@ -43231,7 +43281,7 @@ func (m *SubscriptionPlanMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SubscriptionPlanMutation) Fields() []string {
-	fields := make([]string, 0, 11)
+	fields := make([]string, 0, 12)
 	if m.name != nil {
 		fields = append(fields, subscriptionplan.FieldName)
 	}
@@ -43252,6 +43302,9 @@ func (m *SubscriptionPlanMutation) Fields() []string {
 	}
 	if m.sale_schedule != nil {
 		fields = append(fields, subscriptionplan.FieldSaleSchedule)
+	}
+	if m.card_appearance != nil {
+		fields = append(fields, subscriptionplan.FieldCardAppearance)
 	}
 	if m.is_historical != nil {
 		fields = append(fields, subscriptionplan.FieldIsHistorical)
@@ -43287,6 +43340,8 @@ func (m *SubscriptionPlanMutation) Field(name string) (ent.Value, bool) {
 		return m.ForSale()
 	case subscriptionplan.FieldSaleSchedule:
 		return m.SaleSchedule()
+	case subscriptionplan.FieldCardAppearance:
+		return m.CardAppearance()
 	case subscriptionplan.FieldIsHistorical:
 		return m.IsHistorical()
 	case subscriptionplan.FieldSortOrder:
@@ -43318,6 +43373,8 @@ func (m *SubscriptionPlanMutation) OldField(ctx context.Context, name string) (e
 		return m.OldForSale(ctx)
 	case subscriptionplan.FieldSaleSchedule:
 		return m.OldSaleSchedule(ctx)
+	case subscriptionplan.FieldCardAppearance:
+		return m.OldCardAppearance(ctx)
 	case subscriptionplan.FieldIsHistorical:
 		return m.OldIsHistorical(ctx)
 	case subscriptionplan.FieldSortOrder:
@@ -43383,6 +43440,13 @@ func (m *SubscriptionPlanMutation) SetField(name string, value ent.Value) error 
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetSaleSchedule(v)
+		return nil
+	case subscriptionplan.FieldCardAppearance:
+		v, ok := value.(domain.PlanCardAppearance)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCardAppearance(v)
 		return nil
 	case subscriptionplan.FieldIsHistorical:
 		v, ok := value.(bool)
@@ -43475,6 +43539,9 @@ func (m *SubscriptionPlanMutation) ClearedFields() []string {
 	if m.FieldCleared(subscriptionplan.FieldSaleSchedule) {
 		fields = append(fields, subscriptionplan.FieldSaleSchedule)
 	}
+	if m.FieldCleared(subscriptionplan.FieldCardAppearance) {
+		fields = append(fields, subscriptionplan.FieldCardAppearance)
+	}
 	return fields
 }
 
@@ -43494,6 +43561,9 @@ func (m *SubscriptionPlanMutation) ClearField(name string) error {
 		return nil
 	case subscriptionplan.FieldSaleSchedule:
 		m.ClearSaleSchedule()
+		return nil
+	case subscriptionplan.FieldCardAppearance:
+		m.ClearCardAppearance()
 		return nil
 	}
 	return fmt.Errorf("unknown SubscriptionPlan nullable field %s", name)
@@ -43523,6 +43593,9 @@ func (m *SubscriptionPlanMutation) ResetField(name string) error {
 		return nil
 	case subscriptionplan.FieldSaleSchedule:
 		m.ResetSaleSchedule()
+		return nil
+	case subscriptionplan.FieldCardAppearance:
+		m.ResetCardAppearance()
 		return nil
 	case subscriptionplan.FieldIsHistorical:
 		m.ResetIsHistorical()

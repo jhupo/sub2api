@@ -795,6 +795,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import {
+  getDailyQuotaResetAt,
   getRemainingDurationParts,
   getRemainingExpiryDuration,
   isOneTimeDailyQuota,
@@ -1430,7 +1431,9 @@ const formatDailyUsageWindow = (subscription: UserSubscription): string => {
     return parts ? formatQuotaEndDuration(parts) : t('admin.subscriptions.windowNotActive')
   }
 
-  return formatResetTime(subscription.daily_window_start, 'daily')
+  const resetAt = getDailyQuotaResetAt(subscription)
+  const parts = resetAt ? getRemainingDurationParts(resetAt) : null
+  return parts ? formatResetDuration(parts) : t('admin.subscriptions.windowNotActive')
 }
 
 // Format reset time based on window start and period type

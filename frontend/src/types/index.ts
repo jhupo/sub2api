@@ -2040,6 +2040,7 @@ export interface UserSubscription {
   weekly_reserved_usd: number
   monthly_reserved_usd: number
   daily_window_start: string | null
+  daily_reset_at?: string | null
   weekly_window_start: string | null
   monthly_window_start: string | null
   created_at: string

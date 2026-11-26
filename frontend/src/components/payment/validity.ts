@@ -2,6 +2,15 @@ import type { SubscriptionPlan } from '@/types/payment'
 
 type TranslateFn = (key: string) => string
 
+/** One-day products grant independent allowances instead of renewing a row. */
+export function isStandaloneQuotaPlan(
+  plan: Pick<SubscriptionPlan, 'card_mode' | 'validity_days' | 'validity_unit'>,
+): boolean {
+  if (plan.card_mode) return true
+  const unit = String(plan.validity_unit || 'day').trim().toLowerCase()
+  return plan.validity_days === 1 && !['week', 'weeks', 'month', 'months'].includes(unit)
+}
+
 /**
  * 用户侧套餐有效期后缀（"$9.9 / 月"、"$9.9 / 30天"）。
  *

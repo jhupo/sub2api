@@ -9,7 +9,7 @@ export default {
   cardMode: 'Allowance type', recurringPlan: 'Recurring subscription', hoursCard: 'Hourly quota card', deadlineCard: 'Fixed deadline quota card',
   totalLimit: 'Total allowance', validityHours: 'Valid hours', hours: ' hours', deadline: 'Deadline',
   priority: 'Payment priority', addCard: 'Add quota card or subscription', remove: 'Remove', moveUp: 'Move up', moveDown: 'Move down',
-  walletFallback: 'Allow wallet payment when all selected cards are unavailable',
+  walletFallback: 'Pay the remaining amount from the wallet when subscriptions run out',
   relinquish: 'Relinquish remaining term', relinquishTitle: 'Relinquish subscription',
   relinquishConfirm: 'The remaining term and allowance will be permanently forfeited without a refund. API keys using this subscription will be paused until you choose a new payment source and enable them. Continue?',
   relinquished: 'Subscription relinquished. You can purchase again.',

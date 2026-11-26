@@ -12,8 +12,10 @@ func (r *usageLogRepository) GetCacheReadAdjustmentDaily(ctx context.Context, st
 		COUNT(*), COUNT(cache_read_adjustment->>'additional_actual_cost'),
 		COALESCE(SUM((cache_read_adjustment->>'shifted_tokens')::bigint), 0),
 		COALESCE(SUM((cache_read_adjustment->>'additional_actual_cost')::numeric), 0),
-		COALESCE(SUM((cache_read_adjustment->>'additional_actual_cost')::numeric) FILTER (WHERE billing_type = 0), 0),
-		COALESCE(SUM((cache_read_adjustment->>'additional_actual_cost')::numeric) FILTER (WHERE billing_type = 1), 0)
+		COALESCE(SUM(COALESCE((cache_read_adjustment->>'balance_additional_cost')::numeric,
+			CASE WHEN billing_type = 0 THEN (cache_read_adjustment->>'additional_actual_cost')::numeric ELSE 0 END)), 0),
+		COALESCE(SUM(COALESCE((cache_read_adjustment->>'subscription_additional_cost')::numeric,
+			CASE WHEN billing_type = 1 THEN (cache_read_adjustment->>'additional_actual_cost')::numeric ELSE 0 END)), 0)
 		FROM usage_logs WHERE created_at >= $1 AND created_at < $2
 		AND cache_read_adjustment IS NOT NULL`
 	args := []any{start, end, zone}

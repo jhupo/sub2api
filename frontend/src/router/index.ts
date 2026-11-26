@@ -204,6 +204,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/guide',
+    name: 'BeginnerGuide',
+    component: () => import('@/views/user/BeginnerGuideView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Beginner Guide',
+      titleKey: 'beginnerGuide.title',
+      descriptionKey: 'beginnerGuide.description'
+    }
+  },
+  {
     path: '/keys',
     name: 'Keys',
     component: () => import('@/views/user/KeysView.vue'),
@@ -567,6 +579,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/beginner-guide',
+    name: 'AdminBeginnerGuide',
+    component: () => import('@/views/admin/GuideManagerView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Guide Management',
+      titleKey: 'guideManager.title',
+      descriptionKey: 'guideManager.description'
+    }
+  },
+  {
     path: '/admin/proxies',
     name: 'AdminProxies',
     component: () => import('@/views/admin/ProxiesView.vue'),
@@ -749,10 +773,13 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes,
-  scrollBehavior(_to, _from, savedPosition) {
+  scrollBehavior(to, _from, savedPosition) {
     // Scroll to saved position when using browser back/forward
     if (savedPosition) {
       return savedPosition
+    }
+    if (to.name === 'BeginnerGuide' && to.hash) {
+      return { el: to.hash, top: 88 }
     }
     // Scroll to top for new routes
     return { top: 0 }

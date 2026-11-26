@@ -120,6 +120,23 @@ func (r *usageBillingRepository) BindGrokVideoPendingBilling(
 	if err != nil {
 		return err
 	}
+	if pending.PriorityFunding {
+		if pending.FundingSource != service.FundingSourceSubscription || pending.SubscriptionID == nil {
+			return service.ErrInvalidBillingPreauthorizationEstimate
+		}
+		result, err := r.db.ExecContext(ctx, `UPDATE billing_priority_reservations
+ SET async_task_id = $1, async_metadata = $5::jsonb, updated_at = NOW()
+ WHERE request_id = $2 AND api_key_id = $3 AND user_id = $4
+ AND primary_subscription_id = $6 AND status = 'authorized' AND expires_at > NOW()
+ AND authorized_amount = $7 AND authorization_fingerprint = $8
+ AND (async_task_id IS NULL OR (async_task_id = $1 AND async_metadata = $5::jsonb))`,
+			taskID, pending.PreauthorizationRequestID, binding.APIKeyID, binding.UserID, string(metadata),
+			*pending.SubscriptionID, pending.PreauthorizationHoldAmount, pending.AuthorizationFingerprint)
+		if err != nil {
+			return err
+		}
+		return requireOneBillingRow(result, service.ErrUsageBillingRequestConflict)
+	}
 	var (
 		boundRequestID string
 		query          string
@@ -191,6 +208,11 @@ func (r *usageBillingRepository) LoadGrokVideoPendingBilling(
 				authorized_amount AS hold_amount, funding_source,
 				subscription_id, async_task_id, api_key_id, user_id
 			FROM billing_reservations
+			UNION ALL
+			SELECT async_metadata, request_id, authorization_fingerprint,
+				authorized_amount AS hold_amount, 'subscription'::varchar AS funding_source,
+				primary_subscription_id AS subscription_id, async_task_id, api_key_id, user_id
+			FROM billing_priority_reservations
 		) reservations
 		WHERE async_task_id = $1 AND api_key_id = $2 AND user_id = $3
 	`, taskID, apiKeyID, userID, service.FundingSourceWallet)

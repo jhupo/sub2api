@@ -33,6 +33,8 @@ type SubscriptionPlan struct {
 	ForSale bool `json:"for_sale,omitempty"`
 	// SaleSchedule holds the value of the "sale_schedule" field.
 	SaleSchedule domain.PlanSaleSchedule `json:"sale_schedule,omitempty"`
+	// CardAppearance holds the value of the "card_appearance" field.
+	CardAppearance domain.PlanCardAppearance `json:"card_appearance,omitempty"`
 	// IsHistorical holds the value of the "is_historical" field.
 	IsHistorical bool `json:"is_historical,omitempty"`
 	// SortOrder holds the value of the "sort_order" field.
@@ -81,7 +83,7 @@ func (*SubscriptionPlan) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case subscriptionplan.FieldSaleSchedule:
+		case subscriptionplan.FieldSaleSchedule, subscriptionplan.FieldCardAppearance:
 			values[i] = new([]byte)
 		case subscriptionplan.FieldForSale, subscriptionplan.FieldIsHistorical:
 			values[i] = new(sql.NullBool)
@@ -155,6 +157,14 @@ func (_m *SubscriptionPlan) assignValues(columns []string, values []any) error {
 			} else if value != nil && len(*value) > 0 {
 				if err := json.Unmarshal(*value, &_m.SaleSchedule); err != nil {
 					return fmt.Errorf("unmarshal field sale_schedule: %w", err)
+				}
+			}
+		case subscriptionplan.FieldCardAppearance:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field card_appearance", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.CardAppearance); err != nil {
+					return fmt.Errorf("unmarshal field card_appearance: %w", err)
 				}
 			}
 		case subscriptionplan.FieldIsHistorical:
@@ -249,6 +259,9 @@ func (_m *SubscriptionPlan) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("sale_schedule=")
 	builder.WriteString(fmt.Sprintf("%v", _m.SaleSchedule))
+	builder.WriteString(", ")
+	builder.WriteString("card_appearance=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CardAppearance))
 	builder.WriteString(", ")
 	builder.WriteString("is_historical=")
 	builder.WriteString(fmt.Sprintf("%v", _m.IsHistorical))

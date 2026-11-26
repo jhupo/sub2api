@@ -279,9 +279,19 @@
                   @change="onDateRangeChange"
                 />
               </div>
-              <button @click="loadDashboardStats" :disabled="chartsLoading" class="btn btn-secondary">
+              <button @click="loadDashboardStats" :disabled="chartsLoading || tokenTrendLoading" class="btn btn-secondary">
+                <Icon name="refresh" size="sm" :class="{ 'animate-spin': chartsLoading || tokenTrendLoading }" />
                 {{ t('common.refresh') }}
               </button>
+              <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                <input
+                  v-model="autoRefreshTrend"
+                  type="checkbox"
+                  data-testid="dashboard-trend-auto-refresh"
+                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600"
+                />
+                {{ t('admin.dashboard.trendAutoRefresh') }}
+              </label>
               <div class="ml-auto flex items-center gap-2">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
                   >{{ t('admin.dashboard.granularity') }}:</span
@@ -313,7 +323,13 @@
               :end-date="endDate"
               @ranking-click="goToUserUsage"
             />
-            <TokenUsageTrend :trend-data="trendData" :loading="chartsLoading" />
+            <TokenUsageTrend
+              :trend-data="trendData"
+              :loading="chartsLoading"
+              :refreshing="tokenTrendLoading"
+              :checked-at="trendCheckedAt"
+              :refresh-failed="trendRefreshFailed"
+            />
           </div>
 
           <!-- User Usage Trend (Full Width) -->
@@ -341,7 +357,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
@@ -396,6 +412,15 @@ const chartsLoading = ref(false)
 const userTrendLoading = ref(false)
 const rankingLoading = ref(false)
 const rankingError = ref(false)
+const autoRefreshTrend = ref(true)
+const tokenTrendLoading = ref(false)
+const trendCheckedAt = ref('')
+const trendRefreshFailed = ref(false)
+const trendRefreshIntervalMs = 60_000
+let trendRefreshTimer: ReturnType<typeof setInterval> | null = null
+let tokenTrendLoadSeq = 0
+let disposed = false
+let relativePreset: string | null = 'last24Hours'
 
 // Chart data
 const trendData = ref<TrendDataPoint[]>([])
@@ -628,6 +653,8 @@ const onDateRangeChange = (range: {
   endDate: string
   preset: string | null
 }) => {
+  relativePreset = range.preset
+  trendCheckedAt.value = ''
   // Auto-select granularity based on date range
   const start = new Date(range.startDate)
   const end = new Date(range.endDate)
@@ -646,6 +673,9 @@ const onDateRangeChange = (range: {
 // Load data
 const loadDashboardSnapshot = async (includeStats: boolean) => {
   const currentSeq = ++chartLoadSeq
+  ++tokenTrendLoadSeq
+  tokenTrendLoading.value = false
+  trendRefreshFailed.value = false
   if (includeStats && !stats.value) {
     loading.value = true
   }
@@ -676,6 +706,72 @@ const loadDashboardSnapshot = async (includeStats: boolean) => {
       loading.value = false
       chartsLoading.value = false
     }
+  }
+}
+
+const loadTokenTrend = async () => {
+  if (disposed || tokenTrendLoading.value || chartsLoading.value) return
+  const currentSeq = ++tokenTrendLoadSeq
+  const snapshotSeq = chartLoadSeq
+  tokenTrendLoading.value = true
+  try {
+    const response = await adminAPI.dashboard.getUsageTrend({
+      start_date: startDate.value,
+      end_date: endDate.value,
+      granularity: granularity.value
+    })
+    if (disposed || currentSeq !== tokenTrendLoadSeq || snapshotSeq !== chartLoadSeq) return
+    trendData.value = response.trend || []
+    trendCheckedAt.value = new Date().toISOString()
+    trendRefreshFailed.value = false
+  } catch (error) {
+    if (disposed || currentSeq !== tokenTrendLoadSeq || snapshotSeq !== chartLoadSeq) return
+    trendRefreshFailed.value = true
+    console.error('Error refreshing token trend:', error)
+  } finally {
+    if (currentSeq === tokenTrendLoadSeq) tokenTrendLoading.value = false
+  }
+}
+
+const refreshRelativeRange = (): boolean => {
+  const now = new Date()
+  let range: { start: string; end: string } | null = null
+  if (relativePreset === 'last24Hours') {
+    range = getLast24HoursRangeDates()
+  } else if (relativePreset === 'today') {
+    range = { start: formatLocalDate(now), end: formatLocalDate(now) }
+  } else {
+    const presetDays: Record<string, number> = { '7days': 7, '14days': 14, '30days': 30 }
+    const days = presetDays[relativePreset || '']
+    if (days) {
+      const start = new Date(now)
+      start.setDate(start.getDate() - days + 1)
+      range = { start: formatLocalDate(start), end: formatLocalDate(now) }
+    }
+  }
+  if (!range || (range.start === startDate.value && range.end === endDate.value)) return false
+  startDate.value = range.start
+  endDate.value = range.end
+  return true
+}
+
+const refreshVisibleTrend = () => {
+  if (disposed || !autoRefreshTrend.value || document.visibilityState !== 'visible' || chartsLoading.value || tokenTrendLoading.value) return
+  if (refreshRelativeRange()) {
+    void loadChartData()
+    return
+  }
+  void loadCurrentTokenTrend()
+}
+
+const loadCurrentTokenTrend = () => {
+  const today = formatLocalDate(new Date())
+  if (startDate.value <= today && endDate.value >= today) return loadTokenTrend()
+}
+
+const onVisibilityChange = () => {
+  if (!trendCheckedAt.value || Date.now() - Date.parse(trendCheckedAt.value) >= trendRefreshIntervalMs) {
+    refreshVisibleTrend()
   }
 }
 
@@ -734,7 +830,7 @@ const loadUserSpendingRanking = async () => {
 
 const loadDashboardStats = async () => {
   await Promise.all([
-    loadDashboardSnapshot(true),
+    loadDashboardSnapshot(true).then(loadCurrentTokenTrend),
     loadUsersTrend(),
     loadUserSpendingRanking()
   ])
@@ -742,7 +838,8 @@ const loadDashboardStats = async () => {
 
 const loadChartData = async () => {
   await Promise.all([
-    loadDashboardSnapshot(false),
+    // The aggregate trend must not inherit the large snapshot's older cache.
+    loadDashboardSnapshot(false).then(loadCurrentTokenTrend),
     loadUsersTrend(),
     loadUserSpendingRanking()
   ])
@@ -751,6 +848,18 @@ const loadChartData = async () => {
 onMounted(() => {
   void refreshBatchImageAccess()
   loadDashboardStats()
+  trendRefreshTimer = setInterval(refreshVisibleTrend, trendRefreshIntervalMs)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+})
+
+onUnmounted(() => {
+  disposed = true
+  ++chartLoadSeq
+  ++usersTrendLoadSeq
+  ++rankingLoadSeq
+  ++tokenTrendLoadSeq
+  if (trendRefreshTimer) clearInterval(trendRefreshTimer)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 </script>
 

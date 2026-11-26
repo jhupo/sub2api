@@ -94,7 +94,8 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 	planList := make([]checkoutPlan, 0, len(plans))
 	for _, p := range plans {
 		planList = append(planList, checkoutPlan{
-			SaleEndsAt: p.SaleEndsAt, SaleSchedule: p.SaleSchedule,
+			CardAppearance: p.CardAppearance,
+			SaleEndsAt:     p.SaleEndsAt, SaleSchedule: p.SaleSchedule,
 			ID:             p.ID,
 			CardMode:       p.CardMode,
 			ValidityHours:  p.ValidityHours,
@@ -143,25 +144,26 @@ type checkoutInfoResponse struct {
 }
 
 type checkoutPlan struct {
-	SaleEndsAt      *time.Time              `json:"sale_ends_at"`
-	SaleSchedule    domain.PlanSaleSchedule `json:"sale_schedule"`
-	ID              int64                   `json:"id"`
-	CardMode        string                  `json:"card_mode"`
-	ValidityHours   int                     `json:"validity_hours"`
-	DeadlineAt      *time.Time              `json:"deadline_at"`
-	TotalLimitUSD   *float64                `json:"total_limit_usd"`
-	DailyLimitUSD   *float64                `json:"daily_limit_usd"`
-	WeeklyLimitUSD  *float64                `json:"weekly_limit_usd"`
-	MonthlyLimitUSD *float64                `json:"monthly_limit_usd"`
-	Name            string                  `json:"name"`
-	Description     string                  `json:"description"`
-	Price           float64                 `json:"price"`
-	OriginalPrice   *float64                `json:"original_price,omitempty"`
-	Currency        string                  `json:"currency,omitempty"`
-	ValidityDays    int                     `json:"validity_days"`
-	ValidityUnit    string                  `json:"validity_unit"`
-	Features        []string                `json:"features"`
-	ProductName     string                  `json:"product_name"`
+	CardAppearance  domain.PlanCardAppearance `json:"card_appearance"`
+	SaleEndsAt      *time.Time                `json:"sale_ends_at"`
+	SaleSchedule    domain.PlanSaleSchedule   `json:"sale_schedule"`
+	ID              int64                     `json:"id"`
+	CardMode        string                    `json:"card_mode"`
+	ValidityHours   int                       `json:"validity_hours"`
+	DeadlineAt      *time.Time                `json:"deadline_at"`
+	TotalLimitUSD   *float64                  `json:"total_limit_usd"`
+	DailyLimitUSD   *float64                  `json:"daily_limit_usd"`
+	WeeklyLimitUSD  *float64                  `json:"weekly_limit_usd"`
+	MonthlyLimitUSD *float64                  `json:"monthly_limit_usd"`
+	Name            string                    `json:"name"`
+	Description     string                    `json:"description"`
+	Price           float64                   `json:"price"`
+	OriginalPrice   *float64                  `json:"original_price,omitempty"`
+	Currency        string                    `json:"currency,omitempty"`
+	ValidityDays    int                       `json:"validity_days"`
+	ValidityUnit    string                    `json:"validity_unit"`
+	Features        []string                  `json:"features"`
+	ProductName     string                    `json:"product_name"`
 }
 
 func saleOriginalPrice(p *service.SubscriptionPlan) *float64 {

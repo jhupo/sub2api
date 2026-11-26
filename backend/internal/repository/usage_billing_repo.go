@@ -172,7 +172,11 @@ func (r *usageBillingRepository) applyBatchImageBalanceHold(
 }
 
 func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
-	if cmd.SubscriptionPreauthorized {
+	if cmd.PriorityFunding != nil {
+		if err := r.applyPriorityFunding(ctx, tx, cmd, result); err != nil {
+			return err
+		}
+	} else if cmd.SubscriptionPreauthorized {
 		if err := beginUsageBillingSubscriptionFinalization(ctx, tx, cmd); err != nil {
 			return err
 		}

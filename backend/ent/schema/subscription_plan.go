@@ -48,6 +48,7 @@ func (SubscriptionPlan) Fields() []ent.Field {
 		field.Bool("for_sale").
 			Default(true),
 		field.JSON("sale_schedule", domain.PlanSaleSchedule{}).Optional(),
+		field.JSON("card_appearance", domain.PlanCardAppearance{}).Optional(),
 		field.Bool("is_historical").
 			Default(false).
 			Immutable(),

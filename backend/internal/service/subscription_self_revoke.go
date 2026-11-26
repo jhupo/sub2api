@@ -62,6 +62,23 @@ func (s *SubscriptionService) SelfRevokeSubscription(ctx context.Context, userID
 	if busy {
 		return ErrSubscriptionSelfRevoke
 	}
+	rows, err := tx.Client().QueryContext(txCtx, `SELECT 1 FROM billing_priority_reservations
+ WHERE user_id = $1 AND status = 'authorized' AND policy->'subscription_ids' @> jsonb_build_array($2::bigint) LIMIT 1`, userID, id)
+	if err != nil {
+		return err
+	}
+	busy = rows.Next()
+	rowsErr := rows.Err()
+	closeErr := rows.Close()
+	if rowsErr != nil {
+		return rowsErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if busy {
+		return ErrSubscriptionSelfRevoke
+	}
 	pending, err := tx.PaymentOrder.Query().Where(paymentorder.UserIDEQ(userID), paymentorder.PlanIDEQ(sub.PlanID), paymentorder.OrderTypeEQ("subscription"), paymentorder.Or(paymentorder.StatusIn(OrderStatusPaid, OrderStatusRecharging), paymentorder.And(paymentorder.StatusEQ(OrderStatusPending), paymentorder.ExpiresAtGT(s.currentTime())))).Exist(txCtx)
 	if err != nil {
 		return err

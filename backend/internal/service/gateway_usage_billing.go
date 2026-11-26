@@ -326,6 +326,13 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 	if p.IsSubscriptionBill && p.Subscription != nil {
 		cmd.SubscriptionID = &p.Subscription.ID
 		cmd.SubscriptionCost = p.Cost.ActualCost
+		if p.APIKey != nil {
+			policy := priorityFundingPolicy(p.APIKey)
+			if len(policy.SubscriptionIDs) > 0 {
+				cmd.PriorityFunding = &policy
+				cmd.BaselineKey = BuildBalancePreauthorizationBaselineKey(p.User.ID, p.APIKey.ID, "priority", 0, "")
+			}
+		}
 	} else if p.Cost.ActualCost > 0 {
 		cmd.BalanceCost = p.Cost.ActualCost
 	}
@@ -373,6 +380,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	guardedCost := 0.0
 	guardedCaptureCost := 0.0
 	walletPreauthorized := false
+	priorityPreauthorized := false
 	if preauthorized && cmd != nil {
 		if baselineKey := guard.BaselineKey(); baselineKey != "" {
 			cmd.BaselineKey = baselineKey
@@ -388,7 +396,14 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 			if cmd.SubscriptionID == nil || guardSubscriptionID == nil || *cmd.SubscriptionID != *guardSubscriptionID {
 				return false, ErrUsageBillingRequestConflict
 			}
-			cmd.SubscriptionPreauthorized = true
+			if priority, ok := guard.core.reservation.(*priorityFundingReservation); ok {
+				policy := priority.cmd.Policy
+				cmd.PriorityFunding = &policy
+				priorityPreauthorized = true
+			} else {
+				cmd.PriorityFunding = nil
+				cmd.SubscriptionPreauthorized = true
+			}
 			guardedCost = cmd.SubscriptionCost
 			guardedCaptureCost = guardedCost
 		default:
@@ -412,7 +427,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	// the remaining wallet balance is insufficient. Subscription usage follows
 	// the same repository transaction directly when preauthorization is off;
 	// only an active subscription guard needs top-up/capture handling.
-	if preauthorized && !walletPreauthorized {
+	if preauthorized && !walletPreauthorized && !priorityPreauthorized {
 		if err := guard.TopUpTo(billingCtx, guardedCost); err != nil {
 			if !isSubscriptionAllowanceLimitError(err) {
 				return false, err
@@ -454,6 +469,14 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
 		return false, nil
 	}
+	if funding := result.PriorityFunding; funding != nil {
+		if funding.UncoveredAmount > 0 {
+			slog.WarnContext(billingCtx, "billing.priority_funding_uncovered_usage",
+				"request_id", cmd.RequestID, "api_key_id", cmd.APIKeyID,
+				"actual_amount", funding.ActualAmount, "uncovered_amount", funding.UncoveredAmount)
+		}
+		recordPriorityFundingCacheAdjustment(usageLog, funding)
+	}
 	if store, ok := repo.(BalancePreauthorizationBaselineStore); ok && cmd.BaselineKey != "" {
 		if err := store.RecordPreauthorizationBaseline(billingCtx, cmd.BaselineKey, actualUsageBillingAmount(cmd)); err != nil {
 			// Usage is already durable. Keep the response successful while making
@@ -491,8 +514,16 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		return
 	}
 
-	if !p.IsSubscriptionBill && !balancePreauthorized && p.Cost.ActualCost > 0 && p.User != nil {
-		syncBalanceCacheAfterDeduction(ctx, p, deps, result)
+	walletParams := p
+	if result != nil && result.PriorityFunding != nil {
+		walletCopy, walletCost := *p, *p.Cost
+		walletCost.ActualCost = result.PriorityFunding.WalletAmount
+		walletCopy.IsSubscriptionBill, walletCopy.Cost = false, &walletCost
+		walletParams = &walletCopy
+		balancePreauthorized = result.BalanceFinalizationPending
+	}
+	if !walletParams.IsSubscriptionBill && !balancePreauthorized && walletParams.Cost.ActualCost > 0 && walletParams.User != nil {
+		syncBalanceCacheAfterDeduction(ctx, walletParams, deps, result)
 	}
 
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() {
@@ -508,13 +539,13 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 	//     限制在并发 in-flight 请求数量内（旧实现的异步入队会让超支无限累积直到 worker 处理）
 	//   - DB 异步(flusher_enabled=false):在独立 goroutine 中走 detached context,失败用 ALERT log 触发 oncall 对账
 	//   - flusher_enabled=true:不直写 DB,由 flusher 异步批量刷（markDirty 已在 IncrementUserPlatformQuotaUsage 内部完成）
-	if !p.IsSubscriptionBill && p.Platform != "" && p.Cost.ActualCost > 0 && p.User != nil && deps.userPlatformQuotaRepo != nil {
+	if !walletParams.IsSubscriptionBill && p.Platform != "" && walletParams.Cost.ActualCost > 0 && p.User != nil && deps.userPlatformQuotaRepo != nil {
 		if deps.billingCacheService.HasUserPlatformQuotaLimit(ctx, p.User.ID, p.Platform) {
-			deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, p.Cost.ActualCost)
+			deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, walletParams.Cost.ActualCost)
 			if deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled {
 				// 降级路径:flusher 未启用时保留原有异步直写 DB
 				dbCtx, dbCancel := detachedBillingContext(ctx)
-				userID, platform, cost := p.User.ID, p.Platform, p.Cost.ActualCost
+				userID, platform, cost := p.User.ID, p.Platform, walletParams.Cost.ActualCost
 				go func() {
 					defer func() {
 						if r := recover(); r != nil {
@@ -537,7 +568,7 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 
 	// Notification checks run async — all parameters are already captured,
 	// no dependency on the request context or upstream connection.
-	go notifyBalanceLow(p, deps, result)
+	go notifyBalanceLow(walletParams, deps, result)
 	go notifyAccountQuota(p, deps, result)
 }
 

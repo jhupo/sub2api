@@ -669,6 +669,7 @@ type UserSubscription struct {
 	Status    string    `json:"status"`
 
 	DailyWindowStart   *time.Time `json:"daily_window_start"`
+	DailyResetAt       *time.Time `json:"daily_reset_at"`
 	WeeklyWindowStart  *time.Time `json:"weekly_window_start"`
 	MonthlyWindowStart *time.Time `json:"monthly_window_start"`
 

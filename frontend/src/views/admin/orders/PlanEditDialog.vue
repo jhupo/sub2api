@@ -13,7 +13,7 @@
         <div>
           <label class="input-label">{{ t('payment.admin.price') }} <span class="text-red-500">*</span></label>
           <input v-model.number="planForm.price" type="number" step="0.01" min="0.01" class="input" required />
-          <p v-if="subscriptionCnyPreview" class="mt-1 text-xs font-medium text-primary-600 dark:text-primary-400">
+          <p v-if="subscriptionCnyPreview" data-testid="subscription-cny-preview" class="mt-1 text-xs font-medium text-primary-600 dark:text-primary-400">
             {{ t('payment.admin.subscriptionCnyPayPreview', { amount: subscriptionCnyPreview.amount }) }}
             <span v-if="subscriptionCnyPreview.feeRate > 0">
               {{ t('payment.admin.subscriptionCnyPayPreviewWithFee', { feeRate: subscriptionCnyPreview.feeRate, total: subscriptionCnyPreview.total }) }}
@@ -66,6 +66,37 @@
         <textarea v-model="planFeaturesText" rows="3" class="input" :placeholder="t('payment.admin.featuresPlaceholder')"></textarea>
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.featuresHint') }}</p>
       </div>
+      <section class="border-t border-gray-200 pt-5 dark:border-dark-700" aria-labelledby="plan-appearance-title">
+        <h3 id="plan-appearance-title" class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">{{ t('planAppearance.title') }}</h3>
+        <div class="grid min-w-0 gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div class="min-w-0 space-y-5">
+            <fieldset>
+              <legend class="input-label">{{ t('planAppearance.theme') }}</legend>
+              <div class="flex flex-wrap gap-4">
+                <label v-for="theme in planCardThemes" :key="theme" class="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                  <input v-model="planForm.card_appearance.theme" type="radio" name="plan-card-theme" :value="theme" class="peer sr-only" />
+                  <span
+                    class="h-6 w-6 rounded-full border-2 border-white outline outline-1 outline-gray-200 peer-checked:outline-2 peer-checked:outline-offset-2 peer-checked:outline-gray-600 peer-focus-visible:ring-2 peer-focus-visible:ring-primary-500 dark:border-dark-800 dark:outline-dark-600 dark:peer-checked:outline-gray-200"
+                    :class="theme === 'mint' ? 'bg-emerald-600' : theme === 'ruby' ? 'bg-rose-600' : 'bg-blue-600'"
+                    aria-hidden="true"
+                  ></span>
+                  {{ t(`planAppearance.themes.${theme}`) }}
+                </label>
+              </div>
+            </fieldset>
+            <label class="block">
+              <span class="input-label">{{ t('planAppearance.motion') }}</span>
+              <select v-model="planForm.card_appearance.motion" class="input" data-testid="plan-card-motion">
+                <option v-for="motion in planCardMotions" :key="motion" :value="motion">{{ t(`planAppearance.motions.${motion}`) }}</option>
+              </select>
+            </label>
+          </div>
+          <div class="min-w-0">
+            <p class="input-label">{{ t('planAppearance.preview') }}</p>
+            <SubscriptionPlanCard :plan="previewPlan" preview />
+          </div>
+        </div>
+      </section>
       <div class="flex items-center gap-3">
         <label class="text-sm text-gray-700 dark:text-gray-300">{{ t('payment.admin.forSale') }}</label>
         <button
@@ -102,6 +133,8 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatPaymentAmount } from '@/components/payment/currency'
 import type { SubscriptionPlan, PlanSaleSchedule } from '@/types/payment'
 import PlanSaleEditor from '@/components/payment/PlanSaleEditor.vue'
+import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
+import { normalizePlanCardAppearance, planCardThemes, planCardMotions } from '@/components/payment/planAppearance'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 
@@ -121,6 +154,7 @@ const appStore = useAppStore()
 
 const saving = ref(false)
 const planForm = reactive({
+  card_appearance: normalizePlanCardAppearance(),
   sale_schedule: { ends_at: null, price_steps: [], daily_windows: [] } as PlanSaleSchedule,
   card_mode: '' as '' | 'hours' | 'deadline',
   validity_hours: 24,
@@ -140,6 +174,18 @@ const planForm = reactive({
   for_sale: true,
 })
 const planFeaturesText = ref('')
+const initialPlanSignature = ref('')
+
+const previewPlan = computed<SubscriptionPlan>(() => {
+  const deadline = new Date(planForm.deadline_at)
+  return {
+    ...planForm,
+    id: props.plan?.id ?? 0,
+    name: planForm.name || t('planAppearance.previewName'),
+    features: planFeaturesText.value.split('\n').map(feature => feature.trim()).filter(Boolean),
+    deadline_at: Number.isFinite(deadline.getTime()) ? deadline.toISOString() : null,
+  }
+})
 
 const validityUnitOptions = computed(() => [
   { value: 'days', label: t('payment.admin.days') },
@@ -177,6 +223,7 @@ watch(() => props.show, (visible) => {
   if (!visible) return
   if (props.plan) {
     Object.assign(planForm, {
+      card_appearance: normalizePlanCardAppearance(props.plan.card_appearance),
       sale_schedule: { ends_at: props.plan.sale_schedule?.ends_at ?? null, price_steps: props.plan.sale_schedule?.price_steps?.map(step => ({ ...step })) ?? [], daily_windows: props.plan.sale_schedule?.daily_windows?.map(window => ({ ...window })) ?? [] },
       card_mode: props.plan.card_mode || '',
       validity_hours: props.plan.validity_hours || 24,
@@ -198,6 +245,7 @@ watch(() => props.show, (visible) => {
     planFeaturesText.value = (props.plan.features || []).join('\n')
   } else {
     Object.assign(planForm, {
+      card_appearance: normalizePlanCardAppearance(),
       sale_schedule: { ends_at: null, price_steps: [], daily_windows: [] },
       card_mode: '',
       validity_hours: 24,
@@ -218,7 +266,8 @@ watch(() => props.show, (visible) => {
     })
     planFeaturesText.value = ''
   }
-})
+  initialPlanSignature.value = planSignature(buildPlanPayload())
+}, { immediate: true })
 
 /** Build request payload with snake_case keys matching backend JSON tags */
 function buildPlanPayload() {
@@ -229,6 +278,7 @@ function buildPlanPayload() {
     return Number.isFinite(parsed) ? parsed : null
   }
   return {
+    card_appearance: { ...planForm.card_appearance },
     sale_schedule: planForm.card_mode ? { ...planForm.sale_schedule, daily_windows: planForm.card_mode === 'hours' ? planForm.sale_schedule.daily_windows : [] } : { ends_at: null, price_steps: [], daily_windows: [] },
     card_mode: planForm.card_mode,
     validity_hours: planForm.card_mode === 'hours' ? planForm.validity_hours : 0,
@@ -250,6 +300,10 @@ function buildPlanPayload() {
   }
 }
 
+function planSignature(payload: ReturnType<typeof buildPlanPayload>): string {
+  return JSON.stringify({ ...payload, card_appearance: undefined })
+}
+
 async function handleSavePlan() {
   if (!planForm.price || planForm.price <= 0) {
     appStore.showError(t('payment.admin.priceRequired'))
@@ -262,7 +316,11 @@ async function handleSavePlan() {
   saving.value = true
   try {
     const data = buildPlanPayload()
-    if (props.plan) { await adminPaymentAPI.updatePlan(props.plan.id, data) }
+    if (props.plan) {
+      // Visual-only edits do not publish a new commercial terms version.
+      const update = planSignature(data) === initialPlanSignature.value ? { card_appearance: data.card_appearance } : data
+      await adminPaymentAPI.updatePlan(props.plan.id, update)
+    }
     else { await adminPaymentAPI.createPlan(data) }
     appStore.showSuccess(t('common.saved'))
     emit('close')

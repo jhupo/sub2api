@@ -115,6 +115,20 @@ func (_c *SubscriptionPlanCreate) SetNillableSaleSchedule(v *domain.PlanSaleSche
 	return _c
 }
 
+// SetCardAppearance sets the "card_appearance" field.
+func (_c *SubscriptionPlanCreate) SetCardAppearance(v domain.PlanCardAppearance) *SubscriptionPlanCreate {
+	_c.mutation.SetCardAppearance(v)
+	return _c
+}
+
+// SetNillableCardAppearance sets the "card_appearance" field if the given value is not nil.
+func (_c *SubscriptionPlanCreate) SetNillableCardAppearance(v *domain.PlanCardAppearance) *SubscriptionPlanCreate {
+	if v != nil {
+		_c.SetCardAppearance(*v)
+	}
+	return _c
+}
+
 // SetIsHistorical sets the "is_historical" field.
 func (_c *SubscriptionPlanCreate) SetIsHistorical(v bool) *SubscriptionPlanCreate {
 	_c.mutation.SetIsHistorical(v)
@@ -364,6 +378,10 @@ func (_c *SubscriptionPlanCreate) createSpec() (*SubscriptionPlan, *sqlgraph.Cre
 		_spec.SetField(subscriptionplan.FieldSaleSchedule, field.TypeJSON, value)
 		_node.SaleSchedule = value
 	}
+	if value, ok := _c.mutation.CardAppearance(); ok {
+		_spec.SetField(subscriptionplan.FieldCardAppearance, field.TypeJSON, value)
+		_node.CardAppearance = value
+	}
 	if value, ok := _c.mutation.IsHistorical(); ok {
 		_spec.SetField(subscriptionplan.FieldIsHistorical, field.TypeBool, value)
 		_node.IsHistorical = value
@@ -566,6 +584,24 @@ func (u *SubscriptionPlanUpsert) ClearSaleSchedule() *SubscriptionPlanUpsert {
 	return u
 }
 
+// SetCardAppearance sets the "card_appearance" field.
+func (u *SubscriptionPlanUpsert) SetCardAppearance(v domain.PlanCardAppearance) *SubscriptionPlanUpsert {
+	u.Set(subscriptionplan.FieldCardAppearance, v)
+	return u
+}
+
+// UpdateCardAppearance sets the "card_appearance" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsert) UpdateCardAppearance() *SubscriptionPlanUpsert {
+	u.SetExcluded(subscriptionplan.FieldCardAppearance)
+	return u
+}
+
+// ClearCardAppearance clears the value of the "card_appearance" field.
+func (u *SubscriptionPlanUpsert) ClearCardAppearance() *SubscriptionPlanUpsert {
+	u.SetNull(subscriptionplan.FieldCardAppearance)
+	return u
+}
+
 // SetSortOrder sets the "sort_order" field.
 func (u *SubscriptionPlanUpsert) SetSortOrder(v int) *SubscriptionPlanUpsert {
 	u.Set(subscriptionplan.FieldSortOrder, v)
@@ -760,6 +796,27 @@ func (u *SubscriptionPlanUpsertOne) UpdateSaleSchedule() *SubscriptionPlanUpsert
 func (u *SubscriptionPlanUpsertOne) ClearSaleSchedule() *SubscriptionPlanUpsertOne {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
 		s.ClearSaleSchedule()
+	})
+}
+
+// SetCardAppearance sets the "card_appearance" field.
+func (u *SubscriptionPlanUpsertOne) SetCardAppearance(v domain.PlanCardAppearance) *SubscriptionPlanUpsertOne {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.SetCardAppearance(v)
+	})
+}
+
+// UpdateCardAppearance sets the "card_appearance" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsertOne) UpdateCardAppearance() *SubscriptionPlanUpsertOne {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.UpdateCardAppearance()
+	})
+}
+
+// ClearCardAppearance clears the value of the "card_appearance" field.
+func (u *SubscriptionPlanUpsertOne) ClearCardAppearance() *SubscriptionPlanUpsertOne {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.ClearCardAppearance()
 	})
 }
 
@@ -1128,6 +1185,27 @@ func (u *SubscriptionPlanUpsertBulk) UpdateSaleSchedule() *SubscriptionPlanUpser
 func (u *SubscriptionPlanUpsertBulk) ClearSaleSchedule() *SubscriptionPlanUpsertBulk {
 	return u.Update(func(s *SubscriptionPlanUpsert) {
 		s.ClearSaleSchedule()
+	})
+}
+
+// SetCardAppearance sets the "card_appearance" field.
+func (u *SubscriptionPlanUpsertBulk) SetCardAppearance(v domain.PlanCardAppearance) *SubscriptionPlanUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.SetCardAppearance(v)
+	})
+}
+
+// UpdateCardAppearance sets the "card_appearance" field to the value that was provided on create.
+func (u *SubscriptionPlanUpsertBulk) UpdateCardAppearance() *SubscriptionPlanUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.UpdateCardAppearance()
+	})
+}
+
+// ClearCardAppearance clears the value of the "card_appearance" field.
+func (u *SubscriptionPlanUpsertBulk) ClearCardAppearance() *SubscriptionPlanUpsertBulk {
+	return u.Update(func(s *SubscriptionPlanUpsert) {
+		s.ClearCardAppearance()
 	})
 }
 

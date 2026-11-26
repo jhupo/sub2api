@@ -1616,6 +1616,7 @@ var (
 		{Name: "product_name", Type: field.TypeString, Size: 100, Default: ""},
 		{Name: "for_sale", Type: field.TypeBool, Default: true},
 		{Name: "sale_schedule", Type: field.TypeJSON, Nullable: true},
+		{Name: "card_appearance", Type: field.TypeJSON, Nullable: true},
 		{Name: "is_historical", Type: field.TypeBool, Default: false},
 		{Name: "sort_order", Type: field.TypeInt, Default: 0},
 		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},

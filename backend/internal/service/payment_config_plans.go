@@ -18,35 +18,36 @@ import (
 // SubscriptionPlan combines the mutable catalog entry with its currently
 // published, immutable commercial terms.
 type SubscriptionPlan struct {
-	SaleSchedule       domain.PlanSaleSchedule `json:"sale_schedule"`
-	SaleAvailable      bool                    `json:"sale_available"`
-	SaleEndsAt         *time.Time              `json:"sale_ends_at"`
-	CurrentPrice       float64                 `json:"current_price"`
-	SaleTimezone       string                  `json:"sale_timezone"`
-	ID                 int64                   `json:"id"`
-	PublishedVersionID int64                   `json:"published_version_id"`
-	Version            int                     `json:"version"`
-	Name               string                  `json:"name"`
-	Description        string                  `json:"description"`
-	Price              float64                 `json:"price"`
-	OriginalPrice      *float64                `json:"original_price,omitempty"`
-	Currency           string                  `json:"currency,omitempty"`
-	ValidityDays       int                     `json:"validity_days"`
-	ValidityUnit       string                  `json:"validity_unit"`
-	CardMode           string                  `json:"card_mode"`
-	ValidityHours      int                     `json:"validity_hours"`
-	DeadlineAt         *time.Time              `json:"deadline_at"`
-	TotalLimitUSD      *float64                `json:"total_limit_usd"`
-	DailyLimitUSD      *float64                `json:"daily_limit_usd"`
-	WeeklyLimitUSD     *float64                `json:"weekly_limit_usd"`
-	MonthlyLimitUSD    *float64                `json:"monthly_limit_usd"`
-	Features           string                  `json:"features"`
-	ProductName        string                  `json:"product_name"`
-	ForSale            bool                    `json:"for_sale"`
-	IsHistorical       bool                    `json:"is_historical"`
-	SortOrder          int                     `json:"sort_order"`
-	CreatedAt          time.Time               `json:"created_at"`
-	UpdatedAt          time.Time               `json:"updated_at"`
+	CardAppearance     domain.PlanCardAppearance `json:"card_appearance"`
+	SaleSchedule       domain.PlanSaleSchedule   `json:"sale_schedule"`
+	SaleAvailable      bool                      `json:"sale_available"`
+	SaleEndsAt         *time.Time                `json:"sale_ends_at"`
+	CurrentPrice       float64                   `json:"current_price"`
+	SaleTimezone       string                    `json:"sale_timezone"`
+	ID                 int64                     `json:"id"`
+	PublishedVersionID int64                     `json:"published_version_id"`
+	Version            int                       `json:"version"`
+	Name               string                    `json:"name"`
+	Description        string                    `json:"description"`
+	Price              float64                   `json:"price"`
+	OriginalPrice      *float64                  `json:"original_price,omitempty"`
+	Currency           string                    `json:"currency,omitempty"`
+	ValidityDays       int                       `json:"validity_days"`
+	ValidityUnit       string                    `json:"validity_unit"`
+	CardMode           string                    `json:"card_mode"`
+	ValidityHours      int                       `json:"validity_hours"`
+	DeadlineAt         *time.Time                `json:"deadline_at"`
+	TotalLimitUSD      *float64                  `json:"total_limit_usd"`
+	DailyLimitUSD      *float64                  `json:"daily_limit_usd"`
+	WeeklyLimitUSD     *float64                  `json:"weekly_limit_usd"`
+	MonthlyLimitUSD    *float64                  `json:"monthly_limit_usd"`
+	Features           string                    `json:"features"`
+	ProductName        string                    `json:"product_name"`
+	ForSale            bool                      `json:"for_sale"`
+	IsHistorical       bool                      `json:"is_historical"`
+	SortOrder          int                       `json:"sort_order"`
+	CreatedAt          time.Time                 `json:"created_at"`
+	UpdatedAt          time.Time                 `json:"updated_at"`
 }
 
 func normalizePlanCurrency(raw string) (string, error) {
@@ -62,6 +63,23 @@ func normalizePlanCurrency(raw string) (string, error) {
 
 func validPlanLimit(limit *float64) bool {
 	return limit == nil || (!math.IsNaN(*limit) && !math.IsInf(*limit, 0) && *limit >= 0)
+}
+
+func validatePlanCardAppearance(appearance *domain.PlanCardAppearance) error {
+	if appearance == nil {
+		return nil
+	}
+	switch appearance.Theme {
+	case "", "classic", "mint", "ruby":
+	default:
+		return infraerrors.BadRequest("PLAN_CARD_THEME_INVALID", "unsupported plan card theme")
+	}
+	switch appearance.Motion {
+	case "", "none", "shine", "flow":
+	default:
+		return infraerrors.BadRequest("PLAN_CARD_MOTION_INVALID", "unsupported plan card motion")
+	}
+	return nil
 }
 
 func validateCardTerms(mode string, hours int, deadline *time.Time, total, daily, weekly, monthly *float64) error {
@@ -90,6 +108,9 @@ func validateCardTerms(mode string, hours int, deadline *time.Time, total, daily
 }
 
 func validatePlanRequired(req CreatePlanRequest) error {
+	if err := validatePlanCardAppearance(req.CardAppearance); err != nil {
+		return err
+	}
 	if err := validateCardTerms(req.CardMode, req.ValidityHours, req.DeadlineAt, req.TotalLimitUSD, req.DailyLimitUSD, req.WeeklyLimitUSD, req.MonthlyLimitUSD); err != nil {
 		return err
 	}
@@ -115,6 +136,9 @@ func validatePlanRequired(req CreatePlanRequest) error {
 }
 
 func validatePlanPatch(req UpdatePlanRequest) error {
+	if err := validatePlanCardAppearance(req.CardAppearance); err != nil {
+		return err
+	}
 	if req.Name != nil && strings.TrimSpace(*req.Name) == "" {
 		return infraerrors.BadRequest("PLAN_NAME_REQUIRED", "plan name is required")
 	}
@@ -234,6 +258,9 @@ func (s *PaymentConfigService) CreatePlan(ctx context.Context, req CreatePlanReq
 	if req.SaleSchedule != nil {
 		create.SetSaleSchedule(*req.SaleSchedule)
 	}
+	if req.CardAppearance != nil {
+		create.SetCardAppearance(*req.CardAppearance)
+	}
 	plan, err := create.Save(ctx)
 	if err != nil {
 		return nil, err
@@ -299,6 +326,9 @@ func (s *PaymentConfigService) UpdatePlan(ctx context.Context, id int64, req Upd
 		return nil, err
 	}
 	update := tx.SubscriptionPlan.UpdateOneID(plan.ID)
+	if req.CardAppearance != nil {
+		update.SetCardAppearance(*req.CardAppearance)
+	}
 	if req.Name != nil {
 		update.SetName(strings.TrimSpace(*req.Name))
 	}
@@ -450,8 +480,9 @@ func (s *PaymentConfigService) GetPlanVersion(ctx context.Context, versionID int
 
 func subscriptionPlanFromEntities(plan *dbent.SubscriptionPlan, version *dbent.SubscriptionPlanVersion) *SubscriptionPlan {
 	result := &SubscriptionPlan{
-		SaleSchedule: plan.SaleSchedule,
-		ID:           plan.ID, PublishedVersionID: version.ID, Version: version.Version,
+		CardAppearance: plan.CardAppearance,
+		SaleSchedule:   plan.SaleSchedule,
+		ID:             plan.ID, PublishedVersionID: version.ID, Version: version.Version,
 		Name: plan.Name, Description: plan.Description, Features: plan.Features, ProductName: plan.ProductName,
 		ForSale: plan.ForSale, IsHistorical: plan.IsHistorical, SortOrder: plan.SortOrder, CreatedAt: plan.CreatedAt, UpdatedAt: plan.UpdatedAt,
 		Price: version.Price, OriginalPrice: version.OriginalPrice, Currency: version.Currency,

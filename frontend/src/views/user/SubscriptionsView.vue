@@ -277,6 +277,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { formatDateTimeToMinute } from '@/utils/format'
 import {
+  getDailyQuotaResetAt,
   getExpirationDateRelation,
   getRemainingDurationParts,
   isOneTimeDailyQuota,
@@ -391,8 +392,10 @@ function formatDailyUsageWindow(subscription: UserSubscription): string {
     return t('userSubscriptions.quotaEndsIn', { time: formatDurationParts(parts) })
   }
 
+  const resetAt = getDailyQuotaResetAt(subscription)
+  const parts = resetAt ? getRemainingDurationParts(resetAt) : null
   return t('userSubscriptions.resetIn', {
-    time: formatResetTime(subscription.daily_window_start, 24)
+    time: parts ? formatDurationParts(parts) : t('userSubscriptions.windowNotActive')
   })
 }
 

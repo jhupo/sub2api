@@ -243,6 +243,7 @@ func (r *usageBillingRepository) AuthorizeSubscriptionAllowance(
 }
 
 func lockSubscriptionAllowance(ctx context.Context, tx *sql.Tx, cmd *service.SubscriptionAllowanceCommand) (*service.UserSubscription, error) {
+	plan := &service.SubscriptionPlan{}
 	var (
 		sub                                               service.UserSubscription
 		status                                            string
@@ -256,7 +257,8 @@ func lockSubscriptionAllowance(ctx context.Context, tx *sql.Tx, cmd *service.Sub
 			us.daily_usage_usd, us.weekly_usage_usd, us.monthly_usage_usd,
 			us.daily_reserved_usd, us.weekly_reserved_usd, us.monthly_reserved_usd,
 			spv.daily_limit_usd, spv.weekly_limit_usd, spv.monthly_limit_usd,
-			us.total_usage_usd, us.total_reserved_usd, spv.total_limit_usd
+			us.total_usage_usd, us.total_reserved_usd, spv.total_limit_usd,
+			us.is_quota_card, us.renewal_count, spv.validity_days, spv.validity_unit, spv.card_mode
 		FROM user_subscriptions us
 		JOIN subscription_plan_versions spv ON spv.id = us.plan_version_id
 		JOIN api_keys ak ON ak.id = $2
@@ -274,6 +276,7 @@ func lockSubscriptionAllowance(ctx context.Context, tx *sql.Tx, cmd *service.Sub
 		&sub.DailyReservedUSD, &sub.WeeklyReservedUSD, &sub.MonthlyReservedUSD,
 		&dailyLimit, &weeklyLimit, &monthlyLimit,
 		&sub.TotalUsageUSD, &sub.TotalReservedUSD, &totalLimit,
+		&sub.IsQuotaCard, &sub.RenewalCount, &plan.ValidityDays, &plan.ValidityUnit, &plan.CardMode,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, service.ErrSubscriptionNotFound
@@ -291,7 +294,7 @@ func lockSubscriptionAllowance(ctx context.Context, tx *sql.Tx, cmd *service.Sub
 	if monthlyStart.Valid {
 		sub.MonthlyWindowStart = &monthlyStart.Time
 	}
-	sub.Plan = &service.SubscriptionPlan{}
+	sub.Plan = plan
 	sub.Plan.TotalLimitUSD = nullableFloatPointer(totalLimit)
 	if dailyLimit.Valid {
 		sub.Plan.DailyLimitUSD = &dailyLimit.Float64

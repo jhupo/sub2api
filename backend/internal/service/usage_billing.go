@@ -28,6 +28,7 @@ const (
 
 // UsageBillingCommand describes one billable request that must be applied at most once.
 type UsageBillingCommand struct {
+	PriorityFunding    *PriorityFundingPolicy
 	RequestID          string
 	APIKeyID           int64
 	BaselineKey        string
@@ -206,6 +207,7 @@ type AccountQuotaState struct {
 }
 
 type UsageBillingApplyResult struct {
+	PriorityFunding            *PriorityFundingReservation
 	Applied                    bool
 	BalanceFinalizationPending bool
 	APIKeyQuotaExhausted       bool

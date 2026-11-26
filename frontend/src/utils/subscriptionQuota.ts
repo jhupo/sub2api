@@ -14,6 +14,15 @@ export interface RemainingDurationParts {
   minutes: number
 }
 
+export function getDailyQuotaResetAt(
+  subscription: Pick<UserSubscription, 'daily_window_start' | 'daily_reset_at'>
+): string | null {
+  if (subscription.daily_reset_at) return subscription.daily_reset_at
+  if (!subscription.daily_window_start) return null
+  const start = new Date(subscription.daily_window_start).getTime()
+  return Number.isFinite(start) ? new Date(start + ONE_DAY_MS).toISOString() : null
+}
+
 export function isOneTimeDailyQuota(
   subscription: Pick<UserSubscription, 'starts_at' | 'expires_at'>
 ): boolean {

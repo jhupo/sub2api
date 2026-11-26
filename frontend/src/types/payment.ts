@@ -115,6 +115,7 @@ export interface PlanSaleSchedule {
 }
 
 export interface SubscriptionPlan {
+  card_appearance?: PlanCardAppearance
   sale_schedule?: PlanSaleSchedule
   sale_ends_at?: string | null
   sale_available?: boolean
@@ -144,6 +145,11 @@ export interface SubscriptionPlan {
   for_sale: boolean
   is_historical?: boolean
   sort_order: number
+}
+
+export interface PlanCardAppearance {
+  theme: 'classic' | 'mint' | 'ruby'
+  motion: 'none' | 'shine' | 'flow'
 }
 
 export interface PaymentChannel {

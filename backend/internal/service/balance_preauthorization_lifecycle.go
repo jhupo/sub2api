@@ -204,6 +204,7 @@ type PerRequestPreauthorizationEstimate struct {
 // is reconciled during final usage settlement. For the per-request estimate kind,
 // PerRequestEstimate supplies the billing units and the output window is unused.
 type BalancePreauthorizationRequest struct {
+	fundingHoldAmount          *float64
 	RequestID                  string
 	APIKeyID                   int64
 	UserID                     int64
@@ -299,7 +300,7 @@ func (s *BalancePreauthorizationService) Preauthorize(
 		return nil, balancePreauthorizationUnavailable(err)
 	}
 	baselineStore, hasBaselineStore := s.repo.(balancePreauthorizationBaselineStore)
-	if s.costCalculator == nil && !hasBaselineStore {
+	if s.costCalculator == nil && !hasBaselineStore && request.fundingHoldAmount == nil {
 		return nil, balancePreauthorizationUnavailable(errors.New("billing preauthorization pricing is unavailable"))
 	}
 	ctx = nonNilContext(ctx)
@@ -309,7 +310,12 @@ func (s *BalancePreauthorizationService) Preauthorize(
 			preauthorizationFundingSource(request.BillingType), request.SubscriptionID, "")
 	}
 	estimate := balancePreauthorizationEstimate{}
-	if hasBaselineStore {
+	if request.fundingHoldAmount != nil {
+		if invalidNonnegativeMoney(*request.fundingHoldAmount) {
+			return nil, ErrInvalidBillingPreauthorizationEstimate
+		}
+		estimate.HoldAmount = QuantizeUsageBillingAmount(*request.fundingHoldAmount)
+	} else if hasBaselineStore {
 		var err error
 		estimate.HoldAmount, err = baselineStore.LoadPreauthorizationBaseline(ctx, baselineKey)
 		if err != nil {
@@ -463,6 +469,12 @@ func (s *BalancePreauthorizationService) Resume(ctx context.Context, request Bal
 	request.HoldAmount = QuantizeUsageBillingAmount(request.HoldAmount)
 	ctx = nonNilContext(ctx)
 	if request.BillingType == BillingTypeSubscription {
+		if repo, ok := s.repo.(PriorityFundingRepository); ok {
+			guard, found, err := s.resumePriorityFunding(ctx, request, repo)
+			if found || err != nil {
+				return guard, err
+			}
+		}
 		if request.BaselineKey == "" {
 			request.BaselineKey = BuildBalancePreauthorizationBaselineKey(request.UserID, request.APIKeyID,
 				preauthorizationFundingSource(request.BillingType), request.SubscriptionID, "")

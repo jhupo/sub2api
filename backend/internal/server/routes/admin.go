@@ -557,6 +557,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	adminSettings := admin.Group("/settings")
 	{
 		adminSettings.GET("", h.Admin.Setting.GetSettings)
+		adminSettings.GET("/beginner-guide", h.Admin.Setting.GetBeginnerGuide)
+		adminSettings.PUT("/beginner-guide/draft", h.Admin.Setting.SaveBeginnerGuideDraft)
+		adminSettings.POST("/beginner-guide/publish", h.Admin.Setting.PublishBeginnerGuide)
 		adminSettings.PUT("", h.Admin.Setting.UpdateSettings)
 		adminSettings.POST("/test-smtp", h.Admin.Setting.TestSMTPConnection)
 		adminSettings.POST("/send-test-email", h.Admin.Setting.SendTestEmail)

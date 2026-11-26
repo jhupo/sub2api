@@ -501,6 +501,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 					pending.PreauthorizationHoldAmount = balanceGuard.HoldAmount()
 					pending.FundingSource = balanceGuard.FundingSource()
 					pending.SubscriptionID = balanceGuard.SubscriptionID()
+					pending.PriorityFunding = balanceGuard.UsesPriorityFunding()
 				}
 				if err := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, taskID, subject.UserID, apiKey.ID, pending); err != nil {
 					reqLog.Warn("grok_media.store_video_pending_billing_failed_retrying",

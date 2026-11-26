@@ -9,7 +9,7 @@ export default {
   cardMode: '额度类型', recurringPlan: '周期订阅', hoursCard: '小时额度卡', deadlineCard: '固定截止额度卡',
   totalLimit: '总额度', validityHours: '有效小时数', hours: '小时', deadline: '截止时间',
   priority: '扣费优先级', addCard: '添加额度卡或订阅', remove: '移除', moveUp: '上移', moveDown: '下移',
-  walletFallback: '全部不可用时允许扣钱包余额',
+  walletFallback: '订阅额度不足时由钱包补足差额',
   relinquish: '放弃剩余有效期', relinquishTitle: '放弃此订阅',
   relinquishConfirm: '将永久放弃此订阅的剩余有效期和额度，不退款。绑定此订阅的 API Key 将暂停，需要重新选择扣费来源后启用。确认继续？',
   relinquished: '订阅已放弃，可重新购买',

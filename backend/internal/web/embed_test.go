@@ -381,6 +381,31 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		assert.Empty(t, w2.Body.String())
 	})
 
+	t.Run("new_nonce_does_not_reuse_cached_browser_html", func(t *testing.T) {
+		provider := &mockSettingsProvider{settings: map[string]string{"test": "value"}}
+		server, err := NewFrontendServer(provider)
+		require.NoError(t, err)
+
+		first := httptest.NewRecorder()
+		c1, _ := gin.CreateTestContext(first)
+		c1.Request = httptest.NewRequest(http.MethodGet, "/guide", nil)
+		c1.Set(middleware.CSPNonceKey, "first-nonce")
+		server.serveIndexHTML(c1)
+
+		second := httptest.NewRecorder()
+		c2, _ := gin.CreateTestContext(second)
+		c2.Request = httptest.NewRequest(http.MethodGet, "/guide", nil)
+		c2.Request.Header.Set("If-None-Match", first.Header().Get("ETag"))
+		c2.Set(middleware.CSPNonceKey, "second-nonce")
+		server.serveIndexHTML(c2)
+
+		assert.Equal(t, http.StatusOK, second.Code)
+		assert.NotEqual(t, first.Header().Get("ETag"), second.Header().Get("ETag"))
+		assert.Contains(t, second.Body.String(), `nonce="second-nonce"`)
+		assert.NotContains(t, second.Body.String(), `nonce="first-nonce"`)
+		assert.Equal(t, 1, provider.called)
+	})
+
 	t.Run("sets_cache_control_header", func(t *testing.T) {
 		provider := &mockSettingsProvider{
 			settings: map[string]string{"test": "value"},

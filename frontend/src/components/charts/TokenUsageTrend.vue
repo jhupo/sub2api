@@ -1,8 +1,20 @@
 <template>
   <div class="card p-4">
-    <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-white">
-      {{ t('admin.dashboard.tokenUsageTrend') }}
-    </h3>
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+      <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+        {{ t('admin.dashboard.tokenUsageTrend') }}
+      </h3>
+      <span v-if="refreshing" class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400" role="status">
+        <Icon name="refresh" size="xs" class="animate-spin" />
+        {{ t('admin.dashboard.trendChecking') }}
+      </span>
+      <time v-else-if="checkedAt" :datetime="checkedAt" class="text-xs text-gray-500 dark:text-gray-400">
+        {{ t('admin.dashboard.trendLastChecked', { time: new Date(checkedAt).toLocaleTimeString() }) }}
+      </time>
+    </div>
+    <p v-if="refreshFailed" class="mb-2 text-xs text-amber-600 dark:text-amber-400" role="status">
+      {{ t('admin.dashboard.trendRefreshFailed') }}
+    </p>
     <div v-if="loading" class="flex h-48 items-center justify-center">
       <LoadingSpinner />
     </div>
@@ -34,6 +46,7 @@ import {
 } from 'chart.js'
 import { Line } from 'vue-chartjs'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import Icon from '@/components/icons/Icon.vue'
 import type { TrendDataPoint } from '@/types'
 
 ChartJS.register(
@@ -52,6 +65,9 @@ const { t } = useI18n()
 const props = defineProps<{
   trendData: TrendDataPoint[]
   loading?: boolean
+  refreshing?: boolean
+  checkedAt?: string
+  refreshFailed?: boolean
 }>()
 
 const isDarkMode = computed(() => {

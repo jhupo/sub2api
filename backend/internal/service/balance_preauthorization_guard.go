@@ -142,6 +142,9 @@ func (g *BalancePreauthorizationGuard) BaselineKey() string {
 	if subscription, ok := g.core.reservation.(*subscriptionPreauthorizationReservation); ok {
 		return subscription.cmd.BaselineKey
 	}
+	if priority, ok := g.core.reservation.(*priorityFundingReservation); ok {
+		return priority.cmd.BaselineKey
+	}
 	return ""
 }
 
@@ -164,6 +167,14 @@ func (g *BalancePreauthorizationGuard) SubscriptionID() *int64 {
 		return nil
 	}
 	return g.core.reservation.SubscriptionID()
+}
+
+func (g *BalancePreauthorizationGuard) UsesPriorityFunding() bool {
+	if g == nil || g.core == nil {
+		return false
+	}
+	_, ok := g.core.reservation.(*priorityFundingReservation)
+	return ok
 }
 
 // wrapStreamOutputHoldTopUpFailure 为流式中途补扣失败统一包装错误，供四条流式
@@ -354,7 +365,8 @@ func (g *BalancePreauthorizationGuard) FinalizeCaptured(ctx context.Context, cap
 	if g.core.reservation.FundingSource() == FundingSourceWallet && captured != actual {
 		return ErrInvalidBillingPreauthorizationEstimate
 	}
-	if g.core.reservation.FundingSource() == FundingSourceSubscription && captured > g.core.holdAmount {
+	_, priority := g.core.reservation.(*priorityFundingReservation)
+	if !priority && g.core.reservation.FundingSource() == FundingSourceSubscription && captured > g.core.holdAmount {
 		return ErrInvalidBillingPreauthorizationEstimate
 	}
 	if err := g.core.reservation.Capture(ctx, captured, actual, requestFingerprint); err != nil {

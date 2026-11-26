@@ -148,6 +148,26 @@ func (_u *SubscriptionPlanUpdate) ClearSaleSchedule() *SubscriptionPlanUpdate {
 	return _u
 }
 
+// SetCardAppearance sets the "card_appearance" field.
+func (_u *SubscriptionPlanUpdate) SetCardAppearance(v domain.PlanCardAppearance) *SubscriptionPlanUpdate {
+	_u.mutation.SetCardAppearance(v)
+	return _u
+}
+
+// SetNillableCardAppearance sets the "card_appearance" field if the given value is not nil.
+func (_u *SubscriptionPlanUpdate) SetNillableCardAppearance(v *domain.PlanCardAppearance) *SubscriptionPlanUpdate {
+	if v != nil {
+		_u.SetCardAppearance(*v)
+	}
+	return _u
+}
+
+// ClearCardAppearance clears the value of the "card_appearance" field.
+func (_u *SubscriptionPlanUpdate) ClearCardAppearance() *SubscriptionPlanUpdate {
+	_u.mutation.ClearCardAppearance()
+	return _u
+}
+
 // SetSortOrder sets the "sort_order" field.
 func (_u *SubscriptionPlanUpdate) SetSortOrder(v int) *SubscriptionPlanUpdate {
 	_u.mutation.ResetSortOrder()
@@ -344,6 +364,12 @@ func (_u *SubscriptionPlanUpdate) sqlSave(ctx context.Context) (_node int, err e
 	}
 	if _u.mutation.SaleScheduleCleared() {
 		_spec.ClearField(subscriptionplan.FieldSaleSchedule, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.CardAppearance(); ok {
+		_spec.SetField(subscriptionplan.FieldCardAppearance, field.TypeJSON, value)
+	}
+	if _u.mutation.CardAppearanceCleared() {
+		_spec.ClearField(subscriptionplan.FieldCardAppearance, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.SortOrder(); ok {
 		_spec.SetField(subscriptionplan.FieldSortOrder, field.TypeInt, value)
@@ -581,6 +607,26 @@ func (_u *SubscriptionPlanUpdateOne) ClearSaleSchedule() *SubscriptionPlanUpdate
 	return _u
 }
 
+// SetCardAppearance sets the "card_appearance" field.
+func (_u *SubscriptionPlanUpdateOne) SetCardAppearance(v domain.PlanCardAppearance) *SubscriptionPlanUpdateOne {
+	_u.mutation.SetCardAppearance(v)
+	return _u
+}
+
+// SetNillableCardAppearance sets the "card_appearance" field if the given value is not nil.
+func (_u *SubscriptionPlanUpdateOne) SetNillableCardAppearance(v *domain.PlanCardAppearance) *SubscriptionPlanUpdateOne {
+	if v != nil {
+		_u.SetCardAppearance(*v)
+	}
+	return _u
+}
+
+// ClearCardAppearance clears the value of the "card_appearance" field.
+func (_u *SubscriptionPlanUpdateOne) ClearCardAppearance() *SubscriptionPlanUpdateOne {
+	_u.mutation.ClearCardAppearance()
+	return _u
+}
+
 // SetSortOrder sets the "sort_order" field.
 func (_u *SubscriptionPlanUpdateOne) SetSortOrder(v int) *SubscriptionPlanUpdateOne {
 	_u.mutation.ResetSortOrder()
@@ -807,6 +853,12 @@ func (_u *SubscriptionPlanUpdateOne) sqlSave(ctx context.Context) (_node *Subscr
 	}
 	if _u.mutation.SaleScheduleCleared() {
 		_spec.ClearField(subscriptionplan.FieldSaleSchedule, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.CardAppearance(); ok {
+		_spec.SetField(subscriptionplan.FieldCardAppearance, field.TypeJSON, value)
+	}
+	if _u.mutation.CardAppearanceCleared() {
+		_spec.ClearField(subscriptionplan.FieldCardAppearance, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.SortOrder(); ok {
 		_spec.SetField(subscriptionplan.FieldSortOrder, field.TypeInt, value)

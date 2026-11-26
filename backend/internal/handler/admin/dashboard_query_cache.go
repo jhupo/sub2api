@@ -11,11 +11,21 @@ import (
 
 var (
 	dashboardTrendCache        = newNamedSnapshotCache("dashboard-trend", reportCacheTTL)
+	dashboardLiveTrendCache    = newNamedSnapshotCache("dashboard-live-trend", time.Minute)
 	dashboardModelStatsCache   = newNamedSnapshotCache("dashboard-models", reportCacheTTL)
 	dashboardGroupStatsCache   = newNamedSnapshotCache("dashboard-groups", reportCacheTTL)
 	dashboardUsersTrendCache   = newNamedSnapshotCache("dashboard-users-trend", reportCacheTTL)
 	dashboardAPIKeysTrendCache = newNamedSnapshotCache("dashboard-api-keys-trend", reportCacheTTL)
 )
+
+func useLiveDashboardTrendCache(aggregationEnabled bool, filters dashboardTrendCacheKey, startTime, endTime, now time.Time) bool {
+	return aggregationEnabled &&
+		!now.Before(startTime) && now.Before(endTime) &&
+		(filters.Granularity == "hour" || filters.Granularity == "day") &&
+		filters.UserID == 0 && filters.APIKeyID == 0 && filters.AccountID == 0 && filters.GroupID == 0 &&
+		filters.Model == "" && filters.RequestType == nil && filters.Stream == nil &&
+		filters.NativeCompactionV2 == nil && filters.BillingType == nil && filters.UpstreamModelMismatch == nil
+}
 
 type dashboardTrendCacheKey struct {
 	StartTime             string `json:"start_time"`
@@ -99,7 +109,7 @@ func (h *DashboardHandler) getUsageTrendCached(
 	billingType *int8,
 	upstreamModelMismatch *bool,
 ) ([]usagestats.TrendDataPoint, bool, error) {
-	key := mustMarshalDashboardCacheKey(dashboardTrendCacheKey{
+	filters := dashboardTrendCacheKey{
 		StartTime:             startTime.UTC().Format(time.RFC3339),
 		EndTime:               endTime.UTC().Format(time.RFC3339),
 		Granularity:           granularity,
@@ -113,8 +123,13 @@ func (h *DashboardHandler) getUsageTrendCached(
 		NativeCompactionV2:    nativeCompactionV2,
 		BillingType:           billingType,
 		UpstreamModelMismatch: upstreamModelMismatch,
-	})
-	entry, hit, err := dashboardTrendCache.GetOrLoadContext(ctx, key, func() (any, error) {
+	}
+	key := mustMarshalDashboardCacheKey(filters)
+	cache := dashboardTrendCache
+	if useLiveDashboardTrendCache(h.dashboardService.AggregationEnabled(), filters, startTime, endTime, time.Now()) {
+		cache = dashboardLiveTrendCache
+	}
+	entry, hit, err := cache.GetOrLoadContext(ctx, key, func() (any, error) {
 		loadCtx, cancel := reportCacheLoadContext(ctx)
 		defer cancel()
 		return h.dashboardService.GetUsageTrendWithUsageFilters(loadCtx, startTime, endTime, granularity, usagestats.UsageLogFilters{

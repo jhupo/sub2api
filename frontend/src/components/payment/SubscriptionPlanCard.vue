@@ -1,5 +1,14 @@
 <template>
-  <article class="plan-card" :class="{ 'plan-card--owned': isRenewal }">
+  <article
+    ref="cardElement"
+    class="plan-card"
+    :class="[
+      `plan-card--${appearance.theme}`,
+      `plan-card--${appearance.motion}`,
+      { 'plan-card--owned': isRenewal, 'plan-card--paused': !animate }
+    ]"
+  >
+    <div class="plan-card__art" aria-hidden="true"><span></span></div>
     <div class="plan-card__name min-w-0">
       <span class="plan-card__icon" aria-hidden="true"><Icon name="bolt" size="sm" /></span>
       <h3 :title="plan.name" class="min-w-0 flex-1 break-words [overflow-wrap:anywhere] text-base font-semibold">{{ plan.name }}</h3>
@@ -52,7 +61,7 @@
     </ul>
 
     <div class="plan-card__action">
-      <button type="button" @click="emit('select', plan)">
+      <button type="button" :disabled="preview" @click="emit('select', plan)">
         <span>{{ isRenewal ? t('payment.renewNow') : t('payment.subscribeNow') }}</span>
         <Icon name="arrowRight" size="sm" aria-hidden="true" />
       </button>
@@ -61,22 +70,31 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { useDocumentVisibility, useIntersectionObserver, usePreferredReducedMotion } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import type { SubscriptionPlan } from '@/types/payment'
 import type { UserSubscription } from '@/types'
 import Icon from '@/components/icons/Icon.vue'
-import { planValiditySuffix } from './validity'
+import { isStandaloneQuotaPlan, planValiditySuffix } from './validity'
 import { currencySymbol } from '@/components/payment/currency'
 import { formatDateTimeToMinute } from '@/utils/format'
 import SaleCountdown from './SaleCountdown.vue'
+import { normalizePlanCardAppearance } from './planAppearance'
 
-const props = defineProps<{ plan: SubscriptionPlan; activeSubscriptions?: UserSubscription[] }>()
+const props = defineProps<{ plan: SubscriptionPlan; activeSubscriptions?: UserSubscription[]; preview?: boolean }>()
 const emit = defineEmits<{ select: [plan: SubscriptionPlan] }>()
 const { t } = useI18n()
+const appearance = computed(() => normalizePlanCardAppearance(props.plan.card_appearance))
+const cardElement = ref<HTMLElement | null>(null)
+const visible = ref(true)
+const documentVisibility = useDocumentVisibility()
+const reducedMotion = usePreferredReducedMotion()
+useIntersectionObserver(cardElement, ([entry]) => { visible.value = entry?.isIntersecting ?? false })
+const animate = computed(() => visible.value && documentVisibility.value === 'visible' && reducedMotion.value !== 'reduce')
 
 const isRenewal = computed(() =>
-  !props.plan.card_mode && (props.activeSubscriptions?.some(s => s.plan_id === props.plan.id && s.status === 'active') ?? false)
+  !isStandaloneQuotaPlan(props.plan) && (props.activeSubscriptions?.some(s => s.plan_id === props.plan.id && s.status === 'active') ?? false)
 )
 
 const discountText = computed(() => {
@@ -91,29 +109,95 @@ const validitySuffix = computed(() => planValiditySuffix(props.plan, t))
 
 <style scoped>
 .plan-card {
+  --plan-accent: #2563eb;
+  --plan-tint: #eff6ff;
+  --plan-line: #dbeafe;
+  --plan-art: #cbd5e1;
   position: relative;
   isolation: isolate;
   display: flex;
   min-width: 0;
   flex-direction: column;
   overflow: hidden;
-  padding: 24px;
+  padding: 28px 24px 24px;
   @apply border border-gray-200 bg-white text-gray-900 shadow-sm dark:border-dark-600 dark:bg-dark-800 dark:text-gray-100;
-  border-radius: 22px;
+  border-radius: 8px;
   transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
-.plan-card::before {
-  content: '';
+.plan-card--mint { --plan-accent: #047857; --plan-tint: #ecfdf5; --plan-line: #a7f3d0; --plan-art: #6ee7b7; }
+.plan-card--ruby { --plan-accent: #be123c; --plan-tint: #fff1f2; --plan-line: #fecdd3; --plan-art: #fda4af; }
+.dark .plan-card { --plan-accent: #93c5fd; --plan-tint: #172554; --plan-line: #1e40af; --plan-art: #475569; }
+.dark .plan-card--mint { --plan-accent: #6ee7b7; --plan-tint: #063d31; --plan-line: #065f46; --plan-art: #10b981; }
+.dark .plan-card--ruby { --plan-accent: #fda4af; --plan-tint: #4c1026; --plan-line: #881337; --plan-art: #f43f5e; }
+.plan-card__art {
   position: absolute;
+  z-index: -1;
   top: 0;
-  right: 24px;
-  left: 24px;
-  height: 1px;
-  @apply bg-primary-200 dark:bg-primary-700;
+  right: 0;
+  left: 0;
+  height: 110px;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--plan-tint);
+  opacity: .48;
+  mask-image: linear-gradient(#000, transparent);
+}
+.plan-card__art::before, .plan-card__art::after, .plan-card__art span {
+  position: absolute;
+  content: '';
+  pointer-events: none;
+}
+.plan-card__art::before {
+  inset: 0;
+  opacity: .4;
+  background-image: repeating-linear-gradient(120deg, transparent 0 31px, var(--plan-art) 31px 32px, transparent 32px 48px);
+}
+.plan-card__art::after {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--plan-accent);
+}
+.plan-card__art span {
+  inset: 0 auto 0 -60%;
+  width: 45%;
+  transform: skewX(-22deg);
+  background: linear-gradient(90deg, transparent, var(--plan-line), transparent);
+  opacity: 0;
+}
+.plan-card--shine .plan-card__art,
+.plan-card--flow .plan-card__art {
+  height: 200px;
+  opacity: .95;
+  mask-image: linear-gradient(#000 0 48%, transparent);
+}
+.plan-card--shine .plan-card__art span {
+  width: 65%;
+  background: linear-gradient(90deg, transparent, var(--plan-art) 36%, #fff 50%, var(--plan-art) 64%, transparent);
+  animation: plan-shine 3.2s ease-in-out infinite;
+}
+.plan-card--flow .plan-card__art::before {
+  inset: 0 -96px;
+  opacity: .7;
+  background-image: repeating-linear-gradient(135deg, transparent 0 21%, var(--plan-art) 21% 25%, transparent 25% 50%);
+  background-size: 96px 96px;
+  animation: plan-flow 3.2s linear infinite;
+}
+.plan-card--paused .plan-card__art span, .plan-card--paused .plan-card__art::before { animation-play-state: paused; }
+@keyframes plan-shine {
+  0% { transform: translateX(0) skewX(-22deg); opacity: 0; }
+  12%, 56% { opacity: .65; }
+  76%, 100% { transform: translateX(340%) skewX(-22deg); opacity: 0; }
+}
+@keyframes plan-flow {
+  from { transform: translateX(0); }
+  to { transform: translateX(96px); }
 }
 .plan-card:hover {
-  transform: translateY(-3px);
-  @apply border-primary-400 shadow-md dark:border-primary-500;
+  transform: translateY(-2px);
+  border-color: var(--plan-accent);
+  @apply shadow-md;
 }
 .plan-card--owned { @apply border-emerald-500 dark:border-emerald-600; }
 .plan-card__name { display: flex; align-items: center; gap: 10px; }
@@ -125,8 +209,10 @@ const validitySuffix = computed(() => planValiditySuffix(props.plan, t))
   height: 32px;
   flex-shrink: 0;
   place-items: center;
-  @apply border border-primary-100 bg-primary-50 text-primary-600 dark:border-primary-800 dark:bg-primary-900/30 dark:text-primary-300;
-  border-radius: 10px;
+  color: var(--plan-accent);
+  background: var(--plan-tint);
+  border: 1px solid var(--plan-line);
+  border-radius: 8px;
 }
 .plan-card__discount {
   flex-shrink: 0;
@@ -137,15 +223,16 @@ const validitySuffix = computed(() => planValiditySuffix(props.plan, t))
   font-weight: 650;
 }
 .plan-card__price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px; margin-top: 20px; }
-.plan-card__currency { font-size: 19px; @apply text-primary-600 dark:text-primary-300; }
-.plan-card__value { font-size: 42px; font-weight: 700; line-height: 1.15; letter-spacing: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.plan-card__currency { font-size: 18px; color: var(--plan-accent); }
+.plan-card__value { font-size: 36px; font-weight: 700; line-height: 1.15; letter-spacing: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .plan-card__period, .plan-card__currency-code { font-size: 13px; @apply text-gray-500 dark:text-gray-400; }
 .plan-card__price del { margin-left: auto; font-size: 13px; @apply text-gray-500 dark:text-gray-400; }
 .plan-card__description { margin-top: 12px; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; @apply text-gray-600 dark:text-gray-300; }
-.plan-card__limits { display: grid; gap: 1px; margin-top: 18px; overflow: hidden; border-radius: 12px; @apply border border-gray-200 bg-gray-200 dark:border-dark-600 dark:bg-dark-600; }
-.plan-card__limits > div { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 11px 13px; @apply bg-gray-50 dark:bg-dark-900; }
+.plan-card__limits { display: grid; margin-top: 18px; @apply border-y border-gray-100 dark:border-dark-600; }
+.plan-card__limits > div { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 11px 0; }
+.plan-card__limits > div + div { @apply border-t border-gray-100 dark:border-dark-700; }
 .plan-card__limits dt { display: flex; align-items: center; gap: 8px; font-size: 12px; @apply text-gray-600 dark:text-gray-300; }
-.plan-card__limits dt svg { flex-shrink: 0; @apply text-primary-500 dark:text-primary-400; }
+.plan-card__limits dt svg { flex-shrink: 0; color: var(--plan-accent); }
 .plan-card__limits dd { font-size: 15px; font-weight: 650; overflow-wrap: anywhere; @apply text-gray-900 dark:text-gray-100; }
 .plan-card__features { display: grid; gap: 8px; margin-top: 16px; }
 .plan-card__features li { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; overflow-wrap: anywhere; @apply text-gray-600 dark:text-gray-300; }
@@ -160,14 +247,23 @@ const validitySuffix = computed(() => planValiditySuffix(props.plan, t))
   width: 100%;
   min-height: 44px;
   padding: 10px 16px;
-  @apply border border-primary-600 bg-primary-600 text-white shadow-sm dark:border-primary-500 dark:bg-primary-500;
-  border-radius: 11px;
+  background: var(--plan-accent);
+  border: 1px solid var(--plan-accent);
+  color: #fff;
+  border-radius: 6px;
   font-size: 14px;
   font-weight: 600;
   transition: filter 180ms ease;
 }
 .plan-card__action button:hover { filter: brightness(1.15); }
+.plan-card__action button:disabled { cursor: default; }
+.dark .plan-card__action button { color: #111827; }
 .plan-card__action button:focus-visible { outline-width: 2px; outline-style: solid; outline-offset: 4px; @apply outline-primary-500 dark:outline-primary-300; }
 @media (max-width: 480px) { .plan-card { padding: 20px; } }
-@media (prefers-reduced-motion: reduce) { .plan-card, .plan-card__action button { transition: none; } .plan-card:hover { transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .plan-card, .plan-card__action button { transition: none; }
+  .plan-card:hover { transform: none; }
+  .plan-card--shine .plan-card__art span,
+  .plan-card--flow .plan-card__art::before { animation: none; }
+}
 </style>

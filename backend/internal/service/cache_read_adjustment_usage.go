@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usageadjustment"
@@ -10,8 +11,31 @@ import (
 
 type CacheReadAdjustmentUsage struct {
 	usageadjustment.Snapshot
-	BaselineActualCost   *float64 `json:"baseline_actual_cost"`
-	AdditionalActualCost *float64 `json:"additional_actual_cost"`
+	BaselineActualCost         *float64 `json:"baseline_actual_cost"`
+	AdditionalActualCost       *float64 `json:"additional_actual_cost"`
+	BalanceAdditionalCost      *float64 `json:"balance_additional_cost,omitempty"`
+	SubscriptionAdditionalCost *float64 `json:"subscription_additional_cost,omitempty"`
+}
+
+// Attribute the incremental charge using the same subscription-first order as
+// settlement. Any uncovered usage is excluded from collected revenue.
+func recordPriorityFundingCacheAdjustment(log *UsageLog, funding *PriorityFundingReservation) {
+	if log == nil || log.CacheReadAdjustment == nil || log.CacheReadAdjustment.BaselineActualCost == nil || funding == nil {
+		return
+	}
+	adjustment := log.CacheReadAdjustment
+	if adjustment.AdditionalActualCost == nil || *adjustment.AdditionalActualCost < 0 {
+		return
+	}
+	collected := QuantizeUsageBillingAmount(funding.ActualAmount - funding.UncoveredAmount)
+	baseline := *adjustment.BaselineActualCost
+	subscription := QuantizeUsageBillingAmount(collected - funding.WalletAmount)
+	delta := QuantizeUsageBillingAmount(collected - min(baseline, collected))
+	walletDelta := QuantizeUsageBillingAmount(funding.WalletAmount - min(funding.WalletAmount, math.Max(0, baseline-subscription)))
+	subscriptionDelta := QuantizeUsageBillingAmount(delta - walletDelta)
+	adjustment.AdditionalActualCost = &delta
+	adjustment.BalanceAdditionalCost = &walletDelta
+	adjustment.SubscriptionAdditionalCost = &subscriptionDelta
 }
 
 var errCacheAdjustmentMediaPricing = fmt.Errorf("original cache modality breakdown unavailable")

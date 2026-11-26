@@ -28,6 +28,8 @@ const (
 	FieldForSale = "for_sale"
 	// FieldSaleSchedule holds the string denoting the sale_schedule field in the database.
 	FieldSaleSchedule = "sale_schedule"
+	// FieldCardAppearance holds the string denoting the card_appearance field in the database.
+	FieldCardAppearance = "card_appearance"
 	// FieldIsHistorical holds the string denoting the is_historical field in the database.
 	FieldIsHistorical = "is_historical"
 	// FieldSortOrder holds the string denoting the sort_order field in the database.
@@ -68,6 +70,7 @@ var Columns = []string{
 	FieldProductName,
 	FieldForSale,
 	FieldSaleSchedule,
+	FieldCardAppearance,
 	FieldIsHistorical,
 	FieldSortOrder,
 	FieldCreatedAt,

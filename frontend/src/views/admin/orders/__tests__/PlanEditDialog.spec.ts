@@ -6,7 +6,8 @@ import PlanEditDialog from '../PlanEditDialog.vue'
 import PlanSaleEditor from '@/components/payment/PlanSaleEditor.vue'
 import { adminPaymentAPI } from '@/api/admin/payment'
 
-vi.mock('vue-i18n', () => ({
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...await importOriginal<typeof import('vue-i18n')>(),
   useI18n: () => ({
     t: (key: string, params?: Record<string, unknown>) => {
       if (key === 'payment.admin.subscriptionCnyPayPreview') return `preview ${params?.amount}`
@@ -94,6 +95,36 @@ function mountDialog({ paymentConfig = null }: { paymentConfig?: Record<string, 
 }
 
 describe('PlanEditDialog', () => {
+  it('updates appearance alone without republishing commercial terms', async () => {
+    const wrapper = mountDialog()
+    await wrapper.setProps({ show: false, plan: {
+      id: 9, name: 'Pro', description: 'Quota plan', price: 45, features: [], validity_days: 30,
+      validity_unit: 'days', for_sale: true, sort_order: 0,
+      card_appearance: { theme: 'mint', motion: 'shine' },
+    } })
+    await wrapper.setProps({ show: true })
+    expect(wrapper.get('input[value="mint"]').element).toHaveProperty('checked', true)
+    await wrapper.get('[data-testid="plan-card-motion"]').setValue('flow')
+    await wrapper.get('#plan-form').trigger('submit')
+    expect(adminPaymentAPI.updatePlan).toHaveBeenLastCalledWith(9, { card_appearance: { theme: 'mint', motion: 'flow' } })
+    wrapper.unmount()
+  })
+
+  it('previews and saves a per-plan theme and motion choice', async () => {
+    const wrapper = mountDialog()
+    await wrapper.get('input[value="mint"]').setValue(true)
+    await wrapper.get('[data-testid="plan-card-motion"]').setValue('shine')
+    expect(wrapper.get('.plan-card').classes()).toEqual(expect.arrayContaining(['plan-card--mint', 'plan-card--shine']))
+    expect(wrapper.get('.plan-card button').attributes('disabled')).toBeDefined()
+    await wrapper.findAll('input[type="number"]')[0]!.setValue('45')
+    await wrapper.get('#plan-form').trigger('submit')
+    expect(adminPaymentAPI.createPlan).toHaveBeenLastCalledWith(expect.objectContaining({
+      card_appearance: { theme: 'mint', motion: 'shine' },
+      price: 45,
+    }))
+    wrapper.unmount()
+  })
+
   it('publishes multiple scheduled prices and a cross-midnight daily sale window', async () => {
     const wrapper = mountDialog()
     await wrapper.get('select').setValue('hours')
@@ -148,7 +179,7 @@ describe('PlanEditDialog', () => {
 
     await wrapper.find('input[type="number"]').setValue('9.99')
 
-    expect(wrapper.text()).not.toContain('preview')
+    expect(wrapper.find('[data-testid="subscription-cny-preview"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('¥71.43')
   })
 

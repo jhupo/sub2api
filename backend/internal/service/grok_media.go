@@ -377,6 +377,7 @@ type GrokVideoPendingBilling struct {
 	PreauthorizationHoldAmount float64 `json:"preauthorization_hold_amount,omitempty"`
 	FundingSource              string  `json:"funding_source,omitempty"`
 	SubscriptionID             *int64  `json:"subscription_id,omitempty"`
+	PriorityFunding            bool    `json:"priority_funding,omitempty"`
 }
 
 // This deliberately nests under the existing durable Grok-video request-id

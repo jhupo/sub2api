@@ -94,9 +94,14 @@ func (s *APIKeyService) resolveGatewayFunding(ctx context.Context, key *APIKey, 
 	return nil, nil, lastErr
 }
 
-// PreauthorizeWithFunding only advances payment sources before forwarding.
-// A successful reservation fixes the funding identity for the entire request.
+// PreauthorizeWithFunding freezes the funding order and reserves each source's
+// portion before forwarding. Legacy repositories retain whole-source fallback.
 func (s *BalancePreauthorizationService) PreauthorizeWithFunding(ctx context.Context, request BalancePreauthorizationRequest, key *APIKey, subscription *UserSubscription) (*BalancePreauthorizationGuard, error) {
+	if s != nil && key != nil && key.UsesSubscription() {
+		if repo, ok := s.repo.(PriorityFundingRepository); ok {
+			return s.preauthorizePriorityFunding(ctx, request, key, repo)
+		}
+	}
 	if key == nil || !key.UsesSubscription() || (len(key.SubscriptionPriority) == 0 && !key.AllowWalletFallback) {
 		return s.Preauthorize(ctx, request)
 	}

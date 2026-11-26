@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
-import { getExpirationDateRelation, getRemainingExpiryDuration } from '../subscriptionQuota'
+import { getDailyQuotaResetAt, getExpirationDateRelation, getRemainingExpiryDuration } from '../subscriptionQuota'
+
+describe('daily quota reset timing', () => {
+  it('uses the server reset time for merged daily cards', () => {
+    expect(getDailyQuotaResetAt({ daily_window_start: '2026-08-06T00:00:00Z', daily_reset_at: '2026-08-07T20:00:00Z' })).toBe('2026-08-07T20:00:00Z')
+  })
+
+  it('keeps the previous fallback for older API responses', () => {
+    expect(getDailyQuotaResetAt({ daily_window_start: '2026-08-06T00:00:00Z' })).toBe('2026-08-07T00:00:00.000Z')
+    expect(getDailyQuotaResetAt({ daily_window_start: null })).toBeNull()
+  })
+})
 
 describe('subscription expiry timing', () => {
   it('uses local calendar dates for today and tomorrow', () => {
