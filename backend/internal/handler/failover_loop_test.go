@@ -124,6 +124,28 @@ func TestEffectiveSameAccountRetryLimitHonorsErrorCapAndDisabledAccount(t *testi
 	require.Equal(t, 0, effectiveSameAccountRetryLimit(&service.UpstreamFailoverError{SameAccountRetryMax: 1}, account))
 }
 
+func TestEffectiveSameAccountRetryLimitUsesOpenAIOAuthAccountPolicy(t *testing.T) {
+	account := &service.Account{
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"openai_oauth_retry_enabled":      true,
+			"openai_oauth_retry_count":        float64(2),
+			"openai_oauth_retry_status_codes": []any{float64(http.StatusServiceUnavailable)},
+		},
+	}
+
+	require.Equal(t, 2, effectiveSameAccountRetryLimit(&service.UpstreamFailoverError{StatusCode: http.StatusServiceUnavailable}, account))
+	require.Equal(t, 3, effectiveSameAccountRetryLimit(&service.UpstreamFailoverError{StatusCode: http.StatusBadGateway}, account))
+	require.Equal(t, 1, effectiveSameAccountRetryLimit(&service.UpstreamFailoverError{
+		StatusCode:          http.StatusServiceUnavailable,
+		SameAccountRetryMax: 1,
+	}, account))
+
+	account.Credentials["openai_oauth_retry_count"] = float64(0)
+	require.Equal(t, 0, effectiveSameAccountRetryLimit(&service.UpstreamFailoverError{StatusCode: http.StatusServiceUnavailable}, account))
+}
+
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------

@@ -1224,6 +1224,94 @@ func (a *Account) IsPoolModeRetryableStatus(statusCode int) bool {
 	return false
 }
 
+const (
+	openAIOAuthRetryEnabledKey     = "openai_oauth_retry_enabled"
+	openAIOAuthRetryCountKey       = "openai_oauth_retry_count"
+	openAIOAuthRetryStatusCodesKey = "openai_oauth_retry_status_codes"
+)
+
+// IsOpenAIOAuthRetryEnabled reports whether this OpenAI OAuth account has a
+// per-account upstream retry policy configured.
+func (a *Account) IsOpenAIOAuthRetryEnabled() bool {
+	if a == nil || a.Platform != PlatformOpenAI || a.Type != AccountTypeOAuth || a.IsShadow() || a.Credentials == nil {
+		return false
+	}
+	enabled, _ := a.Credentials[openAIOAuthRetryEnabledKey].(bool)
+	return enabled
+}
+
+// GetOpenAIOAuthRetryCount returns the bounded same-account retry budget for
+// an enabled OpenAI OAuth retry policy. A zero budget switches accounts at once.
+func (a *Account) GetOpenAIOAuthRetryCount() int {
+	if !a.IsOpenAIOAuthRetryEnabled() {
+		return 0
+	}
+	count := parsePoolModeRetryCount(a.Credentials[openAIOAuthRetryCountKey])
+	if count < 0 {
+		return 0
+	}
+	if count > maxPoolModeRetryCount {
+		return maxPoolModeRetryCount
+	}
+	return count
+}
+
+// IsOpenAIOAuthRetryableStatus reports whether an upstream HTTP status matches
+// this account's configured retry policy.
+func (a *Account) IsOpenAIOAuthRetryableStatus(statusCode int) bool {
+	if !a.IsOpenAIOAuthRetryEnabled() || statusCode < 100 || statusCode > 599 {
+		return false
+	}
+	var codes []any
+	switch value := a.Credentials[openAIOAuthRetryStatusCodesKey].(type) {
+	case []any:
+		codes = value
+	case []int:
+		codes = make([]any, len(value))
+		for i, code := range value {
+			codes[i] = code
+		}
+	default:
+		return false
+	}
+	for _, value := range codes {
+		if code, ok := parseConfiguredRetryStatusCode(value); ok && code == statusCode {
+			return true
+		}
+	}
+	return false
+}
+
+func parseConfiguredRetryStatusCode(value any) (int, bool) {
+	var code int
+	switch v := value.(type) {
+	case int:
+		code = v
+	case int64:
+		code = int(v)
+	case float64:
+		code = int(v)
+		if float64(code) != v {
+			return 0, false
+		}
+	case json.Number:
+		i, err := v.Int64()
+		if err != nil {
+			return 0, false
+		}
+		code = int(i)
+	case string:
+		i, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return 0, false
+		}
+		code = i
+	default:
+		return 0, false
+	}
+	return code, code >= 100 && code <= 599
+}
+
 func (a *Account) GetCustomErrorCodes() []int {
 	if a.Credentials == nil {
 		return nil

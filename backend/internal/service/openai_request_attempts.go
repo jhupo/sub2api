@@ -11,10 +11,11 @@ const openAIRequestAttemptLimit = 3
 type openAIRequestAttemptKey struct{}
 
 type openAIRequestAttempts struct {
-	mu    sync.Mutex
-	count int
-	turn  int
-	last  *UpstreamFailoverError
+	mu                sync.Mutex
+	count             int
+	turn              int
+	last              *UpstreamFailoverError
+	configuredRetries int
 }
 
 func withOpenAIRequestAttemptBudget(ctx context.Context) context.Context {
@@ -31,6 +32,10 @@ func consumeOpenAIRequestAttempt(ctx context.Context) error {
 	}
 	budget.mu.Lock()
 	defer budget.mu.Unlock()
+	if budget.configuredRetries > 0 {
+		budget.configuredRetries--
+		return nil
+	}
 	if budget.count < openAIRequestAttemptLimit {
 		budget.count++
 		return nil
@@ -48,6 +53,19 @@ func consumeOpenAIRequestAttempt(ctx context.Context) error {
 	failure.RetryableOnSameAccount = false
 	failure.RequestScopedTransient = true
 	return &failure
+}
+
+// A bounded, explicitly configured same-account retry must not consume one of
+// the three automatic attempts reserved for account failover/compat recovery.
+// The caller grants exactly one allowance after each approved local retry.
+func authorizeOpenAIConfiguredRetry(ctx context.Context) {
+	budget, _ := ctx.Value(openAIRequestAttemptKey{}).(*openAIRequestAttempts)
+	if budget == nil {
+		return
+	}
+	budget.mu.Lock()
+	budget.configuredRetries++
+	budget.mu.Unlock()
 }
 
 func recordOpenAIRequestFailure(ctx context.Context, failure *UpstreamFailoverError) {
@@ -71,6 +89,7 @@ func BeginOpenAIRequestTurn(ctx context.Context, turn int) {
 	budget.mu.Lock()
 	if budget.turn != turn {
 		budget.count, budget.last, budget.turn = 0, nil, turn
+		budget.configuredRetries = 0
 	}
 	budget.mu.Unlock()
 }

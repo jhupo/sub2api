@@ -783,6 +783,9 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	if account != nil && account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode) {
 		return true
 	}
+	if account != nil && account.IsOpenAIOAuthRetryableStatus(statusCode) {
+		return true
+	}
 	switch statusCode {
 	case http.StatusTooManyRequests, 529:
 		return true

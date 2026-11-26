@@ -691,6 +691,58 @@ describe('EditAccountModal', () => {
     )
   })
 
+  it('loads and saves per-account OpenAI OAuth retry policy', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.credentials = {
+      access_token: 'oauth-token',
+      openai_oauth_retry_enabled: true,
+      openai_oauth_retry_count: 2,
+      openai_oauth_retry_status_codes: [503, 502]
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    expect(wrapper.get('[data-testid="openai-oauth-retry-toggle"]').attributes('aria-checked')).toBe('true')
+    await wrapper.get('[data-testid="openai-oauth-retry-count"]').setValue('4')
+    await wrapper.get('[data-testid="openai-oauth-retry-status-codes"]').setValue('503, 504, invalid')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials).toMatchObject({
+      openai_oauth_retry_enabled: true,
+      openai_oauth_retry_count: 4,
+      openai_oauth_retry_status_codes: [503, 504]
+    })
+  })
+
+  it('clears OpenAI OAuth retry policy when disabled', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.credentials = {
+      access_token: 'oauth-token',
+      openai_oauth_retry_enabled: true,
+      openai_oauth_retry_count: 2,
+      openai_oauth_retry_status_codes: [503]
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="openai-oauth-retry-toggle"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials.openai_oauth_retry_enabled).toBe(false)
+    expect(credentials).not.toHaveProperty('openai_oauth_retry_count')
+    expect(credentials).not.toHaveProperty('openai_oauth_retry_status_codes')
+  })
+
   it('submits the Codex namespace flatten toggle when switched on', async () => {
     const account = buildAccount()
     account.type = 'oauth'

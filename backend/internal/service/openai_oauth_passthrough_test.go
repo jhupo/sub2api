@@ -1716,6 +1716,49 @@ func TestOpenAIGatewayService_APIKeyPassthrough_Transient5xxTriggersFailover(t *
 	}
 }
 
+func TestOpenAIGatewayService_OpenAIOAuthConfigured503IsRetryableBeforeResponseCommit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
+
+	const requestBody = `{"model":"gpt-5.2","stream":false,"input":"hello"}`
+	const upstreamBody = `{"error":{"message":"temporary upstream failure"}}`
+	upstream := &httpUpstreamRecorder{}
+	for i := 0; i < 3; i++ {
+		upstream.responses = append(upstream.responses, &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+		})
+	}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID: 512, Name: "oauth-retry", Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":                 "oauth-token",
+			openAIOAuthRetryEnabledKey:     true,
+			openAIOAuthRetryCountKey:       float64(2),
+			openAIOAuthRetryStatusCodesKey: []any{float64(http.StatusServiceUnavailable)},
+		},
+		Extra: map[string]any{"openai_passthrough": true}, Status: StatusActive, Schedulable: true,
+	}
+
+	result, err := svc.Forward(context.Background(), c, account, []byte(requestBody))
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusServiceUnavailable, failoverErr.StatusCode)
+	require.False(t, failoverErr.RetryableOnSameAccount, "configured budget is consumed inside Forward")
+	require.True(t, failoverErr.ShouldRetryNextAccount())
+	require.Len(t, upstream.requests, 3, "one original attempt plus two retries")
+	require.False(t, c.Writer.Written(), "the handler must get a chance to retry before returning an error")
+}
+
 func TestOpenAIGatewayService_APIKeyPassthrough_ContextWindow502DoesNotFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

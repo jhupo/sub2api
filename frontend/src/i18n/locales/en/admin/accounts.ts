@@ -812,6 +812,15 @@ export default {
       poolModeRetryStatusCodes: 'Retry Status Codes',
       poolModeRetryStatusCodesHint:
         'Comma-separated HTTP status codes (100-599) that trigger same-account retry in pool mode. Leave blank to use defaults ({default}).',
+      openAIOAuthRetry: {
+        title: 'Retry OpenAI OAuth Upstream Errors',
+        hint: 'Retry selected upstream HTTP errors on this account, then switch to another available account. Set retries to 0 to switch immediately. No in-place replay after response content is sent or when the account is unavailable.',
+        count: 'Same-account retry attempts',
+        countHint: 'The selected status codes share this retry limit. Default 3, maximum 10, excluding the initial request.',
+        statusCodes: 'Retry status codes',
+        statusCodesHint: 'Comma-separated HTTP status codes (100-599). 503 is prefilled.',
+        statusCodesRequired: 'Enter at least one valid HTTP status code.',
+      },
       customErrorCodes: 'Custom Error Codes',
       customErrorCodesHint: 'Only stop scheduling for selected error codes',
       customErrorCodesWarning:

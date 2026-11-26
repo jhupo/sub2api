@@ -154,6 +154,9 @@ func effectiveSameAccountRetryLimit(failoverErr *service.UpstreamFailoverError, 
 		return 0
 	}
 	limit := account.GetPoolModeRetryCount()
+	if failoverErr != nil && account.IsOpenAIOAuthRetryableStatus(failoverErr.StatusCode) {
+		limit = account.GetOpenAIOAuthRetryCount()
+	}
 	if limit > 0 && failoverErr != nil && failoverErr.SameAccountRetryMax > 0 && failoverErr.SameAccountRetryMax < limit {
 		return failoverErr.SameAccountRetryMax
 	}

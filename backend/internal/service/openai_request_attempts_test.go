@@ -50,6 +50,18 @@ func TestOpenAIRequestAttemptBudgetResetsOnlyForNewClientTurn(t *testing.T) {
 	require.Error(t, consumeOpenAIRequestAttempt(ctx))
 }
 
+func TestOpenAIConfiguredRetryDoesNotConsumeAccountFailoverBudget(t *testing.T) {
+	ctx := withOpenAIRequestAttemptBudget(context.Background())
+	require.NoError(t, consumeOpenAIRequestAttempt(ctx))
+	for i := 0; i < 10; i++ {
+		authorizeOpenAIConfiguredRetry(ctx)
+		require.NoError(t, consumeOpenAIRequestAttempt(ctx))
+	}
+	require.NoError(t, consumeOpenAIRequestAttempt(ctx))
+	require.NoError(t, consumeOpenAIRequestAttempt(ctx))
+	require.Error(t, consumeOpenAIRequestAttempt(ctx), "only explicitly authorized retries get extra attempts")
+}
+
 func TestOpenAIAttemptUsageDistinguishesUnknownAndReportedZero(t *testing.T) {
 	for _, test := range []struct {
 		payload, status string

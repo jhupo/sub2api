@@ -61,7 +61,9 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
-	return s.forwardAsChatCompletions(ctx, c, account, body, promptCacheKey, defaultMappedModel, false)
+	return s.forwardWithOpenAIOAuthRetries(ctx, c, account, func() (*OpenAIForwardResult, error) {
+		return s.forwardAsChatCompletions(ctx, c, account, body, promptCacheKey, defaultMappedModel, false)
+	})
 }
 
 func (s *OpenAIGatewayService) forwardAsChatCompletions(

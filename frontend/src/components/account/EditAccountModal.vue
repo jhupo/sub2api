@@ -493,6 +493,60 @@
 
       </div>
 
+      <!-- Per-account retry policy for OpenAI OAuth upstream errors -->
+      <div
+        v-if="account.platform === 'openai' && account.type === 'oauth' && !isSparkShadow"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <label class="input-label mb-0">{{ t('admin.accounts.openAIOAuthRetry.title') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openAIOAuthRetry.hint') }}
+            </p>
+          </div>
+          <Toggle
+            v-model="openAIOAuthRetryEnabled"
+            data-testid="openai-oauth-retry-toggle"
+            :aria-label="t('admin.accounts.openAIOAuthRetry.title')"
+          />
+        </div>
+        <div v-if="openAIOAuthRetryEnabled" class="mt-3 space-y-3">
+          <div>
+            <label for="openai-oauth-retry-count" class="input-label">{{ t('admin.accounts.openAIOAuthRetry.count') }}</label>
+            <input
+              id="openai-oauth-retry-count"
+              v-model.number="openAIOAuthRetryCount"
+              data-testid="openai-oauth-retry-count"
+              type="number"
+              min="0"
+              :max="MAX_POOL_MODE_RETRY_COUNT"
+              step="1"
+              required
+              class="input"
+            />
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openAIOAuthRetry.countHint') }}
+            </p>
+          </div>
+          <div>
+            <label for="openai-oauth-retry-status-codes" class="input-label">{{ t('admin.accounts.openAIOAuthRetry.statusCodes') }}</label>
+            <input
+              id="openai-oauth-retry-status-codes"
+              v-model="openAIOAuthRetryStatusCodesInput"
+              data-testid="openai-oauth-retry-status-codes"
+              type="text"
+              class="input"
+              placeholder="503"
+              required
+            />
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openAIOAuthRetry.statusCodesHint') }}
+            </p>
+          </div>
+        </div>
+      </div>
+
       <!-- Grok OAuth client-tool prompt cache opt-in -->
       <div
         v-if="account.platform === 'grok' && account.type === 'oauth'"
@@ -3094,6 +3148,9 @@ const GROK_CLIENT_TOOL_CACHE_EXTRA_KEY = 'grok_client_tool_cache_enabled'
 const poolModeEnabled = ref(false)
 const poolModeRetryCount = ref(DEFAULT_POOL_MODE_RETRY_COUNT)
 const poolModeRetryStatusCodesInput = ref('')
+const openAIOAuthRetryEnabled = ref(false)
+const openAIOAuthRetryCount = ref(DEFAULT_POOL_MODE_RETRY_COUNT)
+const openAIOAuthRetryStatusCodesInput = ref('503')
 
 function parsePoolModeRetryStatusCodes(input: string): number[] {
   if (!input || !input.trim()) return []
@@ -3757,6 +3814,14 @@ const syncFormFromAccount = (newAccount: Account | null) => {
         extra?.codex_cli_only_allow_app_server === true
     }
     if (newAccount.type === 'oauth') {
+      const oauthCredentials = newAccount.credentials as Record<string, unknown> | undefined
+      openAIOAuthRetryEnabled.value = oauthCredentials?.openai_oauth_retry_enabled === true
+      openAIOAuthRetryCount.value = normalizePoolModeRetryCount(
+        Number(oauthCredentials?.openai_oauth_retry_count ?? DEFAULT_POOL_MODE_RETRY_COUNT)
+      )
+      openAIOAuthRetryStatusCodesInput.value = oauthCredentials?.openai_oauth_retry_status_codes === undefined
+        ? '503'
+        : formatPoolModeRetryStatusCodes(oauthCredentials.openai_oauth_retry_status_codes)
       const fpMode = extra?.codex_fingerprint_mode as string | undefined
       // 缺省/非法值按 off 呈现，与后端 GetCodexFingerprintMode 的 opt-in 语义一致（#5610）
       codexFingerprintMode.value = (['off', 'device', 'session', 'full'].includes(fpMode || '')
@@ -4884,6 +4949,20 @@ const handleSubmit = async () => {
           ((props.account.credentials as Record<string, unknown>) || {})
       const newCredentials: Record<string, unknown> = { ...currentCredentials }
       if (props.account.platform === 'openai') {
+        if (!isSparkShadow.value && openAIOAuthRetryEnabled.value) {
+          const retryStatusCodes = parsePoolModeRetryStatusCodes(openAIOAuthRetryStatusCodesInput.value)
+          if (retryStatusCodes.length === 0) {
+            appStore.showError(t('admin.accounts.openAIOAuthRetry.statusCodesRequired'))
+            return
+          }
+          newCredentials.openai_oauth_retry_enabled = true
+          newCredentials.openai_oauth_retry_count = normalizePoolModeRetryCount(openAIOAuthRetryCount.value)
+          newCredentials.openai_oauth_retry_status_codes = retryStatusCodes
+        } else if (!isSparkShadow.value) {
+          newCredentials.openai_oauth_retry_enabled = false
+          delete newCredentials.openai_oauth_retry_count
+          delete newCredentials.openai_oauth_retry_status_codes
+        }
         applyOpenAIModelMappingCredentials(newCredentials)
       } else {
         const modelMapping = buildModelRestrictionMapping()
