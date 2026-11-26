@@ -459,6 +459,7 @@ func TestAPIContracts(t *testing.T) {
 						"expires_at": "2099-01-02T03:04:05Z",
 						"status": "active",
 						"daily_window_start": null,
+						"daily_reset_at": null,
 						"weekly_window_start": null,
 						"monthly_window_start": null,
 						"daily_usage_usd": 1.23,
